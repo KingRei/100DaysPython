@@ -1,5 +1,6 @@
 ### 100 days of python
-algorithm/data structure/machine learning
+#algorithm/#data structure/#machine learning
+
 [Cloud 9](https://c9.io/kingrei)
 
 This repository contains ipython notebooks with live code.
