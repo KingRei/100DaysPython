@@ -10,8 +10,10 @@ Linked list has two key things to note:
 1. 一個鏈結串列由**節點**組成
 2. 每個節點由**值**和指向下個節點的**指標**組成
 
+
 More details in:
 https://medium.com/100-days-of-python/day-01-linked-list-cf91b8937fc6
+
 
 ## References
 
