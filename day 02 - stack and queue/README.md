@@ -1,8 +1,10 @@
 # Stack/Queue 
 
-![Stack](https://en.wikipedia.org/wiki/Stack_(abstract_data_type)#/media/File:Lifo_stack.png)
+More details in HERE:
+https://medium.com/100-days-of-python/day-02-stack-queue-1ab49a7b021d
 
 ## Stack
+![Stack](https://en.wikipedia.org/wiki/Stack_(abstract_data_type)#/media/File:Lifo_stack.png)
 
 In computer science, a stack is an abstract data type that serves as a collection of elements, with two principal operations:
 
