@@ -16,9 +16,6 @@ In computer science, a stack is an abstract data type that serves as a collectio
 
 In computer science, a queue is a particular kind of abstract data type or collection in which the entities in the collection are kept in order and the principal (or only) operations on the collection are the addition of entities to the rear terminal position, known as **enqueue**, and removal of entities from the front terminal position, known as **dequeue**. 
 
-More details in:
-https://medium.com/100-days-of-python/day-02
-
 
 ## References
 
