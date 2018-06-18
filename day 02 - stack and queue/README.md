@@ -1,10 +1,10 @@
 # Stack/Queue 
 
-More details in HERE:
+More details in:
 https://medium.com/100-days-of-python/day-02-stack-queue-1ab49a7b021d
 
 ## Stack
-![Stack](https://en.wikipedia.org/wiki/Stack_%28abstract_data_type%29#/media/File:Lifo_stack.png)
+![Stack](https://upload.wikimedia.org/wikipedia/commons/b/b4/Lifo_stack.png)
 
 In computer science, a stack is an abstract data type that serves as a collection of elements, with two principal operations:
 
@@ -12,7 +12,7 @@ In computer science, a stack is an abstract data type that serves as a collectio
 2. **pop**, which removes the most recently added element that was not yet removed
 
 ## Queue
-![Queue](https://en.wikipedia.org/wiki/Queue_%28abstract_data_type%29#/media/File:Data_Queue.svg)
+![Queue](https://upload.wikimedia.org/wikipedia/commons/thumb/5/52/Data_Queue.svg/405px-Data_Queue.svg.png)
 
 In computer science, a queue is a particular kind of abstract data type or collection in which the entities in the collection are kept in order and the principal (or only) operations on the collection are the addition of entities to the rear terminal position, known as **enqueue**, and removal of entities from the front terminal position, known as **dequeue**. 
 
