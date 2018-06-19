@@ -1,7 +1,7 @@
 # Binary Search Tree (BST)
 
 More details in:
-https://medium.com/100-days-of-python/day-04
+https://medium.com/100-days-of-python/day-04-data-structure-binary-search-tree-8aef2a8f61eb
 
 Yesterday(day 03) we mentioned BST. Today, let's go deeper. 
 
