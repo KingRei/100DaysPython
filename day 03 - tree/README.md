@@ -15,9 +15,10 @@ A binary search tree is a rooted binary tree, whose internal nodes each store a 
 
 Time Complexity:
 
-| Average | access    | search    | insert    | delete    || Worst   | access    | search    | insert    | delete    |
-| :------ | :-----    | :-----    | :-----    | :-----    || :------ | :-----    | :-----    | :-----    | :-----    |
-|         | Θ(log(n)) | Θ(log(n)) | Θ(log(n)) | Θ(log(n)) ||         | O(n)      | O(n)      | O(n)      | O(n)      |
+| Time Complexity    | access    | search    | insert    | delete    |
+| :------            | :-----    | :-----    | :-----    | :-----    |
+| Average            | Θ(log(n)) | Θ(log(n)) | Θ(log(n)) | Θ(log(n)) |
+| Worst              | O(n)      | O(n)      | O(n)      | O(n)      |
 
 ## References
 
