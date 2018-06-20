@@ -22,9 +22,13 @@ Both are acceptable.
 
 ### Self-balancing binary search tree (Maybe another day)
 Red Black Tree
+
 https://www.youtube.com/watch?v=qvZGUFHWChY
+
 https://www.youtube.com/watch?v=4xq5nRKIfpA
+
 AVL Tree
+
 https://www.youtube.com/watch?v=lxHF-mVdwK8
 
 ## References
