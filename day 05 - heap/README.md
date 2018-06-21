@@ -3,18 +3,19 @@
 More details in:
 https://medium.com/100-days-of-python/day-05
 
+![Heap](https://upload.wikimedia.org/wikipedia/commons/thumb/3/38/Max-Heap.svg/501px-Max-Heap.svg.png)
 
 In computer science, a heap is a specialized tree-based data structure that satisfies the heap property: if P is a parent node of C, then the key (the value) of P is either greater than or equal to (in a max heap) or less than or equal to (in a min heap) the key of C. The node at the "top" of the heap (with no parents) is called the root node.
 
-
-![Heap](https://upload.wikimedia.org/wikipedia/commons/thumb/3/38/Max-Heap.svg/501px-Max-Heap.svg.png)
+The datas are actually stored a array list like this:
+![Heap](https://upload.wikimedia.org/wikipedia/commons/thumb/d/d2/Heap-as-array.svg/603px-Heap-as-array.svg.png)
 
 Time Complexity:
 
-| Time Complexity    | access    | search    | insert    | delete    |
-| :------            | :-----    | :-----    | :-----    | :-----    |
-| Average            | Θ(log(n)) | Θ(log(n)) | Θ(log(n)) | Θ(log(n)) |
-| Worst              | O(n)      | O(n)      | O(n)      | O(n)      |
+| Operation   | find-min    | delete-min    | insert      | decrease-key  | merge      |
+| :------     | :-----      | :-----        | :-----      | :-----        | :-----     |
+| Binary      | Θ(1)        | Θ(log(n))     | O(log(n))   | Θ(log(n))     | O(n)       |
+| Fibonacci   | Θ(1)        | O(log(n))     | Θ(1)        | Θ(1)          | Θ(1)       |
 
 
 ## References
