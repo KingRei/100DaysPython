@@ -7,7 +7,7 @@ https://medium.com/100-days-of-python/day-05
 
 In computer science, a heap is a specialized tree-based data structure that satisfies the heap property: if P is a parent node of C, then the key (the value) of P is either greater than or equal to (in a max heap) or less than or equal to (in a min heap) the key of C. The node at the "top" of the heap (with no parents) is called the root node.
 
-The datas are actually stored a array list like this:
+The datas of binary heap are actually stored a array list like this:
 ![Heap](https://upload.wikimedia.org/wikipedia/commons/thumb/d/d2/Heap-as-array.svg/603px-Heap-as-array.svg.png)
 
 Time Complexity:
