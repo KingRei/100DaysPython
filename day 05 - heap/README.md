@@ -1,7 +1,7 @@
 # Heap
 
 More details in:
-https://medium.com/100-days-of-python/day-05
+https://medium.com/100-days-of-python/day-05-data-structure-priority-queue-binary-heap-6a35149c8c16
 
 ![Heap](https://upload.wikimedia.org/wikipedia/commons/thumb/3/38/Max-Heap.svg/501px-Max-Heap.svg.png)
 
@@ -15,10 +15,11 @@ Time Complexity:
 | Operation   | find-min    | delete-min    | insert      | decrease-key  | merge      |
 | :------     | :-----      | :-----        | :-----      | :-----        | :-----     |
 | Binary      | Θ(1)        | Θ(log(n))     | O(log(n))   | Θ(log(n))     | Θ(n)       |
+| Binomial    | Θ(log(n))   | Θ(log(n))     | Θ(1)        | Θ(log(n))     | O(log(n))  |
 | Fibonacci   | Θ(1)        | O(log(n))     | Θ(1)        | Θ(1)          | Θ(1)       |
 
 
 ## References
 
 - [Wikipedia](https://en.wikipedia.org/wiki/Heap_(data_structure))
-- [Toutube - Hacker Rank](https://www.youtube.com/watch?v=t0Cq6tVNRBA&index=5&t=0s&list=PLLXdhg_r2hKA7DPDsunoDZ-Z769jWn4R8)
+- [Youtube - Hacker Rank](https://www.youtube.com/watch?v=t0Cq6tVNRBA&index=5&t=0s&list=PLLXdhg_r2hKA7DPDsunoDZ-Z769jWn4R8)
