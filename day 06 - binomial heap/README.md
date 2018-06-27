@@ -1,7 +1,7 @@
 # Binomial Heap
 
 More details in:
-https://medium.com/100-days-of-python/day-06
+https://medium.com/100-days-of-python/day-06-binomial-heap-88ca2edb8255
 
 ![Binomial Heap](https://upload.wikimedia.org/wikipedia/commons/thumb/c/cf/Binomial_Trees.svg/500px-Binomial_Trees.svg.png)
 
