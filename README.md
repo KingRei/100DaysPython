@@ -1,7 +1,9 @@
 ### 100 days of python
 - #Algorithm #DataStructure #MachineLearning #AI
+
 [Blog](https://medium.com/100-days-of-python)
-![blogPic](https://github.com/KingRei/100DaysPython/imgs/blogPic.png)
+
+![blogPic](https://github.com/KingRei/100DaysPython/blob/master/imgs/blogPic.png?raw=true)
 
 This repository contains ipython notebooks with live code.
 You can find out some free tutorials and stories in my article [100 days of python](https://medium.com/100-days-of-python) challenge.
