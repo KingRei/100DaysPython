@@ -12,9 +12,9 @@ The datas of binary heap are actually stored a array list like this:
 
 Time Complexity:
 
-| Operation   | find-min    | delete-min    | insert      | decrease-key  | merge      |
-| :------     | :-----      | :-----        | :-----      | :-----        | :-----     |
-| Binary      | Θ(1)        | Θ(log(n))     | O(log(n))   | Θ(log(n))     | Θ(n)       |
+| Operation       | find-min    | delete-min    | insert      | decrease-key  | merge      |
+| :------         | :-----      | :-----        | :-----      | :-----        | :-----     |
+| Binary Heap     | Θ(1)        | Θ(log(n))     | O(log(n))   | Θ(log(n))     | Θ(n)       |
 
 
 ## References
