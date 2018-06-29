@@ -15,8 +15,6 @@ Time Complexity:
 | Operation   | find-min    | delete-min    | insert      | decrease-key  | merge      |
 | :------     | :-----      | :-----        | :-----      | :-----        | :-----     |
 | Binary      | Θ(1)        | Θ(log(n))     | O(log(n))   | Θ(log(n))     | Θ(n)       |
-| Binomial    | Θ(log(n))   | Θ(log(n))     | Θ(1)        | Θ(log(n))     | O(log(n))  |
-| Fibonacci   | Θ(1)        | O(log(n))     | Θ(1)        | Θ(1)          | Θ(1)       |
 
 
 ## References
