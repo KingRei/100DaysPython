@@ -4,8 +4,9 @@ More details in:
 https://medium.com/100-days-of-python/day-07
 
 ![Container](http://excess.org/media/image/2012/11/literal2.png)
+(form: http://excess.org/article/2012/11/python-container-literals/)
 
-Today I will introduce some convinient tools in Python. No complicated algorithm and data structure. Take it easy!
+Today I will introduce some convinient tools in Python. There is no complicated algorithm and data structure. Take it easy!
 
 
 ## References
