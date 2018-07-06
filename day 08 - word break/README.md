@@ -3,6 +3,8 @@
 More details in:
 https://medium.com/100-days-of-python/day-08
 
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2008%20-%20word%20break/imgs/day08_1.png?raw=true)
+
 ## LeetCode 139
 
 Given a non-empty string s and a dictionary wordDict containing a list of non-empty words, determine if s can be segmented into a space-separated sequence of one or more dictionary words.
