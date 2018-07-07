@@ -3,7 +3,7 @@
 More details in:
 https://medium.com/100-days-of-python/day-08
 
-![img](https://github.com/KingRei/100DaysPython/blob/master/day%2008%20-%20word%20break/imgs/day08_1.png?raw=true)
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2008%20-%20word%20break/imgs/day08_2.png?raw=true)
 
 ## LeetCode 139
 
