@@ -1,7 +1,7 @@
 # Word Break
 
 More details in:
-https://medium.com/100-days-of-python/day-08
+https://medium.com/100-days-of-python/day-08-problem-word-break-15d8256cd0f9
 
 ![img](https://github.com/KingRei/100DaysPython/blob/master/day%2008%20-%20word%20break/imgs/day08_2.png?raw=true)
 
