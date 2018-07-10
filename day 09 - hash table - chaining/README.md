@@ -1,4 +1,4 @@
-# Word Break
+# Hash Table - Chaining
 
 More details in:
 https://medium.com/100-days-of-python/day-09
