@@ -1,7 +1,7 @@
 # Hash Table - Open Addressing
 
 More details in:
-https://medium.com/100-days-of-python/ay-10-data-structure-hash-table-open-addressing-f79aec281d27
+https://medium.com/100-days-of-python/day-10-data-structure-hash-table-open-addressing-dc335fd3ae0
 
 ![img](https://upload.wikimedia.org/wikipedia/commons/thumb/5/58/Hash_table_4_1_1_0_0_1_0_LL.svg/300px-Hash_table_4_1_1_0_0_1_0_LL.svg.png)
 
