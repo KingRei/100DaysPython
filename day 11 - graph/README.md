@@ -1,7 +1,7 @@
 # Graph
 
 More details in:
-https://medium.com/100-days-of-python/day-11
+https://medium.com/100-days-of-python/day-11-data-structure-graph-a4229c3dabaf
 
 ![img](https://cdn-images-1.medium.com/max/800/1*Q9n58avTamrRmY66Ne0Hug.png)
 
