@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.bak
+*.bak2
+.ipynb_checkpoints/
+medium_*.md

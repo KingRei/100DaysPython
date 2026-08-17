@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 12 - Graph Traversal / BFS 與 DFS</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='%23002639' stroke='%230093a1' stroke-width='2'/><path d='M9 16h14M17 11l6 5-6 5' stroke='%2300aaaa' stroke-width='2' fill='none'/></svg>">
+<style>
+:root{
+  --navy:#002639; --navy-d:#001824; --teal:#0093a1; --teal-l:#00aaaa;
+  --cyan:#00ffff; --grey:#292c30; --grey-l:#818181; --red:#ff0000;
+  --amber:#ffc000; --pale:#d6f2f4; --white:#ffffff;
+  --serif:"Latin Modern Roman","Liberation Serif",Georgia,"Times New Roman",serif;
+  --mono:"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:radial-gradient(1200px 700px at 50% -10%,#00344a 0%,var(--navy-d) 60%,#000f18 100%);
+  color:var(--pale); font-family:var(--serif); min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--teal-l)}
+.wrap{max-width:1180px;margin:0 auto;padding:26px 20px 60px}
+header{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-bottom:6px}
+h1{font-size:30px;margin:0;color:var(--white);letter-spacing:.4px;
+   text-shadow:0 0 14px rgba(0,255,255,.35)}
+.day{font-size:13px;letter-spacing:2.4px;text-transform:uppercase;color:var(--teal-l);
+     border:1px solid var(--teal);border-radius:999px;padding:4px 12px}
+.sub{color:var(--grey-l);font-size:15px;margin:8px 0 20px;max-width:70ch;line-height:1.6}
+.spacer{flex:1}
+.lang{display:flex;border:1px solid var(--teal);border-radius:999px;overflow:hidden}
+.lang button{background:transparent;color:var(--teal-l);border:0;padding:5px 14px;
+  font-family:var(--serif);font-size:14px;cursor:pointer}
+.lang button.on{background:var(--teal);color:#00141d}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
+.tabs button{
+  background:rgba(0,38,57,.75);border:1px solid rgba(0,147,161,.55);color:var(--pale);
+  padding:9px 16px;border-radius:8px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  transition:.18s}
+.tabs button:hover{border-color:var(--teal-l);color:var(--white)}
+.tabs button.on{background:var(--teal);border-color:var(--teal-l);color:#00141d;
+  box-shadow:0 0 18px rgba(0,255,255,.25)}
+.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:18px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:rgba(0,24,36,.72);border:1px solid rgba(0,147,161,.35);border-radius:12px;
+      padding:14px 16px}
+.card h3{margin:0 0 10px;font-size:14px;letter-spacing:2px;text-transform:uppercase;
+         color:var(--teal-l);font-weight:normal}
+svg.stage{width:100%;height:auto;display:block;touch-action:none}
+svg.stage text{font-family:var(--serif);user-select:none}
+.narr{min-height:52px;margin-top:10px;padding:10px 12px;border-left:3px solid var(--amber);
+      background:rgba(255,192,0,.06);font-size:16px;line-height:1.55;color:var(--white)}
+.narr code{font-family:var(--mono);font-size:14px;color:var(--amber)}
+.ctrl{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
+.ctrl button{background:var(--navy);border:1px solid var(--teal);color:var(--teal-l);
+  border-radius:8px;padding:7px 13px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  min-width:44px;transition:.15s}
+.ctrl button:hover:not(:disabled){background:var(--teal);color:#00141d}
+.ctrl button:disabled{opacity:.35;cursor:default}
+.ctrl .play{min-width:92px;font-weight:bold}
+.ctrl input[type=range]{width:120px;accent-color:var(--teal-l)}
+.stepno{color:var(--grey-l);font-size:14px;font-family:var(--mono)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;min-height:30px}
+.chip{border:1px solid var(--teal);border-radius:6px;padding:3px 9px;font-family:var(--mono);
+      font-size:14px;color:var(--pale);background:rgba(0,147,161,.10)}
+.chip.hot{border-color:var(--amber);color:var(--amber);background:rgba(255,192,0,.12);
+  box-shadow:0 0 12px rgba(255,192,0,.25)}
+.chip.dim{border-color:#3a4a52;color:var(--grey-l);background:transparent}
+.chip.bad{border-color:var(--red);color:#ff8080;background:rgba(255,0,0,.12)}
+.chip.ok{border-color:var(--teal-l);color:var(--cyan);background:rgba(0,255,255,.08)}
+.chip.empty{border-style:dashed;color:var(--grey-l);border-color:#3a4a52}
+.panel+.panel{margin-top:12px}
+.panel .lbl{font-size:13px;letter-spacing:1.6px;text-transform:uppercase;color:var(--grey-l);
+  margin-bottom:5px}
+pre.code{margin:0;font-family:var(--mono);font-size:13.5px;line-height:1.72;overflow-x:auto;
+  color:#9fc7cf}
+pre.code .ln{display:block;padding:0 8px;border-left:3px solid transparent;white-space:pre}
+pre.code .ln.on{background:rgba(0,255,255,.10);border-left-color:var(--cyan);color:var(--white)}
+pre.code .cm{color:#5c7a83;font-style:italic}
+pre.code .kw{color:var(--amber)}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:13.5px;color:var(--grey-l)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;
+  vertical-align:-1px;border:1px solid rgba(255,255,255,.25)}
+.note{font-size:15px;line-height:1.65;color:var(--pale)}
+.note b{color:var(--amber);font-weight:normal}
+.toggle-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+footer{margin-top:32px;padding-top:16px;border-top:1px solid rgba(0,147,161,.3);
+  color:var(--grey-l);font-size:14px;display:flex;gap:18px;flex-wrap:wrap}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <span class="day">Day 12</span>
+  <h1 data-i18n="title">圖的走訪 · 互動演示</h1>
+  <span class="spacer"></span>
+  <div class="lang">
+    <button id="btn-zh" class="on" onclick="setLang('zh')">中文</button>
+    <button id="btn-en" onclick="setLang('en')">EN</button>
+  </div>
+</header>
+<p class="sub" data-i18n="sub">BFS 用 queue 一圈一圈往外掃，DFS 用堆疊一條路走到底。左邊是圖或格子，右邊是演算法當下的狀態——按 ▶ 就會一步一步跑給你看。</p>
+
+<div class="tabs" id="tabs"></div>
+
+<div class="grid">
+  <div>
+    <div class="card">
+      <h3 id="stage-title">Kahn</h3>
+      <svg class="stage" id="stage" viewBox="0 0 9.6 7" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="legend" id="legend"></div>
+      <div class="narr" id="narr"></div>
+      <div class="ctrl">
+        <button onclick="reset()" title="reset">⟲</button>
+        <button id="prev" onclick="step(-1)">◀</button>
+        <button class="play" id="play" onclick="togglePlay()" data-i18n="play">▶ 播放</button>
+        <button id="next" onclick="step(1)">▶</button>
+        <span class="stepno" id="stepno">0 / 0</span>
+        <span class="spacer"></span>
+        <span style="font-size:13px;color:var(--grey-l)" data-i18n="speed">速度</span>
+        <input type="range" id="speed" min="180" max="1600" step="20" value="820">
+      </div>
+      <div class="toggle-row" id="extra"></div>
+    </div>
+  </div>
+  <div>
+    <div class="card" id="state-card">
+      <h3 data-i18n="state">演算法狀態</h3>
+      <div id="panels"></div>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="code">程式碼</h3>
+      <pre class="code" id="code"></pre>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="idea">重點</h3>
+      <div class="note" id="idea"></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <span>100 Days of Python — Day 12</span>
+  <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2012%20-%20graph%20traversal" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://medium.com/100-days-of-python/day-12-data-structure-graph-traversal-bfs-and-dfs-96580ae83b0e" target="_blank" rel="noopener">Medium</a>
+</footer>
+</div>
+<script>
+/* ------------------------------------------------------------------ i18n */
+const T = {
+  title:{zh:'圖的走訪 · 互動演示', en:'Graph traversal · interactive'},
+  sub:{zh:'BFS 用 queue 一圈一圈往外掃，DFS 用堆疊一條路走到底。左邊是圖或格子，右邊是演算法當下的狀態——按 ▶ 就會一步一步跑給你看。',
+       en:'BFS sweeps outwards in rings with a queue; DFS dives down one branch with a stack. The graph (or grid) is on the left, the algorithm state on the right - press ▶ and watch it run.'},
+  play:{zh:'▶ 播放', en:'▶ Play'}, pause:{zh:'❚❚ 暫停', en:'❚❚ Pause'},
+  speed:{zh:'速度', en:'Speed'}, state:{zh:'演算法狀態', en:'Algorithm state'},
+  code:{zh:'程式碼', en:'Code'}, idea:{zh:'重點', en:'The idea'}
+};
+let LANG = 'zh';
+const tr = o => (o == null ? '' : (typeof o === 'string' ? o : (o[LANG] || o.en)));
+
+function setLang(l){
+  LANG = l;
+  document.documentElement.lang = l === 'zh' ? 'zh-Hant' : 'en';
+  document.getElementById('btn-zh').classList.toggle('on', l === 'zh');
+  document.getElementById('btn-en').classList.toggle('on', l === 'en');
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.getAttribute('data-i18n');
+    if (T[k]) el.textContent = tr(T[k]);
+  });
+  buildTabs(); render();
+}
+
+/* ----------------------------------------------------------------- graph */
+const G = {
+  pos:{1:[1.0,3.3],2:[3.0,4.6],3:[3.0,2.0],4:[5.0,5.4],5:[5.0,3.3],6:[5.0,1.2],
+       7:[7.0,4.4],8:[7.0,2.0]},
+  edges:[[1,2],[1,3],[2,4],[2,5],[3,5],[3,6],[4,7],[5,7],[6,8],[7,8]],
+  undirected:true
+};
+const nodesOf = g => Object.keys(g.pos).map(Number).sort((a,b)=>a-b);
+function adjOf(g){
+  const a = {}; nodesOf(g).forEach(n => a[n] = []);
+  g.edges.forEach(([u,v]) => { a[u].push(v); if (g.undirected) a[v].push(u); });
+  Object.keys(a).forEach(k => a[k].sort((x,y)=>x-y));
+  return a;
+}
+const nameOf = (g,n) => (g.names ? g.names[n] : String(n));
+const ek = (u,v) => u + '-' + v;
+/* undirected edges are stored one way only - look both ways when styling */
+function edgeState(frame, u, v){ return frame.edges[ek(u,v)] || frame.edges[ek(v,u)] || 'idle'; }
+
+function Frames(){
+  this.list = [];
+  this.push = (o) => this.list.push({
+    nodes:Object.assign({}, o.nodes), edges:Object.assign({}, o.edges||{}),
+    panels:JSON.parse(JSON.stringify(o.panels||[])), line:o.line, msg:o.msg,
+    grid:o.grid ? JSON.parse(JSON.stringify(o.grid)) : null,
+    mode:o.grid ? 'grid' : 'graph'
+  });
+}
+
+/* -------------------------------------------------------------------- BFS */
+const CODE_BFS = [
+  'from collections import deque',
+  '',
+  'def bfs(adj, s):',
+  '    dist   = {s: 0}',
+  '    parent = {s: None}',
+  '    q = deque([s])',
+  '    while q:',
+  '        u = q.popleft()          # FIFO -> nearest first',
+  '        for v in adj[u]:',
+  '            if v not in dist:    # mark on PUSH, not on pop',
+  '                dist[v]   = dist[u] + 1',
+  '                parent[v] = u',
+  '                q.append(v)',
+  '    return dist, parent'
+];
+
+function buildBFS(g, opt){
+  opt = opt || {};
+  const start = opt.start || 1, goal = opt.goal || null;
+  const N = nodesOf(g), adj = adjOf(g), F = new Frames();
+  const dist = {}, parent = {};
+  let q = [], cur = null, order = [], treeEdges = {}, pathSet = null;
+
+  const panels = () => {
+    const p = [
+      {lbl:{zh:'queue（先進先出）',en:'queue (FIFO)'},
+       chips:q.length ? q.map(n=>({t:nameOf(g,n)+' (d='+dist[n]+')',cls:'hot'})) : [{t:'∅',cls:'empty'}]},
+      {lbl:{zh:'dist（離起點幾條邊）',en:'dist (edges from the start)'},
+       chips:N.map(n=>({t:nameOf(g,n)+':'+(dist[n]===undefined?'—':dist[n]),
+                        cls:dist[n]===undefined?'dim':(n===cur?'hot':'ok')}))},
+      {lbl:{zh:'pop 出來的順序',en:'pop order'},
+       chips:order.length ? order.map(n=>({t:nameOf(g,n),cls:''})) : [{t:'∅',cls:'empty'}]}
+    ];
+    if (goal) p.push({lbl:{zh:'parent（回推最短路用）',en:'parent (for path reconstruction)'},
+      chips:N.filter(n=>parent[n]!==undefined&&parent[n]!==null)
+             .map(n=>({t:nameOf(g,parent[n])+'→'+nameOf(g,n),cls:'dim'}))
+             .concat(N.every(n=>parent[n]===undefined)?[{t:'∅',cls:'empty'}]:[])});
+    return p;
+  };
+  const nodeStates = () => {
+    const s = {};
+    N.forEach(n => s[n] = dist[n] === undefined ? 'idle'
+                        : (order.indexOf(n) >= 0 ? 'done' : 'queued'));
+    if (cur !== null) s[cur] = 'active';
+    if (pathSet) N.forEach(n => { if (pathSet.has(n)) s[n] = 'path'; });
+    return s;
+  };
+
+  dist[start] = 0; parent[start] = null; q = [start];
+  F.push({nodes:nodeStates(), panels:panels(), line:5,
+    msg:{zh:'從 <code>'+nameOf(g,start)+'</code> 出發：距離 0，丟進 queue。BFS 的所有秘密都在 queue 的先進先出。',
+         en:'Start from <code>'+nameOf(g,start)+'</code>: distance 0, push it into the queue. Everything BFS does follows from that queue being FIFO.'}});
+
+  while (q.length){
+    cur = q.shift(); order.push(cur);
+    F.push({nodes:nodeStates(), panels:panels(), edges:treeEdges, line:7,
+      msg:{zh:'pop <code>'+nameOf(g,cur)+'</code>（距離 '+dist[cur]+'）。因為是 FIFO，離起點近的一定先出來。',
+           en:'Pop <code>'+nameOf(g,cur)+'</code> (distance '+dist[cur]+'). FIFO guarantees the closest vertices leave first.'}});
+    for (const v of adj[cur]){
+      const e = Object.assign({}, treeEdges); e[ek(cur,v)] = 'active';
+      if (dist[v] === undefined){
+        dist[v] = dist[cur] + 1; parent[v] = cur; q.push(v);
+        treeEdges[ek(cur,v)] = 'tree';
+        F.push({nodes:nodeStates(), panels:panels(), edges:e, line:12,
+          msg:{zh:'鄰居 <code>'+nameOf(g,v)+'</code> 沒看過：距離 = '+dist[cur]+' + 1 = '+dist[v]+
+                  '，記下 parent 後推進 queue。<b>在 push 的時候就標記</b>，不然有兩個父節點的節點會進 queue 兩次。',
+               en:'Neighbour <code>'+nameOf(g,v)+'</code> is new: distance = '+dist[cur]+' + 1 = '+dist[v]+
+                  ', record its parent and push it. <b>Mark it on push, not on pop</b> - otherwise a vertex with two parents enters the queue twice.'}});
+      } else {
+        F.push({nodes:nodeStates(), panels:panels(), edges:e, line:9,
+          msg:{zh:'<code>'+nameOf(g,v)+'</code> 已經有距離 '+dist[v]+' 了，跳過——BFS 第一次碰到就是最短的。',
+               en:'<code>'+nameOf(g,v)+'</code> already has distance '+dist[v]+', so skip it - the first time BFS reaches a vertex is already the shortest way.'}});
+      }
+    }
+    cur = null;
+  }
+
+  if (goal){
+    const path = []; let x = goal;
+    while (x !== null && x !== undefined){ path.unshift(x); x = parent[x]; }
+    pathSet = new Set(path);
+    const pe = {};
+    for (let i = 0; i + 1 < path.length; i++) pe[ek(path[i],path[i+1])] = 'path';
+    F.push({nodes:nodeStates(), panels:panels().concat([{lbl:{zh:'最短路徑',en:'shortest path'},
+        chips:path.map(n=>({t:nameOf(g,n),cls:'ok'}))}]), edges:pe, line:13,
+      msg:{zh:'從 <code>'+nameOf(g,goal)+'</code> 沿著 parent 一路回推到起點，就得到最短路徑 '+
+              path.map(n=>nameOf(g,n)).join(' → ')+'（'+dist[goal]+' 條邊）。'+
+              '維護 parent 幾乎不花成本，卻讓「幾步」變成「哪幾步」。',
+           en:'Walk the parent pointers back from <code>'+nameOf(g,goal)+'</code> and you get the shortest path '+
+              path.map(n=>nameOf(g,n)).join(' → ')+' ('+dist[goal]+' edges). '+
+              'Keeping the parent map costs nothing and upgrades “how far” into “which way”.'}});
+  } else {
+    const byLevel = {};
+    N.forEach(n => (byLevel[dist[n]] = byLevel[dist[n]] || []).push(n));
+    const levels = Object.keys(byLevel).sort().map(d => 'L'+d+': '+byLevel[d].map(n=>nameOf(g,n)).join(' '));
+    F.push({nodes:nodeStates(), panels:panels().concat([{lbl:{zh:'一層一層看',en:'by level'},
+        chips:levels.map(t=>({t:t,cls:'ok'}))}]), edges:treeEdges, line:13,
+      msg:{zh:'queue 空了。pop 的順序 '+order.map(n=>nameOf(g,n)).join(' ')+
+              ' 正好是一層一層往外：<b>距離不會遞減</b>，所以無權圖的最短路免費送。O(V + E)。',
+           en:'The queue is empty. The pop order '+order.map(n=>nameOf(g,n)).join(' ')+
+              ' walks outwards ring by ring: <b>distances never decrease</b>, which is why shortest paths on an unweighted graph come for free. O(V + E).'}});
+  }
+  return F.list;
+}
+</script>
+<script>
+/* -------------------------------------------------------------------- DFS */
+const CODE_DFS = [
+  'def dfs(adj, u, seen, order):',
+  '    seen.add(u)              # mark as soon as you arrive',
+  '    order.append(u)',
+  '    for v in adj[u]:',
+  '        if v not in seen:',
+  '            dfs(adj, v, seen, order)   # dive first, ask later',
+  '    # nothing left here -> backtrack to the caller',
+  '',
+  'for u in nodes:              # the graph may be disconnected',
+  '    if u not in seen: dfs(adj, u, seen, order)'
+];
+
+function buildDFS(g, opt){
+  opt = opt || {};
+  const N = nodesOf(g), adj = adjOf(g), F = new Frames();
+  const seen = new Set(), order = [], path = [];
+  let treeEdges = {}, back = 0;
+
+  const panels = () => ([
+    {lbl:{zh:'走訪順序',en:'visiting order'},
+     chips:order.length ? order.map(n=>({t:nameOf(g,n),cls:'ok'})) : [{t:'∅',cls:'empty'}]},
+    {lbl:{zh:'呼叫堆疊（目前這條路）',en:'call stack (the current branch)'},
+     chips:path.length ? path.map(n=>({t:nameOf(g,n),cls:'hot'})) : [{t:'∅',cls:'empty'}]},
+    {lbl:{zh:'seen',en:'seen'},
+     chips:N.map(n=>({t:nameOf(g,n),cls:seen.has(n)?'':'dim'}))},
+    {lbl:{zh:'回溯次數',en:'backtracks'}, chips:[{t:String(back),cls:back?'hot':'dim'}]}
+  ]);
+  const nodeStates = () => {
+    const s = {};
+    N.forEach(n => s[n] = seen.has(n) ? (path.indexOf(n)>=0 ? 'queued' : 'done') : 'idle');
+    if (path.length) s[path[path.length-1]] = 'active';
+    return s;
+  };
+  const push = (line, msg, extra) => F.push({nodes:nodeStates(), panels:panels(),
+    edges:Object.assign({}, treeEdges, extra||{}), line:line, msg:msg});
+
+  function visit(u){
+    seen.add(u); order.push(u); path.push(u);
+    push(2, {zh:'走到 <code>'+nameOf(g,u)+'</code>，馬上標記並記進走訪順序。它現在在呼叫堆疊最上面。',
+             en:'Arrive at <code>'+nameOf(g,u)+'</code>, mark it immediately and record it. It is now the top of the call stack.'});
+    for (const v of adj[u]){
+      const e = {}; e[ek(u,v)] = 'active';
+      if (!seen.has(v)){
+        push(5, {zh:'鄰居 <code>'+nameOf(g,v)+'</code> 沒看過——<b>不排隊，直接遞迴下去</b>。這一步就是 DFS 跟 BFS 唯一的差別。',
+                 en:'Neighbour <code>'+nameOf(g,v)+'</code> is unseen - <b>no queue, just recurse straight into it</b>. That single step is the only difference from BFS.'}, e);
+        treeEdges[ek(u,v)] = 'tree';
+        visit(v);
+      } else {
+        push(4, {zh:'鄰居 <code>'+nameOf(g,v)+'</code> 已經在 seen 裡（可能是父節點，也可能是別條路走過的），跳過。'+
+                    '這些沒走的邊在無向圖裡就是把 DFS 樹接起來的<b>非樹邊</b>。',
+                 en:'Neighbour <code>'+nameOf(g,v)+'</code> is already in seen - it may be the parent, or a vertex another branch reached. Skip it. '+
+                    'On an undirected graph those skipped edges are exactly the <b>non-tree edges</b>.'}, Object.assign({}, e, {[ek(u,v)]:'skip'}));
+      }
+    }
+    path.pop();
+    if (path.length) back++;
+    push(6, {zh:'<code>'+nameOf(g,u)+'</code> 的鄰居都看完了，回到呼叫它的人'+
+                (path.length?'（<code>'+nameOf(g,path[path.length-1])+'</code>）':'')+'。這就是「回溯」。',
+             en:'Every neighbour of <code>'+nameOf(g,u)+'</code> is handled, so return to its caller'+
+                (path.length?' (<code>'+nameOf(g,path[path.length-1])+'</code>)':'')+'. That is backtracking.'});
+  }
+
+  push(8, {zh:'DFS 不需要 queue，遞迴的呼叫堆疊就是它的堆疊。外層迴圈是為了不連通的圖。',
+           en:'DFS needs no queue - the recursion call stack is the stack. The outer loop exists for disconnected graphs.'});
+  for (const u of N) if (!seen.has(u)) visit(u);
+
+  F.push({nodes:nodeStates(), panels:panels(), edges:treeEdges, line:9,
+    msg:{zh:'走完了：'+order.map(n=>nameOf(g,n)).join(' → ')+'。'+
+            '青色的是 <b>DFS 樹</b>的邊，其餘是被跳過的邊；把非樹邊分類出來，就是找環、橋、關節點與強連通分量的起點。O(V + E)，記憶體是 O(深度)。',
+         en:'Done: '+order.map(n=>nameOf(g,n)).join(' → ')+'. '+
+            'The teal edges form the <b>DFS tree</b>; the rest were skipped. Classifying those non-tree edges is the starting point for cycles, bridges, articulation points and strongly connected components. O(V + E) time, O(depth) memory.'}});
+  return F.list;
+}
+
+/* ------------------------------------------------- LeetCode 200 - islands */
+const CODE_ISLANDS = [
+  'def num_islands(grid):',
+  '    count = 0',
+  '    for r in range(rows):',
+  '        for c in range(cols):',
+  '            if grid[r][c] == "1":     # a new island',
+  '                count += 1',
+  '                flood(grid, r, c)     # sink all of it',
+  '    return count',
+  '',
+  'def flood(grid, r, c):                # BFS or DFS, either works',
+  '    q = deque([(r, c)])',
+  '    grid[r][c] = "0"                  # the grid IS the visited set',
+  '    while q:',
+  '        r, c = q.popleft()',
+  '        for nr, nc in neighbours(r, c):',
+  '            if grid[nr][nc] == "1":',
+  '                grid[nr][nc] = "0"',
+  '                q.append((nr, nc))'
+];
+
+const GRID0 = ['11000','11000','00100','00011'];
+
+function buildIslands(opt){
+  opt = opt || {};
+  const rows = GRID0.length, cols = GRID0[0].length, F = new Frames();
+  const cell = GRID0.map(r => r.split('').map(ch => ch === '1' ? 'land' : 'water'));
+  let count = 0, q = [], scan = null;
+  const snap = (line, msg) => F.push({nodes:{}, panels:panels(), line:line, msg:msg,
+    grid:{rows:rows, cols:cols, cells:cell, scan:scan,
+          q:q.map(p=>p.join(',')), }});
+  const panels = () => ([
+    {lbl:{zh:'島嶼數 count',en:'island count'}, chips:[{t:String(count),cls:count?'ok':'dim'}]},
+    {lbl:{zh:'目前掃到的格子',en:'scanner position'},
+     chips:[{t:scan ? '('+scan[0]+', '+scan[1]+')' : '—', cls:scan?'hot':'dim'}]},
+    {lbl:{zh:'淹沒用的 queue',en:'flood queue'},
+     chips:q.length ? q.map(p=>({t:'('+p[0]+', '+p[1]+')',cls:'hot'})) : [{t:'∅',cls:'empty'}]}
+  ]);
+
+  snap(0, {zh:'每個 <code>1</code> 是一個節點，上下左右相鄰的 <code>1</code> 之間有邊——'+
+              '所以「數島嶼」就是「數連通分量」，跟左邊那張圖是同一件事。',
+           en:'Every <code>1</code> is a vertex and orthogonally adjacent <code>1</code>s share an edge, so “count the islands” is “count the connected components” - the same problem as the graph on the other tabs.'});
+
+  for (let r = 0; r < rows; r++){
+    for (let c = 0; c < cols; c++){
+      scan = [r,c];
+      if (cell[r][c] !== 'land'){
+        snap(4, {zh:'掃到 ('+r+', '+c+') 是水或已經淹掉的地，跳過。',
+                 en:'Cell ('+r+', '+c+') is water or already-sunk land - skip it.'});
+        continue;
+      }
+      count++;
+      snap(5, {zh:'('+r+', '+c+') 還是陸地，代表碰到一座<b>還沒數過的島</b>：count = '+count+'。',
+               en:'('+r+', '+c+') is still land, so this is a <b>new island</b>: count = '+count+'.'});
+      cell[r][c] = 'flood'; q = [[r,c]];
+      snap(11, {zh:'馬上把它沉掉並丟進 queue。<b>格子本身就是 visited 集合</b>，不需要額外開一個表。',
+                en:'Sink it immediately and push it. <b>The grid doubles as the visited set</b>, so no extra bookkeeping is needed.'});
+      while (q.length){
+        const [cr, cc] = q.shift();
+        cell[cr][cc] = 'sunk';
+        snap(13, {zh:'從 queue 取出 ('+cr+', '+cc+')，往四個方向找還沒沉的陸地。',
+                  en:'Pop ('+cr+', '+cc+') and look at its four neighbours for land that is still standing.'});
+        for (const [dr, dc] of [[1,0],[-1,0],[0,1],[0,-1]]){
+          const nr = cr + dr, nc = cc + dc;
+          if (nr < 0 || nc < 0 || nr >= rows || nc >= cols) continue;
+          if (cell[nr][nc] !== 'land') continue;
+          cell[nr][nc] = 'flood'; q.push([nr,nc]);
+          snap(17, {zh:'('+nr+', '+nc+') 也是這座島的一部分：沉掉、推進 queue。'+
+                       '先沉再推，就不會有格子被推兩次。',
+                    en:'('+nr+', '+nc+') belongs to the same island: sink it and push it. Sinking before pushing is what stops a cell entering the queue twice.'});
+        }
+      }
+      q = [];
+      snap(7, {zh:'第 '+count+' 座島整個沉完了，掃描繼續往下走——已經沉掉的格子再也不會被誤算。',
+               en:'Island '+count+' is completely sunk; the scan carries on and no sunk cell can ever be counted again.'});
+    }
+  }
+  scan = null; 
+  snap(7, {zh:'掃完整張格子，答案是 <b>'+count+'</b> 座島。每個格子最多進出 queue 一次，'+
+              '所以是 O(m × n)；BFS 的記憶體是 O(min(m, n))，遞迴 DFS 最壞會是 O(m × n)。',
+           en:'The whole grid is scanned: <b>'+count+'</b> islands. Every cell enters the queue at most once, so O(m × n) time; BFS needs O(min(m, n)) memory while recursive DFS can hit O(m × n).'});
+  return F.list;
+}
+</script>
+<script>
+/* ------------------------------------------------------------------- tabs */
+const TABS = [
+  { id:'bfs', graph:G, code:CODE_BFS,
+    label:{zh:'① BFS 一圈一圈', en:'① BFS ring by ring'},
+    stage:{zh:'BFS：queue 讓你永遠先處理最近的', en:'BFS: the queue always hands you the nearest vertex'},
+    variants:[], build:()=>buildBFS(G,{start:1}),
+    legend:[['#0093a1',{zh:'還沒發現',en:'undiscovered'}],['#ffc000',{zh:'在 queue 裡',en:'in the queue'}],
+            ['#00ffff',{zh:'正在展開',en:'expanding now'}],['#3a4a52',{zh:'處理完',en:'done'}]],
+    idea:{zh:'BFS = 走訪 + 一個 FIFO queue。因為先進先出，<b>離起點 d 的節點一定在距離 d+1 的節點之前出隊</b>，'+
+             '所以第一次碰到某個節點時記下的距離就是最短距離，無權圖的最短路等於免費附贈。'+
+             '最容易錯的一行是標記時機：<b>要在 push 進 queue 的當下標記</b>，等 pop 才標記的話，'+
+             '有兩個鄰居同時指向它的節點會被塞進 queue 兩次。時間 O(V + E)，記憶體是「圖最寬的一層」。',
+          en:'BFS is a traversal plus a FIFO queue. Because it is first-in-first-out, <b>every vertex at distance d leaves the queue before any vertex at distance d+1</b>, '+
+             'so the distance recorded the first time you touch a vertex is already the shortest one - shortest paths on an unweighted graph come for free. '+
+             'The line people get wrong is the marking: <b>mark a vertex when you push it</b>. Mark on pop instead and a vertex with two neighbours pointing at it gets queued twice. '+
+             'O(V + E) time, and memory proportional to the widest layer of the graph.'} },
+
+  { id:'path', graph:G, code:CODE_BFS,
+    label:{zh:'② 最短路徑 1 → 8', en:'② Shortest path 1 → 8'},
+    stage:{zh:'多存一個 parent，就能把路徑還原出來', en:'One extra parent map turns distances into paths'},
+    variants:[], build:()=>buildBFS(G,{start:1, goal:8}),
+    legend:[['#ffc000',{zh:'在 queue 裡',en:'in the queue'}],['#00ffff',{zh:'正在展開',en:'expanding now'}],
+            ['#00ff9c',{zh:'最短路徑',en:'shortest path'}],['#3a4a52',{zh:'處理完',en:'done'}]],
+    idea:{zh:'距離告訴你「幾步」，parent 告訴你「哪幾步」。每次把 v 推進 queue 時順手記 <code>parent[v] = u</code>，'+
+             '最後從終點沿著 parent 一路回推再反轉，就是一條最短路徑。成本只有一個 dict。'+
+             '注意 BFS 只對<b>無權圖</b>（或每條邊權重都一樣）成立；邊有不同權重時要換成優先佇列，那就是 Dijkstra。',
+          en:'Distance tells you how many steps; parent tells you which steps. Whenever you push v, also record <code>parent[v] = u</code>; '+
+             'at the end walk the parents back from the target and reverse - that is a shortest path, for the price of one dictionary. '+
+             'Remember this only holds on an <b>unweighted</b> graph (or one where every edge costs the same). Once edges have different weights you need a priority queue, and that algorithm is Dijkstra.'} },
+
+  { id:'dfs', graph:G, code:CODE_DFS,
+    label:{zh:'③ DFS 一路走到底', en:'③ DFS all the way down'},
+    stage:{zh:'DFS：先衝到底，走不動才回頭', en:'DFS: charge ahead, back up only when stuck'},
+    variants:[], build:()=>buildDFS(G,{}),
+    legend:[['#0093a1',{zh:'沒看過',en:'unseen'}],['#ffc000',{zh:'在呼叫堆疊上',en:'on the call stack'}],
+            ['#00ffff',{zh:'目前這格',en:'current vertex'}],['#3a4a52',{zh:'已完成',en:'finished'}]],
+    idea:{zh:'把 BFS 的 queue 換成 stack 就是 DFS——而遞迴的呼叫堆疊本身就是那個 stack，所以程式碼還更短。'+
+             'DFS 走過的邊構成一棵 <b>DFS 樹</b>，剩下的邊怎麼分類，就是後面環偵測、橋、關節點、強連通分量的全部基礎。'+
+             '它不保證最短路，但記憶體只跟<b>深度</b>有關；反過來說圖很深時遞迴會爆，CPython 預設只有 1000 層，要改寫成用明確 stack 的迭代版。',
+          en:'Swap the BFS queue for a stack and you have DFS - and the recursion call stack already is that stack, which is why the code is even shorter. '+
+             'The edges DFS walks form a <b>DFS tree</b>, and classifying the remaining edges is the foundation for cycle detection, bridges, articulation points and strongly connected components. '+
+             'It gives no shortest-path guarantee, but its memory depends only on <b>depth</b>. The flip side: deep graphs blow the stack, since CPython stops around 1000 frames - rewrite it iteratively with an explicit stack.'} },
+
+  { id:'lc', graph:null, code:CODE_ISLANDS,
+    label:{zh:'④ LeetCode 200 島嶼數量', en:'④ LeetCode 200 Number of Islands'},
+    stage:{zh:'格子就是圖：數島嶼 = 數連通分量', en:'A grid is a graph: counting islands is counting components'},
+    variants:[], build:()=>buildIslands({}),
+    legend:[['#002639',{zh:'水 0',en:'water 0'}],['#ffc000',{zh:'陸地 1',en:'land 1'}],
+            ['#00ffff',{zh:'正在淹沒',en:'being flooded'}],['#3a4a52',{zh:'已沉沒',en:'sunk'}],
+            ['#ff0000',{zh:'掃描位置',en:'scanner'}]],
+    idea:{zh:'不要被「格子」騙了：每個 <code>1</code> 是節點，上下左右相鄰的 <code>1</code> 有邊，'+
+             '題目就變成「有幾個連通分量」。掃描遇到還沒淹的 <code>1</code> 就 count += 1，然後<b>把整座島淹掉</b>，'+
+             '這樣同一座島不會被重複計數。用 BFS 或 DFS 都行——差別只在記憶體。'+
+             '關鍵細節：<b>把格子直接改成 0 當作 visited 集合</b>（面試時記得問可不可以改輸入），'+
+             '而且要「先沉再推進 queue」，不然同一格會被推很多次。',
+          en:'Do not let the grid disguise it: every <code>1</code> is a vertex, orthogonally adjacent <code>1</code>s share an edge, and the question becomes “how many connected components”. '+
+             'Whenever the scan meets land that is still standing, increment the counter and <b>sink the entire island</b>, so no island is ever counted twice. BFS or DFS both work - only the memory profile differs. '+
+             'The detail that matters: <b>write 0 back into the grid and let it be the visited set</b> (in an interview, ask first whether mutating the input is allowed), and sink a cell before pushing it, or the same cell enters the queue many times.'} }
+];
+
+/* ----------------------------------------------------------------- state */
+let tabIx = 0, varIx = 0, frames = [], cur = 0, timer = null;
+const $ = id => document.getElementById(id);
+const curTab = () => TABS[tabIx];
+const curVar = () => (curTab().variants[varIx] || {opt:{}});
+const curGraph = () => curVar().graph || curTab().graph;
+
+function buildTabs(){
+  const box = $('tabs'); box.innerHTML = '';
+  TABS.forEach((t, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(t.label);
+    b.className = i === tabIx ? 'on' : '';
+    b.onclick = () => { tabIx = i; varIx = 0; load(); };
+    box.appendChild(b);
+  });
+  const ex = $('extra'); ex.innerHTML = '';
+  curTab().variants.forEach((v, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(v.lbl);
+    b.className = i === varIx ? 'on' : '';
+    b.onclick = () => { varIx = i; load(); };
+    ex.appendChild(b);
+  });
+  ex.className = curTab().variants.length ? 'toggle-row tabs' : 'hidden';
+}
+
+function load(){
+  stop();
+  frames = curTab().build(curGraph(), curVar().opt || {});
+  cur = 0;
+  buildTabs();
+  render();
+}
+</script>
+<script>
+/* ---------------------------------------------------------------- drawing */
+const R = 0.40, VH = 7;
+const NODE_STYLE = {
+  idle  :{fill:'#002639', stroke:'#0093a1', text:'#d6f2f4', w:.05, glow:0},
+  queued:{fill:'#002639', stroke:'#ffc000', text:'#ffc000', w:.07, glow:.35},
+  active:{fill:'#0093a1', stroke:'#00ffff', text:'#00141d', w:.08, glow:.85},
+  done  :{fill:'#06202b', stroke:'#3a4a52', text:'#818181', w:.045,glow:0},
+  path  :{fill:'#00ff9c', stroke:'#00ffff', text:'#00231a', w:.08, glow:.7}
+};
+const EDGE_STYLE = {
+  idle  :{c:'#0093a1', w:.038, o:.5},
+  active:{c:'#ffc000', w:.075, o:1},
+  tree  :{c:'#00aaaa', w:.062, o:1},
+  skip  :{c:'#818181', w:.05,  o:.9},
+  path  :{c:'#00ff9c', w:.085, o:1}
+};
+const CELL_STYLE = {
+  water:{fill:'#06202b', stroke:'#0093a1', text:'#5c7a83', label:'0'},
+  land :{fill:'#002639', stroke:'#ffc000', text:'#ffc000', label:'1'},
+  flood:{fill:'#0093a1', stroke:'#00ffff', text:'#00141d', label:'1'},
+  sunk :{fill:'#0a1a20', stroke:'#3a4a52', text:'#4f6068', label:'0'}
+};
+const svgNS = 'http://www.w3.org/2000/svg';
+const mk = (tag, attrs) => { const e = document.createElementNS(svgNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+
+function svgDefs(svg){
+  const defs = mk('defs', {});
+  const filt = mk('filter', {id:'glow', x:'-60%', y:'-60%', width:'220%', height:'220%'});
+  filt.appendChild(mk('feGaussianBlur', {stdDeviation:'.06', result:'b'}));
+  const merge = mk('feMerge', {});
+  merge.appendChild(mk('feMergeNode', {in:'b'}));
+  merge.appendChild(mk('feMergeNode', {in:'SourceGraphic'}));
+  filt.appendChild(merge); defs.appendChild(filt);
+  svg.appendChild(defs);
+}
+function clear(svg){ while (svg.firstChild) svg.removeChild(svg.firstChild); }
+
+function drawGraph(frame){
+  const g = curGraph(), svg = $('stage');
+  svg.setAttribute('viewBox', '0 0 9.6 7');
+  clear(svg); svgDefs(svg);
+  g.edges.forEach(([u, v]) => {
+    const key = edgeState(frame, u, v), st = EDGE_STYLE[key] || EDGE_STYLE.idle;
+    const [x1, y1] = g.pos[u], [x2, y2] = g.pos[v];
+    const dx = x2 - x1, dy = -(y2 - y1), L = Math.hypot(dx, dy) || 1, pad = R + 0.06;
+    svg.appendChild(mk('line', {
+      x1:(x1 + dx / L * pad).toFixed(3), y1:(VH - y1 + dy / L * pad).toFixed(3),
+      x2:(x2 - dx / L * pad).toFixed(3), y2:(VH - y2 - dy / L * pad).toFixed(3),
+      stroke:st.c, 'stroke-width':st.w, opacity:st.o, 'stroke-linecap':'round'}));
+  });
+  nodesOf(g).forEach(n => {
+    const st = NODE_STYLE[frame.nodes[n] || 'idle'];
+    const [x, y] = g.pos[n], cy = VH - y;
+    const c = mk('circle', {cx:x, cy:cy, r:R, fill:st.fill, stroke:st.stroke, 'stroke-width':st.w});
+    if (st.glow) c.setAttribute('filter', 'url(#glow)');
+    svg.appendChild(c);
+    const t = mk('text', {x:x, y:cy + 0.13, 'text-anchor':'middle', fill:st.text, 'font-size':'.40'});
+    t.textContent = nameOf(g, n);
+    svg.appendChild(t);
+  });
+}
+
+function drawGrid(frame){
+  const gr = frame.grid, svg = $('stage');
+  const w = 1.0, x0 = 1.1, y0 = 0.7;
+  svg.setAttribute('viewBox', '0 0 9.6 ' + (y0 * 2 + gr.rows * w).toFixed(2));
+  clear(svg); svgDefs(svg);
+  for (let r = 0; r < gr.rows; r++){
+    for (let c = 0; c < gr.cols; c++){
+      const st = CELL_STYLE[gr.cells[r][c]];
+      const x = x0 + c * w, y = y0 + r * w;
+      const rect = mk('rect', {x:x + .04, y:y + .04, width:w - .08, height:w - .08, rx:.09,
+        fill:st.fill, stroke:st.stroke, 'stroke-width':gr.cells[r][c] === 'water' ? .035 : .07});
+      if (gr.cells[r][c] === 'flood') rect.setAttribute('filter', 'url(#glow)');
+      svg.appendChild(rect);
+      const t = mk('text', {x:x + w / 2, y:y + w / 2 + .16, 'text-anchor':'middle',
+        fill:st.text, 'font-size':'.44'});
+      t.textContent = st.label;
+      svg.appendChild(t);
+    }
+  }
+  if (gr.scan){
+    const [r, c] = gr.scan;
+    svg.appendChild(mk('rect', {x:x0 + c * w - .04, y:y0 + r * w - .04, width:w, height:w,
+      rx:.14, fill:'none', stroke:'#ff0000', 'stroke-width':.06, 'stroke-dasharray':'.14 .10'}));
+  }
+  const tx = x0 + gr.cols * w + 0.55;
+  const lbl = mk('text', {x:tx, y:y0 + 0.55, fill:'#00aaaa', 'font-size':'.40'});
+  lbl.textContent = LANG === 'zh' ? '紅框＝掃描位置' : 'red box = scanner';
+  svg.appendChild(lbl);
+  const lbl2 = mk('text', {x:tx, y:y0 + 1.15, fill:'#818181', 'font-size':'.36'});
+  lbl2.textContent = LANG === 'zh' ? '沉掉的格子變成 0' : 'sunk cells become 0';
+  svg.appendChild(lbl2);
+}
+
+function drawPanels(frame){
+  const box = $('panels'); box.innerHTML = '';
+  (frame.panels || []).forEach(p => {
+    const d = document.createElement('div'); d.className = 'panel';
+    const l = document.createElement('div'); l.className = 'lbl'; l.textContent = tr(p.lbl);
+    const c = document.createElement('div'); c.className = 'chips';
+    p.chips.forEach(ch => { const s = document.createElement('span');
+      s.className = 'chip ' + (ch.cls || ''); s.textContent = ch.t; c.appendChild(s); });
+    d.appendChild(l); d.appendChild(c); box.appendChild(d);
+  });
+}
+
+function drawCode(frame){
+  const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  $('code').innerHTML = curTab().code.map((ln, i) => {
+    const h = esc(ln).replace(/(#.*)$/, '<span class="cm">$1</span>');
+    return '<span class="ln' + (i === frame.line ? ' on' : '') + '">' + (h || ' ') + '</span>';
+  }).join('');
+}
+
+function drawLegend(){
+  $('legend').innerHTML = curTab().legend.map(([c, txt]) =>
+    '<span><i style="background:' + c + '"></i>' + tr(txt) + '</span>').join('');
+}
+
+function render(){
+  if (!frames.length) return;
+  cur = Math.max(0, Math.min(cur, frames.length - 1));
+  const f = frames[cur];
+  $('stage-title').textContent = tr(curTab().stage);
+  if (f.mode === 'grid') drawGrid(f); else drawGraph(f);
+  drawPanels(f); drawCode(f); drawLegend();
+  $('narr').innerHTML = tr(f.msg);
+  $('idea').innerHTML = tr(curTab().idea);
+  $('stepno').textContent = (cur + 1) + ' / ' + frames.length;
+  $('prev').disabled = cur === 0;
+  $('next').disabled = cur === frames.length - 1;
+}
+
+/* --------------------------------------------------------------- controls */
+function step(d){ stop(); cur += d; render(); }
+function reset(){ stop(); cur = 0; render(); }
+function stop(){ if (timer){ clearInterval(timer); timer = null;
+  $('play').textContent = tr(T.play); } }
+function togglePlay(){
+  if (timer) { stop(); return; }
+  if (cur >= frames.length - 1) cur = 0;
+  $('play').textContent = tr(T.pause);
+  timer = setInterval(() => {
+    if (cur >= frames.length - 1) { stop(); return; }
+    cur++; render();
+  }, Number($('speed').value));
+}
+$('speed').addEventListener('input', () => { if (timer){ stop(); togglePlay(); } });
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight') { step(1); e.preventDefault(); }
+  else if (e.key === 'ArrowLeft') { step(-1); e.preventDefault(); }
+  else if (e.key === ' ') { togglePlay(); e.preventDefault(); }
+});
+
+setLang('zh');
+load();
+</script>
+</body>
+</html>

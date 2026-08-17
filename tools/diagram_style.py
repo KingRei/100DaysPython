@@ -136,12 +136,26 @@ def arrow(ax, p1, p2, color=TEAL, lw=1.8, rad=0.0, style='-|>', ms=12,
                                  zorder=zorder))
 
 
+def points_per_unit(ax):
+    """How many typographic points one data unit is worth on this axes.
+
+    ``FancyArrowPatch`` shrink values are in points, but node radii are in data
+    units, so a directed edge needs this conversion - otherwise the arrowhead
+    ends up underneath the node and disappears.
+    """
+    fig = ax.figure
+    bbox = ax.get_window_extent()
+    x0, x1 = ax.get_xlim()
+    return bbox.width / abs(x1 - x0) * 72.0 / fig.dpi
+
+
 def edge(ax, p1, p2, color=TEAL, lw=1.8, r=0.42, directed=True, weight=None,
          rad=0.0, wsize=14, wcolor=TEAL_L):
     """Graph edge between two node centres, trimmed to the node radius."""
+    gap = r * points_per_unit(ax)
     arrow(ax, p1, p2, color=color, lw=lw, rad=rad,
           style='-|>' if directed else '-',
-          shrinkA=r * 72 / 2.0, shrinkB=r * 72 / 2.0)
+          shrinkA=gap, shrinkB=gap)
     if weight is not None:
         mx, my = (p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2
         dx, dy = p2[0] - p1[0], p2[1] - p1[1]

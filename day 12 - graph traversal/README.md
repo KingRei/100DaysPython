@@ -1,7 +1,11 @@
 # Graph Traversal - BFS and DFS
 
 More details in:
-https://medium.com/100-days-of-python/day-12-graph-traversal-bfs-and-dfs
+https://medium.com/100-days-of-python/day-12-data-structure-graph-traversal-bfs-and-dfs-96580ae83b0e
+
+Interactive walkthrough: [demo.html](demo.html) - a single self-contained page
+(no build step, works offline) that animates BFS ring by ring, shortest-path
+reconstruction, DFS and LeetCode 200 step by step.
 
 ![img](https://github.com/KingRei/100DaysPython/blob/master/day%2012%20-%20graph%20traversal/imgs/day12_1.png?raw=true)
 
@@ -71,6 +75,8 @@ you go means the grid doubles as the visited set.
 ```sh
 python graph_traversal.py     # standalone walkthrough, no Jupyter required
 ```
+
+Or open `demo.html` in a browser for the animated version (中文 / English toggle).
 
 ## References
 

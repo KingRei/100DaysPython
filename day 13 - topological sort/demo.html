@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 13 - Topological Sort / 拓樸排序</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='%23002639' stroke='%230093a1' stroke-width='2'/><path d='M9 16h14M17 11l6 5-6 5' stroke='%2300aaaa' stroke-width='2' fill='none'/></svg>">
+<style>
+:root{
+  --navy:#002639; --navy-d:#001824; --teal:#0093a1; --teal-l:#00aaaa;
+  --cyan:#00ffff; --grey:#292c30; --grey-l:#818181; --red:#ff0000;
+  --amber:#ffc000; --pale:#d6f2f4; --white:#ffffff;
+  --serif:"Latin Modern Roman","Liberation Serif",Georgia,"Times New Roman",serif;
+  --mono:"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:radial-gradient(1200px 700px at 50% -10%,#00344a 0%,var(--navy-d) 60%,#000f18 100%);
+  color:var(--pale); font-family:var(--serif); min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--teal-l)}
+.wrap{max-width:1180px;margin:0 auto;padding:26px 20px 60px}
+header{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-bottom:6px}
+h1{font-size:30px;margin:0;color:var(--white);letter-spacing:.4px;
+   text-shadow:0 0 14px rgba(0,255,255,.35)}
+.day{font-size:13px;letter-spacing:2.4px;text-transform:uppercase;color:var(--teal-l);
+     border:1px solid var(--teal);border-radius:999px;padding:4px 12px}
+.sub{color:var(--grey-l);font-size:15px;margin:8px 0 20px;max-width:70ch;line-height:1.6}
+.spacer{flex:1}
+.lang{display:flex;border:1px solid var(--teal);border-radius:999px;overflow:hidden}
+.lang button{background:transparent;color:var(--teal-l);border:0;padding:5px 14px;
+  font-family:var(--serif);font-size:14px;cursor:pointer}
+.lang button.on{background:var(--teal);color:#00141d}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
+.tabs button{
+  background:rgba(0,38,57,.75);border:1px solid rgba(0,147,161,.55);color:var(--pale);
+  padding:9px 16px;border-radius:8px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  transition:.18s}
+.tabs button:hover{border-color:var(--teal-l);color:var(--white)}
+.tabs button.on{background:var(--teal);border-color:var(--teal-l);color:#00141d;
+  box-shadow:0 0 18px rgba(0,255,255,.25)}
+.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:18px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:rgba(0,24,36,.72);border:1px solid rgba(0,147,161,.35);border-radius:12px;
+      padding:14px 16px}
+.card h3{margin:0 0 10px;font-size:14px;letter-spacing:2px;text-transform:uppercase;
+         color:var(--teal-l);font-weight:normal}
+svg.stage{width:100%;height:auto;display:block;touch-action:none}
+svg.stage text{font-family:var(--serif);user-select:none}
+.narr{min-height:52px;margin-top:10px;padding:10px 12px;border-left:3px solid var(--amber);
+      background:rgba(255,192,0,.06);font-size:16px;line-height:1.55;color:var(--white)}
+.narr code{font-family:var(--mono);font-size:14px;color:var(--amber)}
+.ctrl{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
+.ctrl button{background:var(--navy);border:1px solid var(--teal);color:var(--teal-l);
+  border-radius:8px;padding:7px 13px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  min-width:44px;transition:.15s}
+.ctrl button:hover:not(:disabled){background:var(--teal);color:#00141d}
+.ctrl button:disabled{opacity:.35;cursor:default}
+.ctrl .play{min-width:92px;font-weight:bold}
+.ctrl input[type=range]{width:120px;accent-color:var(--teal-l)}
+.stepno{color:var(--grey-l);font-size:14px;font-family:var(--mono)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;min-height:30px}
+.chip{border:1px solid var(--teal);border-radius:6px;padding:3px 9px;font-family:var(--mono);
+      font-size:14px;color:var(--pale);background:rgba(0,147,161,.10)}
+.chip.hot{border-color:var(--amber);color:var(--amber);background:rgba(255,192,0,.12);
+  box-shadow:0 0 12px rgba(255,192,0,.25)}
+.chip.dim{border-color:#3a4a52;color:var(--grey-l);background:transparent}
+.chip.bad{border-color:var(--red);color:#ff8080;background:rgba(255,0,0,.12)}
+.chip.ok{border-color:var(--teal-l);color:var(--cyan);background:rgba(0,255,255,.08)}
+.chip.empty{border-style:dashed;color:var(--grey-l);border-color:#3a4a52}
+.panel+.panel{margin-top:12px}
+.panel .lbl{font-size:13px;letter-spacing:1.6px;text-transform:uppercase;color:var(--grey-l);
+  margin-bottom:5px}
+pre.code{margin:0;font-family:var(--mono);font-size:13.5px;line-height:1.72;overflow-x:auto;
+  color:#9fc7cf}
+pre.code .ln{display:block;padding:0 8px;border-left:3px solid transparent;white-space:pre}
+pre.code .ln.on{background:rgba(0,255,255,.10);border-left-color:var(--cyan);color:var(--white)}
+pre.code .cm{color:#5c7a83;font-style:italic}
+pre.code .kw{color:var(--amber)}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:13.5px;color:var(--grey-l)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;
+  vertical-align:-1px;border:1px solid rgba(255,255,255,.25)}
+.note{font-size:15px;line-height:1.65;color:var(--pale)}
+.note b{color:var(--amber);font-weight:normal}
+.toggle-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+footer{margin-top:32px;padding-top:16px;border-top:1px solid rgba(0,147,161,.3);
+  color:var(--grey-l);font-size:14px;display:flex;gap:18px;flex-wrap:wrap}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <span class="day">Day 13</span>
+  <h1 data-i18n="title">拓樸排序 · 互動演示</h1>
+  <span class="spacer"></span>
+  <div class="lang">
+    <button id="btn-zh" class="on" onclick="setLang('zh')">中文</button>
+    <button id="btn-en" onclick="setLang('en')">EN</button>
+  </div>
+</header>
+<p class="sub" data-i18n="sub">把相依關係排成一條可以照著做的順序。左邊是圖，右邊是演算法當下的狀態——按 ▶ 就會一步一步跑給你看。</p>
+
+<div class="tabs" id="tabs"></div>
+
+<div class="grid">
+  <div>
+    <div class="card">
+      <h3 id="stage-title">Kahn</h3>
+      <svg class="stage" id="stage" viewBox="0 0 9.6 7" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="legend" id="legend"></div>
+      <div class="narr" id="narr"></div>
+      <div class="ctrl">
+        <button onclick="reset()" title="reset">⟲</button>
+        <button id="prev" onclick="step(-1)">◀</button>
+        <button class="play" id="play" onclick="togglePlay()" data-i18n="play">▶ 播放</button>
+        <button id="next" onclick="step(1)">▶</button>
+        <span class="stepno" id="stepno">0 / 0</span>
+        <span class="spacer"></span>
+        <span style="font-size:13px;color:var(--grey-l)" data-i18n="speed">速度</span>
+        <input type="range" id="speed" min="180" max="1600" step="20" value="820">
+      </div>
+      <div class="toggle-row" id="extra"></div>
+    </div>
+  </div>
+  <div>
+    <div class="card" id="state-card">
+      <h3 data-i18n="state">演算法狀態</h3>
+      <div id="panels"></div>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="code">程式碼</h3>
+      <pre class="code" id="code"></pre>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="idea">重點</h3>
+      <div class="note" id="idea"></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <span>100 Days of Python — Day 13</span>
+  <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2013%20-%20topological%20sort" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://medium.com/100-days-of-python/day-13-%E6%8B%93%E6%A8%B8%E6%8E%92%E5%BA%8F-kahn-dfs-%E4%BB%A5%E5%8F%8A%E4%BD%A0%E7%9A%84-build-%E7%82%BA%E4%BB%80%E9%BA%BC%E6%9C%83%E5%8D%A1%E4%BD%8F-b31f3edc4870" target="_blank" rel="noopener">Medium</a>
+</footer>
+</div>
+<script>
+/* ------------------------------------------------------------------ i18n */
+const T = {
+  title:{zh:'拓樸排序 · 互動演示', en:'Topological Sort · interactive'},
+  sub:{zh:'把相依關係排成一條可以照著做的順序。左邊是圖，右邊是演算法當下的狀態——按 ▶ 就會一步一步跑給你看。',
+       en:'Turn a pile of dependencies into an order you can actually follow. The graph is on the left, the algorithm state on the right - press ▶ and watch it run one step at a time.'},
+  play:{zh:'▶ 播放', en:'▶ Play'}, pause:{zh:'❚❚ 暫停', en:'❚❚ Pause'},
+  speed:{zh:'速度', en:'Speed'}, state:{zh:'演算法狀態', en:'Algorithm state'},
+  code:{zh:'程式碼', en:'Code'}, idea:{zh:'重點', en:'The idea'}
+};
+let LANG = 'zh';
+const tr = o => (o == null ? '' : (typeof o === 'string' ? o : (o[LANG] || o.en)));
+
+function setLang(l){
+  LANG = l;
+  document.documentElement.lang = l === 'zh' ? 'zh-Hant' : 'en';
+  document.getElementById('btn-zh').classList.toggle('on', l === 'zh');
+  document.getElementById('btn-en').classList.toggle('on', l === 'en');
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.getAttribute('data-i18n');
+    if (T[k]) el.textContent = tr(T[k]);
+  });
+  buildTabs(); render();
+}
+
+/* ----------------------------------------------------------------- graphs */
+const DAG = {
+  pos:{0:[1.2,4.9],1:[1.2,2.1],2:[3.5,5.9],3:[3.5,3.5],4:[3.5,1.1],
+       5:[5.8,4.7],6:[5.8,2.3],7:[8.1,3.5]},
+  edges:[[0,2],[0,3],[1,3],[1,4],[2,5],[3,5],[3,6],[4,6],[5,7],[6,7]]
+};
+const CYC = {
+  pos:{0:[1.5,3.5],1:[4.0,5.6],2:[6.6,3.5],3:[4.0,1.4]},
+  names:{0:'A',1:'B',2:'C',3:'D'},
+  edges:[[0,1],[1,2],[2,3],[3,1]]
+};
+const DAG_LEX = {
+  pos:{2:[1.2,5.5],3:[1.2,3.3],4:[1.2,1.1],1:[4.4,5.5],0:[4.4,2.2],5:[7.6,3.6]},
+  edges:[[4,0],[4,5],[2,1],[3,5]]
+};
+const LC_OK = {
+  pos:{0:[1.5,3.5],1:[4.3,5.4],2:[4.3,1.6],3:[7.2,3.5]},
+  names:{0:'0',1:'1',2:'2',3:'3'},
+  edges:[[0,1],[0,2],[1,3],[2,3]]
+};
+const LC_BAD = {
+  pos:LC_OK.pos, names:LC_OK.names,
+  edges:[[0,1],[0,2],[1,3],[3,1]]
+};
+const nodesOf = g => Object.keys(g.pos).map(Number).sort((a,b)=>a-b);
+const adjOf = g => { const a={}; nodesOf(g).forEach(n=>a[n]=[]);
+                     g.edges.forEach(([u,v])=>a[u].push(v)); return a; };
+const nameOf = (g,n) => (g.names ? g.names[n] : String(n));
+const ek = (u,v) => u + '-' + v;
+
+/* ------------------------------------------------------- frame collector */
+function Frames(g){
+  this.g = g; this.list = [];
+  this.push = (o) => {
+    this.list.push({
+      nodes:Object.assign({}, o.nodes), edges:Object.assign({}, o.edges||{}),
+      panels:JSON.parse(JSON.stringify(o.panels||[])), line:o.line, msg:o.msg
+    });
+  };
+}
+
+/* --------------------------------------------------------- Kahn's algorithm */
+const CODE_KAHN = [
+  'indeg = {v: 0 for v in nodes}',
+  'for u, v in edges:  indeg[v] += 1',
+  'q = deque(v for v in nodes if indeg[v] == 0)',
+  'order = []',
+  'while q:',
+  '    u = q.popleft()          # heappop for smallest',
+  '    order.append(u)',
+  '    for v in adj[u]:',
+  '        indeg[v] -= 1',
+  '        if indeg[v] == 0:',
+  '            q.append(v)',
+  'ok = len(order) == len(nodes)   # else: a cycle'
+];
+
+function buildKahn(g, opt){
+  opt = opt || {};
+  const smallest = !!opt.smallest, verdict = !!opt.verdict;
+  const N = nodesOf(g), adj = adjOf(g), F = new Frames(g);
+  const indeg = {}; N.forEach(n => indeg[n] = 0);
+  g.edges.forEach(([u,v]) => indeg[v]++);
+  let queue = [], order = [], cur = null, edges = {};
+
+  const chipsIndeg = hot => N.map(n => ({t: nameOf(g,n)+':'+indeg[n],
+      cls: indeg[n]===0 && order.indexOf(n)<0 && queue.indexOf(n)<0 ? 'ok'
+           : (n===hot ? 'hot' : (order.indexOf(n)>=0 ? 'dim' : ''))}));
+  const panels = hot => ([
+    {lbl:{zh:'in-degree（還欠幾個前置）',en:'in-degree (unmet prerequisites)'}, chips:chipsIndeg(hot)},
+    {lbl:{zh:smallest?'heap（可以開始的）':'queue（可以開始的）',en:smallest?'heap (ready to go)':'queue (ready to go)'},
+     chips: queue.length ? queue.map(n=>({t:nameOf(g,n),cls:'hot'}))
+                         : [{t:'∅', cls:'empty'}]},
+    {lbl:{zh:'order（輸出順序）',en:'order (result)'},
+     chips: order.length ? order.map(n=>({t:nameOf(g,n),cls:'ok'}))
+                         : [{t:'∅', cls:'empty'}]}
+  ]);
+  const nodeStates = () => {
+    const s = {};
+    N.forEach(n => s[n] = order.indexOf(n) >= 0 ? 'done'
+                         : (queue.indexOf(n) >= 0 ? 'queued' : 'idle'));
+    if (cur !== null) s[cur] = 'active';
+    return s;
+  };
+
+  F.push({nodes:nodeStates(), edges:{}, panels:panels(), line:1,
+    msg:{zh:'先數每個節點的 in-degree：有幾條邊指進來，就代表它還在等幾個前置任務。',
+         en:'Count each vertex’s in-degree - how many edges point at it, i.e. how many prerequisites it is still waiting on.'}});
+
+  queue = N.filter(n => indeg[n] === 0);
+  F.push({nodes:nodeStates(), edges:{}, panels:panels(), line:2,
+    msg:{zh:'in-degree 為 0 的節點沒有任何前置，全部丟進 queue：這些現在就能做。',
+         en:'Vertices with in-degree 0 have no prerequisites at all - push them into the queue; they can start right now.'}});
+
+  let guard = 0;
+  while (queue.length && guard++ < 999){
+    if (smallest) queue.sort((a,b)=>a-b);
+    cur = queue.shift(); order.push(cur);
+    edges = {};
+    F.push({nodes:nodeStates(), edges:edges, panels:panels(), line:6,
+      msg:{zh:'取出 <code>'+nameOf(g,cur)+'</code>'+(smallest?'（heap 保證取到最小的）':'')+'，放進輸出序列。它所有前置都完成了。',
+           en:'Pop <code>'+nameOf(g,cur)+'</code>'+(smallest?' (the heap hands back the smallest)':'')+' and append it to the order - every prerequisite of it is done.'}});
+    for (const v of adj[cur]){
+      indeg[v]--;
+      edges = {}; edges[ek(cur,v)] = 'active';
+      F.push({nodes:nodeStates(), edges:edges, panels:panels(v), line:8,
+        msg:{zh:'沿著邊 <code>'+nameOf(g,cur)+' → '+nameOf(g,v)+'</code> 把 '+nameOf(g,v)+' 的 in-degree 減 1，現在是 '+indeg[v]+'。',
+             en:'Follow edge <code>'+nameOf(g,cur)+' → '+nameOf(g,v)+'</code> and drop '+nameOf(g,v)+'’s in-degree to '+indeg[v]+'.'}});
+      if (indeg[v] === 0){
+        queue.push(v);
+        F.push({nodes:nodeStates(), edges:edges, panels:panels(v), line:10,
+          msg:{zh:'<code>'+nameOf(g,v)+'</code> 歸零了——最後一個前置剛剛做完，把它推進 queue。',
+               en:'<code>'+nameOf(g,v)+'</code> hit zero - its last prerequisite just finished, so it joins the queue.'}});
+      }
+    }
+    cur = null;
+  }
+  const ok = order.length === N.length;
+  const stuck = nodeStates();
+  if (!ok) N.forEach(n => { if (order.indexOf(n) < 0) stuck[n] = 'cycle'; });
+  const msgDone = ok
+    ? {zh:'queue 空了，而且 '+order.length+' 個節點全部輸出——這就是一個合法的拓樸順序。O(V + E)。',
+       en:'The queue is empty and all '+order.length+' vertices came out - that is a valid topological order, in O(V + E).'}
+    : {zh:'queue 空了，但只輸出 '+order.length+'/'+N.length+' 個節點。剩下的節點互相指著對方，in-degree 永遠降不到 0——圖裡有環，沒有拓樸順序。',
+       en:'The queue is empty but only '+order.length+'/'+N.length+' vertices came out. The rest point at each other, so their in-degree never reaches 0 - the graph has a cycle and no topological order exists.'};
+  if (ok && smallest && !opt.noCompare){
+    const plain = buildKahn(g, {}).slice(-1)[0].panels[2].chips.map(c => c.t).join(' ');
+    const heap  = order.map(n => nameOf(g,n)).join(' ');
+    if (plain !== heap){
+      msgDone.zh += ' 同一張圖用普通 queue 會給 ' + plain + '，用 min-heap 則是 ' + heap + '——兩個都合法，但只有後者是字典序最小的。';
+      msgDone.en += ' On this same graph a plain queue gives ' + plain + ' while the min-heap gives ' + heap + ' - both valid, but only the second is lexicographically smallest.';
+    }
+  }
+  const p = panels();
+  if (verdict) p.push({lbl:{zh:'LeetCode 207 回傳',en:'LeetCode 207 returns'},
+      chips:[{t: ok ? 'True' : 'False', cls: ok ? 'ok' : 'bad'}]});
+  F.push({nodes:stuck, edges:{}, panels:p, line:11, msg:msgDone});
+  return F.list;
+}
+</script>
+<script>
+/* -------------------------------------------------- DFS post-order version */
+const CODE_DFS = [
+  'WHITE, GREY, BLACK = 0, 1, 2',
+  'def visit(u):',
+  '    color[u] = GREY            # on the current path',
+  '    for v in adj[u]:',
+  '        if color[v] == GREY:   raise Cycle(v, u)',
+  '        if color[v] == WHITE:  visit(v)',
+  '    color[u] = BLACK           # finished',
+  '    out.append(u)              # post-order',
+  'for u in nodes:',
+  '    if color[u] == WHITE: visit(u)',
+  'order = list(reversed(out))    # the topological order'
+];
+
+function buildDFS(g, opt){
+  opt = opt || {};
+  const N = nodesOf(g), adj = adjOf(g), F = new Frames(g);
+  const color = {}; N.forEach(n => color[n] = 0);
+  const out = [], path = [];
+  let cycle = null, treeEdges = {};
+
+  const colName = c => c === 0 ? 'WHITE' : (c === 1 ? 'GREY' : 'BLACK');
+  const colCls  = c => c === 0 ? 'dim'   : (c === 1 ? 'hot'  : 'ok');
+  const panels = () => {
+    const p = [
+      {lbl:{zh:'color（WHITE 未看過 / GREY 在路徑上 / BLACK 已完成）',
+            en:'color (WHITE unseen / GREY on the path / BLACK finished)'},
+       chips:N.map(n=>({t:nameOf(g,n)+':'+colName(color[n]), cls:colCls(color[n])}))},
+      {lbl:{zh:'遞迴路徑（呼叫堆疊）',en:'recursion path (call stack)'},
+       chips: path.length ? path.map(n=>({t:nameOf(g,n),cls:'hot'})) : [{t:'∅',cls:'empty'}]},
+      {lbl:{zh:'out（後序完成順序）',en:'out (post-order finish list)'},
+       chips: out.length ? out.map(n=>({t:nameOf(g,n),cls:''})) : [{t:'∅',cls:'empty'}]}
+    ];
+    if (cycle) p.push({lbl:{zh:'找到的環',en:'cycle found'},
+      chips:cycle.concat([cycle[0]]).map(n=>({t:nameOf(g,n),cls:'bad'}))});
+    return p;
+  };
+  const nodeStates = () => {
+    const s = {};
+    N.forEach(n => s[n] = color[n] === 0 ? 'idle' : (color[n] === 1 ? 'grey' : 'black'));
+    if (path.length) s[path[path.length-1]] = 'active';
+    if (cycle) cycle.forEach(n => s[n] = 'cycle');
+    return s;
+  };
+  const push = (line, msg, extraEdges) => F.push({
+    nodes:nodeStates(), edges:Object.assign({}, treeEdges, extraEdges||{}),
+    panels:panels(), line:line, msg:msg});
+
+  push(8, {zh:'DFS 版本不看 in-degree，改用顏色：白色沒看過、灰色正在遞迴路徑上、黑色已經完成。',
+           en:'The DFS version ignores in-degrees and uses colours instead: white unseen, grey on the current recursion path, black finished.'});
+
+  const CYCLE_STOP = {};
+  function visit(u){
+    color[u] = 1; path.push(u);
+    push(2, {zh:'進入 <code>'+nameOf(g,u)+'</code>，標成 GREY——它現在在遞迴路徑上。',
+             en:'Enter <code>'+nameOf(g,u)+'</code> and paint it GREY - it is on the current recursion path.'});
+    for (const v of adj[u]){
+      const e = {}; e[ek(u,v)] = 'active';
+      if (color[v] === 1){
+        cycle = path.slice(path.indexOf(v));
+        const back = {}; back[ek(u,v)] = 'back';
+        push(4, {zh:'邊 <code>'+nameOf(g,u)+' → '+nameOf(g,v)+'</code> 指回一個 GREY 節點，這是一條 <b>back edge</b>：'+
+                    '從 '+nameOf(g,v)+' 一路走到 '+nameOf(g,u)+' 再繞回 '+nameOf(g,v)+'，環就在這裡，拓樸排序不存在。',
+                 en:'Edge <code>'+nameOf(g,u)+' → '+nameOf(g,v)+'</code> points back at a GREY vertex - a <b>back edge</b>. '+
+                    'The path from '+nameOf(g,v)+' down to '+nameOf(g,u)+' plus this edge is the cycle, so no topological order exists.'}, back);
+        if (opt.stopOnCycle) throw CYCLE_STOP;
+        continue;
+      }
+      if (color[v] === 0){
+        push(5, {zh:'看鄰居 <code>'+nameOf(g,v)+'</code>，還是白的——先遞迴進去，把它整棵子圖做完。',
+                 en:'Neighbour <code>'+nameOf(g,v)+'</code> is still white - recurse into it and finish its whole sub-graph first.'}, e);
+        treeEdges[ek(u,v)] = 'tree';
+        visit(v);
+        if (cycle && opt.stopOnCycle) return;
+      } else {
+        push(3, {zh:'鄰居 <code>'+nameOf(g,v)+'</code> 已經是 BLACK，早就完成了，跳過。',
+                 en:'Neighbour <code>'+nameOf(g,v)+'</code> is already BLACK and long finished - skip it.'}, e);
+      }
+    }
+    color[u] = 2; path.pop(); out.push(u);
+    push(7, {zh:'<code>'+nameOf(g,u)+'</code> 的鄰居都處理完了，塗黑並 append 到 out。'+
+                '關鍵：<b>它一定排在所有後代的後面</b>，所以 out 是反過來的答案。',
+             en:'All of <code>'+nameOf(g,u)+'</code>’s neighbours are done, so paint it black and append it to out. '+
+                'Key point: <b>it finishes after every one of its descendants</b>, which is why out comes out reversed.'});
+  }
+
+  try {
+    for (const u of N) if (color[u] === 0){
+      push(9, {zh:'從 <code>'+nameOf(g,u)+'</code> 開一趟新的 DFS（圖可能不連通，所以要外層迴圈）。',
+               en:'Start a fresh DFS from <code>'+nameOf(g,u)+'</code> - the graph may be disconnected, hence the outer loop.'});
+      visit(u);
+    }
+  } catch (e) { if (e !== CYCLE_STOP) throw e; }
+
+  if (!cycle){
+    const order = out.slice().reverse();
+    const p = panels();
+    p.push({lbl:{zh:'reversed(out) = 拓樸順序',en:'reversed(out) = topological order'},
+            chips:order.map(n=>({t:nameOf(g,n),cls:'ok'}))});
+    F.push({nodes:nodeStates(), edges:treeEdges, panels:p, line:10,
+      msg:{zh:'把 out 反過來就是拓樸順序：'+order.map(n=>nameOf(g,n)).join(' → ')+
+              '。跟 Kahn 給的順序不一樣，但兩個都合法——拓樸順序本來就不唯一。',
+           en:'Reverse out and you have a topological order: '+order.map(n=>nameOf(g,n)).join(' → ')+
+              '. It differs from Kahn’s answer, and both are valid - topological orders are not unique.'}});
+  }
+  return F.list;
+}
+</script>
+<script>
+/* ------------------------------------------------------------------- tabs */
+const TABS = [
+  { id:'kahn', graph:DAG, code:CODE_KAHN,
+    label:{zh:'① Kahn（用 in-degree）', en:'① Kahn (in-degree)'},
+    stage:{zh:'Kahn：一層一層剝掉沒有前置的節點', en:'Kahn: peel off the vertices that owe nothing'},
+    variants:[
+      {lbl:{zh:'一般 queue', en:'plain queue'}, opt:{}},
+      {lbl:{zh:'min-heap（字典序最小 · LC 210）', en:'min-heap (lexicographically smallest · LC 210)'},
+       graph:DAG_LEX, opt:{smallest:true}}
+    ],
+    build:(g,o)=>buildKahn(g,o),
+    legend:[['#0093a1',{zh:'還沒動到',en:'untouched'}],['#ffc000',{zh:'in-degree = 0，可以開始',en:'in-degree 0, ready'}],
+            ['#00ffff',{zh:'正在處理',en:'being processed'}],['#3a4a52',{zh:'已輸出',en:'already output'}]],
+    idea:{zh:'把「還欠幾個前置」記成一個數字，就是 in-degree。<b>只有欠 0 個的人可以動</b>，做完他就替所有下游各還一筆債，'+
+             '誰的債剛好清光就換誰上場。每個節點進出 queue 一次、每條邊看一次，所以是 O(V + E)。'+
+             '若最後輸出的數量少於節點數，剩下的人互相欠債，那就是<b>環</b>。換成 min-heap 就得到字典序最小的順序（LeetCode 210 常見追問）。',
+          en:'“How many prerequisites do I still owe” is exactly the in-degree. <b>Only a vertex owing zero may run</b>; when it finishes it pays off one debt for each downstream vertex, and whoever hits zero goes next. '+
+             'Each vertex enters the queue once and each edge is inspected once, so O(V + E). If fewer vertices come out than went in, the leftovers owe each other - a <b>cycle</b>. Swap the queue for a min-heap and you get the lexicographically smallest order (the usual LeetCode 210 follow-up).'} },
+
+  { id:'dfs', graph:DAG, code:CODE_DFS,
+    label:{zh:'② DFS 後序', en:'② DFS post-order'},
+    stage:{zh:'DFS：先把子孫做完，自己最後才收工', en:'DFS: finish every descendant first, yourself last'},
+    variants:[], build:(g,o)=>buildDFS(g,o),
+    legend:[['#0093a1',{zh:'WHITE 沒看過',en:'WHITE unseen'}],['#ffc000',{zh:'GREY 在遞迴路徑上',en:'GREY on the path'}],
+            ['#00ffff',{zh:'目前這一格',en:'current frame'}],['#3a4a52',{zh:'BLACK 完成',en:'BLACK finished'}]],
+    idea:{zh:'DFS 不追蹤 in-degree，而是靠<b>完成時間</b>：一個節點被塗黑時，它所有後代早就黑了。'+
+             '所以「完成順序」正好是拓樸順序的<b>相反</b>，最後 reverse 一次即可。'+
+             '注意輸出跟 Kahn 不同，但兩個都對；遞迴深度等於圖的深度，很深的圖要改寫成迭代版，CPython 預設只有 1000 層。',
+          en:'DFS tracks <b>finish times</b> rather than in-degrees: by the time a vertex turns black, every descendant is already black. '+
+             'So the finish order is the <b>reverse</b> of a topological order - reverse the list once at the end. '+
+             'The answer differs from Kahn’s and both are correct. Recursion depth equals graph depth, so rewrite it iteratively for deep graphs; CPython stops at ~1000 frames.'} },
+
+  { id:'cycle', graph:CYC, code:CODE_DFS,
+    label:{zh:'③ 環 = back edge', en:'③ Cycles = back edges'},
+    stage:{zh:'為什麼你的 build 會卡住：一條指回 GREY 的邊', en:'Why your build hangs: an edge pointing back at GREY'},
+    variants:[], build:(g,o)=>buildDFS(g,Object.assign({stopOnCycle:true},o)),
+    legend:[['#ffc000',{zh:'GREY：還在這條路徑上',en:'GREY: still on this path'}],['#3a4a52',{zh:'BLACK：完成',en:'BLACK: finished'}],
+            ['#ff0000',{zh:'back edge 與環',en:'back edge and cycle'}]],
+    idea:{zh:'只有兩個顏色不夠。<b>GREY 是「還在遞迴堆疊上」</b>，指回 GREY 的邊代表你繞回了自己還沒離開的節點——那就是環。'+
+             '指回 BLACK 完全正常（只是走過的捷徑），所以拿 visited 布林值判斷環會誤報。'+
+             '把 GREY 路徑從被指到的那個節點截到現在這個節點，就是可以印給使用者看的循環相依清單。',
+          en:'Two colours are not enough. <b>GREY means “still on the call stack”</b>, so an edge back into GREY means you walked into a vertex you have not left yet - that is the cycle. '+
+             'An edge into BLACK is perfectly normal (just a shortcut across finished work), which is why a plain visited flag reports false cycles. '+
+             'Slice the GREY path from the target vertex down to the current one and you have the dependency loop to print for the user.'} },
+
+  { id:'lc', graph:LC_OK, code:CODE_KAHN,
+    label:{zh:'④ LeetCode 207 / 210', en:'④ LeetCode 207 / 210'},
+    stage:{zh:'Course Schedule：邊的方向決定一切', en:'Course Schedule: the edge direction is everything'},
+    variants:[
+      {lbl:{zh:'可以修完', en:'finishable'}, graph:LC_OK, opt:{verdict:true}},
+      {lbl:{zh:'課程 1 與 3 互相要求：卡死', en:'courses 1 and 3 require each other: deadlock'},
+       graph:LC_BAD, opt:{verdict:true}}
+    ],
+    build:(g,o)=>buildKahn(g,o),
+    legend:[['#0093a1',{zh:'還沒修',en:'not taken'}],['#ffc000',{zh:'先修都修完了',en:'prerequisites met'}],
+            ['#00ffff',{zh:'正在修',en:'taking it now'}],['#3a4a52',{zh:'已修完',en:'done'}]],
+    idea:{zh:'題目給的是 <code>[a, b]</code>＝「要修 a 必須先修 b」，所以邊要建成 <b>b → a</b>，'+
+             '很多人反過來寫，範例還會過。207 只要問「輸出的數量有沒有等於 numCourses」；'+
+             '210 直接回傳那條順序（無解回空陣列）。若追問「有多個答案要字典序最小」，把 queue 換成 min-heap 就好——回第①頁看動畫。',
+          en:'The input <code>[a, b]</code> means “to take a you must first take b”, so the edge is <b>b → a</b>. '+
+             'Getting it backwards still passes the sample tests, which is why it is such a common interview slip. '+
+             '207 only asks whether the number of vertices you output equals numCourses; 210 returns the order itself (empty list when impossible). '+
+             'If the follow-up wants the lexicographically smallest order, swap the queue for a min-heap - see tab ① for the animation.'} }
+];
+
+/* ----------------------------------------------------------------- state */
+let tabIx = 0, varIx = 0, frames = [], cur = 0, timer = null;
+const $ = id => document.getElementById(id);
+const curTab = () => TABS[tabIx];
+const curVar = () => (curTab().variants[varIx] || {opt:{}});
+const curGraph = () => curVar().graph || curTab().graph;
+
+function buildTabs(){
+  const box = $('tabs'); box.innerHTML = '';
+  TABS.forEach((t, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(t.label);
+    b.className = i === tabIx ? 'on' : '';
+    b.onclick = () => { tabIx = i; varIx = 0; load(); };
+    box.appendChild(b);
+  });
+  const ex = $('extra'); ex.innerHTML = '';
+  curTab().variants.forEach((v, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(v.lbl);
+    b.className = i === varIx ? 'on' : '';
+    b.onclick = () => { varIx = i; load(); };
+    ex.appendChild(b);
+  });
+  ex.className = curTab().variants.length ? 'toggle-row tabs' : 'hidden';
+}
+
+function load(){
+  stop();
+  const t = curTab();
+  frames = t.build(curGraph(), curVar().opt || {});
+  cur = 0;
+  buildTabs();
+  render();
+}
+</script>
+<script>
+/* ---------------------------------------------------------------- drawing */
+const R = 0.40, VH = 7;
+const NODE_STYLE = {
+  idle  :{fill:'#002639', stroke:'#0093a1', text:'#d6f2f4', w:.05, glow:0},
+  queued:{fill:'#002639', stroke:'#ffc000', text:'#ffc000', w:.07, glow:.35},
+  active:{fill:'#0093a1', stroke:'#00ffff', text:'#00141d', w:.08, glow:.85},
+  done  :{fill:'#06202b', stroke:'#3a4a52', text:'#818181', w:.045,glow:0},
+  grey  :{fill:'#002639', stroke:'#ffc000', text:'#ffc000', w:.07, glow:.3},
+  black :{fill:'#06202b', stroke:'#0093a1', text:'#9fc7cf', w:.045,glow:0},
+  cycle :{fill:'#2a0008', stroke:'#ff0000', text:'#ff8080', w:.08, glow:.6}
+};
+const EDGE_STYLE = {
+  idle  :{c:'#0093a1', w:.038, o:.55},
+  active:{c:'#ffc000', w:.075, o:1},
+  tree  :{c:'#00aaaa', w:.062, o:1},
+  back  :{c:'#ff0000', w:.075, o:1},
+  dim   :{c:'#3a4a52', w:.032, o:.6}
+};
+const svgNS = 'http://www.w3.org/2000/svg';
+const mk = (tag, attrs) => { const e = document.createElementNS(svgNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+
+function drawStage(frame){
+  const g = curGraph(), svg = $('stage');
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  const defs = mk('defs', {});
+  const filt = mk('filter', {id:'glow', x:'-60%', y:'-60%', width:'220%', height:'220%'});
+  filt.appendChild(mk('feGaussianBlur', {stdDeviation:'.06', result:'b'}));
+  const merge = mk('feMerge', {});
+  merge.appendChild(mk('feMergeNode', {in:'b'}));
+  merge.appendChild(mk('feMergeNode', {in:'SourceGraphic'}));
+  filt.appendChild(merge); defs.appendChild(filt);
+  Object.keys(EDGE_STYLE).forEach(k => {
+    const m = mk('marker', {id:'arw-'+k, viewBox:'0 0 10 10', refX:'8.5', refY:'5',
+      markerWidth:'5.2', markerHeight:'5.2', orient:'auto-start-reverse'});
+    m.appendChild(mk('path', {d:'M 0 0 L 10 5 L 0 10 z', fill:EDGE_STYLE[k].c}));
+    defs.appendChild(m);
+  });
+  svg.appendChild(defs);
+
+  g.edges.forEach(([u, v]) => {
+    const st = EDGE_STYLE[frame.edges[ek(u,v)] || 'idle'];
+    const [x1, y1] = g.pos[u], [x2, y2] = g.pos[v];
+    const dx = x2 - x1, dy = -(y2 - y1), L = Math.hypot(dx, dy) || 1;
+    const pad = R + 0.10, tip = R + 0.13;
+    const line = mk('line', {
+      x1:(x1 + dx / L * pad).toFixed(3), y1:(VH - y1 + dy / L * pad).toFixed(3),
+      x2:(x2 - dx / L * tip).toFixed(3), y2:(VH - y2 - dy / L * tip).toFixed(3),
+      stroke:st.c, 'stroke-width':st.w, opacity:st.o, 'stroke-linecap':'round',
+      'marker-end':'url(#arw-' + (frame.edges[ek(u,v)] || 'idle') + ')'});
+    svg.appendChild(line);
+  });
+
+  nodesOf(g).forEach(n => {
+    const st = NODE_STYLE[frame.nodes[n] || 'idle'];
+    const [x, y] = g.pos[n], cy = VH - y;
+    const c = mk('circle', {cx:x, cy:cy, r:R, fill:st.fill, stroke:st.stroke,
+      'stroke-width':st.w});
+    if (st.glow) { c.setAttribute('filter', 'url(#glow)'); c.setAttribute('opacity', 1); }
+    svg.appendChild(c);
+    const t = mk('text', {x:x, y:cy + 0.13, 'text-anchor':'middle', fill:st.text,
+      'font-size':'.40'});
+    t.textContent = nameOf(g, n);
+    svg.appendChild(t);
+  });
+}
+
+function drawPanels(frame){
+  const box = $('panels'); box.innerHTML = '';
+  (frame.panels || []).forEach(p => {
+    const d = document.createElement('div'); d.className = 'panel';
+    const l = document.createElement('div'); l.className = 'lbl'; l.textContent = tr(p.lbl);
+    const c = document.createElement('div'); c.className = 'chips';
+    p.chips.forEach(ch => { const s = document.createElement('span');
+      s.className = 'chip ' + (ch.cls || ''); s.textContent = ch.t; c.appendChild(s); });
+    d.appendChild(l); d.appendChild(c); box.appendChild(d);
+  });
+}
+
+function drawCode(frame){
+  const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  $('code').innerHTML = curTab().code.map((ln, i) => {
+    let h = esc(ln).replace(/(#.*)$/, '<span class="cm">$1</span>');
+    return '<span class="ln' + (i === frame.line ? ' on' : '') + '">' + (h || ' ') + '</span>';
+  }).join('');
+}
+
+function drawLegend(){
+  $('legend').innerHTML = curTab().legend.map(([c, txt]) =>
+    '<span><i style="background:' + c + '"></i>' + tr(txt) + '</span>').join('');
+}
+
+function render(){
+  if (!frames.length) return;
+  cur = Math.max(0, Math.min(cur, frames.length - 1));
+  const f = frames[cur];
+  $('stage-title').textContent = tr(curTab().stage);
+  drawStage(f); drawPanels(f); drawCode(f); drawLegend();
+  $('narr').innerHTML = tr(f.msg);
+  $('idea').innerHTML = tr(curTab().idea);
+  $('stepno').textContent = (cur + 1) + ' / ' + frames.length;
+  $('prev').disabled = cur === 0;
+  $('next').disabled = cur === frames.length - 1;
+}
+
+/* --------------------------------------------------------------- controls */
+function step(d){ stop(); cur += d; render(); }
+function reset(){ stop(); cur = 0; render(); }
+function stop(){ if (timer){ clearInterval(timer); timer = null;
+  $('play').textContent = tr(T.play); } }
+function togglePlay(){
+  if (timer) { stop(); return; }
+  if (cur >= frames.length - 1) cur = 0;
+  $('play').textContent = tr(T.pause);
+  timer = setInterval(() => {
+    if (cur >= frames.length - 1) { stop(); return; }
+    cur++; render();
+  }, Number($('speed').value));
+}
+$('speed').addEventListener('input', () => { if (timer){ stop(); togglePlay(); } });
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight') { step(1); e.preventDefault(); }
+  else if (e.key === 'ArrowLeft') { step(-1); e.preventDefault(); }
+  else if (e.key === ' ') { togglePlay(); e.preventDefault(); }
+});
+
+setLang('zh');
+load();
+</script>
+</body>
+</html>

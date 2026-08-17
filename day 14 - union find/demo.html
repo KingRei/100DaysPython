@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 14 - Union-Find / 併查集</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='%23002639' stroke='%230093a1' stroke-width='2'/><circle cx='16' cy='9' r='3' fill='%23ffc000'/><circle cx='10' cy='22' r='3' fill='%2300aaaa'/><circle cx='22' cy='22' r='3' fill='%2300aaaa'/><path d='M10 19l6-7 6 7' stroke='%2300aaaa' stroke-width='1.6' fill='none'/></svg>">
+<style>
+:root{
+  --navy:#002639; --navy-d:#001824; --teal:#0093a1; --teal-l:#00aaaa;
+  --cyan:#00ffff; --grey:#292c30; --grey-l:#818181; --red:#ff0000;
+  --amber:#ffc000; --pale:#d6f2f4; --white:#ffffff;
+  --serif:"Latin Modern Roman","Liberation Serif",Georgia,"Times New Roman",serif;
+  --mono:"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:radial-gradient(1200px 700px at 50% -10%,#00344a 0%,var(--navy-d) 60%,#000f18 100%);
+  color:var(--pale); font-family:var(--serif); min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--teal-l)}
+.wrap{max-width:1180px;margin:0 auto;padding:26px 20px 60px}
+header{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-bottom:6px}
+h1{font-size:30px;margin:0;color:var(--white);letter-spacing:.4px;
+   text-shadow:0 0 14px rgba(0,255,255,.35)}
+.day{font-size:13px;letter-spacing:2.4px;text-transform:uppercase;color:var(--teal-l);
+     border:1px solid var(--teal);border-radius:999px;padding:4px 12px}
+.sub{color:var(--grey-l);font-size:15px;margin:8px 0 20px;max-width:70ch;line-height:1.6}
+.spacer{flex:1}
+.lang{display:flex;border:1px solid var(--teal);border-radius:999px;overflow:hidden}
+.lang button{background:transparent;color:var(--teal-l);border:0;padding:5px 14px;
+  font-family:var(--serif);font-size:14px;cursor:pointer}
+.lang button.on{background:var(--teal);color:#00141d}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
+.tabs button{
+  background:rgba(0,38,57,.75);border:1px solid rgba(0,147,161,.55);color:var(--pale);
+  padding:9px 16px;border-radius:8px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  transition:.18s}
+.tabs button:hover{border-color:var(--teal-l);color:var(--white)}
+.tabs button.on{background:var(--teal);border-color:var(--teal-l);color:#00141d;
+  box-shadow:0 0 18px rgba(0,255,255,.25)}
+.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:18px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:rgba(0,24,36,.72);border:1px solid rgba(0,147,161,.35);border-radius:12px;
+      padding:14px 16px}
+.card h3{margin:0 0 10px;font-size:14px;letter-spacing:2px;text-transform:uppercase;
+         color:var(--teal-l);font-weight:normal}
+svg.stage{width:100%;height:auto;display:block;touch-action:none}
+svg.stage text{font-family:var(--serif);user-select:none}
+.narr{min-height:52px;margin-top:10px;padding:10px 12px;border-left:3px solid var(--amber);
+      background:rgba(255,192,0,.06);font-size:16px;line-height:1.55;color:var(--white)}
+.narr code{font-family:var(--mono);font-size:14px;color:var(--amber)}
+.ctrl{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
+.ctrl button{background:var(--navy);border:1px solid var(--teal);color:var(--teal-l);
+  border-radius:8px;padding:7px 13px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  min-width:44px;transition:.15s}
+.ctrl button:hover:not(:disabled){background:var(--teal);color:#00141d}
+.ctrl button:disabled{opacity:.35;cursor:default}
+.ctrl .play{min-width:92px;font-weight:bold}
+.ctrl input[type=range]{width:120px;accent-color:var(--teal-l)}
+.stepno{color:var(--grey-l);font-size:14px;font-family:var(--mono)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;min-height:30px}
+.chip{border:1px solid var(--teal);border-radius:6px;padding:3px 9px;font-family:var(--mono);
+      font-size:14px;color:var(--pale);background:rgba(0,147,161,.10)}
+.chip.hot{border-color:var(--amber);color:var(--amber);background:rgba(255,192,0,.12);
+  box-shadow:0 0 12px rgba(255,192,0,.25)}
+.chip.dim{border-color:#3a4a52;color:var(--grey-l);background:transparent}
+.chip.bad{border-color:var(--red);color:#ff8080;background:rgba(255,0,0,.12)}
+.chip.ok{border-color:var(--teal-l);color:var(--cyan);background:rgba(0,255,255,.08)}
+.chip.empty{border-style:dashed;color:var(--grey-l);border-color:#3a4a52}
+.panel+.panel{margin-top:12px}
+.panel .lbl{font-size:13px;letter-spacing:1.6px;text-transform:uppercase;color:var(--grey-l);
+  margin-bottom:5px}
+pre.code{margin:0;font-family:var(--mono);font-size:13.5px;line-height:1.72;overflow-x:auto;
+  color:#9fc7cf}
+pre.code .ln{display:block;padding:0 8px;border-left:3px solid transparent;white-space:pre}
+pre.code .ln.on{background:rgba(0,255,255,.10);border-left-color:var(--cyan);color:var(--white)}
+pre.code .cm{color:#5c7a83;font-style:italic}
+pre.code .kw{color:var(--amber)}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:13.5px;color:var(--grey-l)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;
+  vertical-align:-1px;border:1px solid rgba(255,255,255,.25)}
+.note{font-size:15px;line-height:1.65;color:var(--pale)}
+.note b{color:var(--amber);font-weight:normal}
+.toggle-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+footer{margin-top:32px;padding-top:16px;border-top:1px solid rgba(0,147,161,.3);
+  color:var(--grey-l);font-size:14px;display:flex;gap:18px;flex-wrap:wrap}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <span class="day">Day 14</span>
+  <h1 data-i18n="title">Union-Find · 互動演示</h1>
+  <span class="spacer"></span>
+  <div class="lang">
+    <button id="btn-zh" class="on" onclick="setLang('zh')">中文</button>
+    <button id="btn-en" onclick="setLang('en')">EN</button>
+  </div>
+</header>
+<p class="sub" data-i18n="sub">每個集合是一棵樹，樹根就是集合的代表；整個結構其實只是一個 parent 陣列。按 ▶ 看 union 怎麼按秩合併、find 怎麼把路徑壓平。</p>
+
+<div class="tabs" id="tabs"></div>
+
+<div class="grid">
+  <div>
+    <div class="card">
+      <h3 id="stage-title">union</h3>
+      <svg class="stage" id="stage" viewBox="0 0 9.6 7" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="legend" id="legend"></div>
+      <div class="narr" id="narr"></div>
+      <div class="ctrl">
+        <button onclick="reset()" title="reset">⟲</button>
+        <button id="prev" onclick="step(-1)">◀</button>
+        <button class="play" id="play" onclick="togglePlay()" data-i18n="play">▶ 播放</button>
+        <button id="next" onclick="step(1)">▶</button>
+        <span class="stepno" id="stepno">0 / 0</span>
+        <span class="spacer"></span>
+        <span style="font-size:13px;color:var(--grey-l)" data-i18n="speed">速度</span>
+        <input type="range" id="speed" min="180" max="1600" step="20" value="820">
+      </div>
+      <div class="toggle-row" id="extra"></div>
+    </div>
+  </div>
+  <div>
+    <div class="card" id="state-card">
+      <h3 data-i18n="state">演算法狀態</h3>
+      <div id="panels"></div>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="code">程式碼</h3>
+      <pre class="code" id="code"></pre>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="idea">重點</h3>
+      <div class="note" id="idea"></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <span>100 Days of Python — Day 14</span>
+  <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2014%20-%20union%20find" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://medium.com/100-days-of-python" target="_blank" rel="noopener">Medium</a>
+</footer>
+</div>
+<script>
+/* ------------------------------------------------------------------ i18n */
+const T = {
+  title:{zh:'Union-Find · 互動演示', en:'Union-Find · interactive'},
+  sub:{zh:'每個集合是一棵樹，樹根就是集合的代表；整個結構其實只是一個 parent 陣列。按 ▶ 看 union 怎麼按秩合併、find 怎麼把路徑壓平。',
+       en:'Every set is a tree and the root is the id of the set - the whole structure is just a parent array. Press ▶ to watch union attach by rank and find flatten the path.'},
+  play:{zh:'▶ 播放', en:'▶ Play'}, pause:{zh:'❚❚ 暫停', en:'❚❚ Pause'},
+  speed:{zh:'速度', en:'Speed'}, state:{zh:'演算法狀態', en:'Algorithm state'},
+  code:{zh:'程式碼', en:'Code'}, idea:{zh:'重點', en:'The idea'}
+};
+let LANG = 'zh';
+const tr = o => (o == null ? '' : (typeof o === 'string' ? o : (o[LANG] || o.en)));
+
+function setLang(l){
+  LANG = l;
+  document.documentElement.lang = l === 'zh' ? 'zh-Hant' : 'en';
+  document.getElementById('btn-zh').classList.toggle('on', l === 'zh');
+  document.getElementById('btn-en').classList.toggle('on', l === 'en');
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.getAttribute('data-i18n');
+    if (T[k]) el.textContent = tr(T[k]);
+  });
+  buildTabs(); render();
+}
+
+/* ------------------------------------------------------------ frame store */
+function Frames(){
+  this.list = [];
+  this.push = (o) => this.list.push({
+    parent:(o.parent || []).slice(),
+    rank:(o.rank || []).slice(),
+    states:Object.assign({}, o.states || {}),
+    marks:Object.assign({}, o.marks || {}),       // per-node badge text
+    panels:JSON.parse(JSON.stringify(o.panels || [])),
+    matrix:o.matrix ? JSON.parse(JSON.stringify(o.matrix)) : null,
+    scan:o.scan ? o.scan.slice() : null,
+    hideArray:!!o.hideArray,
+    line:o.line, msg:o.msg
+  });
+}
+
+/* the labels used on the parent-array cells and the forest nodes */
+let NAMES = null;                                   // null -> plain numbers
+const nm = i => (NAMES ? NAMES[i] : String(i));
+
+/* ---------------------------------------------------------- union by rank */
+const CODE_UNION = [
+  'def find(self, x):',
+  '    root = x',
+  '    while self.parent[root] != root:',
+  '        root = self.parent[root]',
+  '    return root',
+  '',
+  'def union(self, x, y):',
+  '    rx, ry = self.find(x), self.find(y)',
+  '    if rx == ry:',
+  '        return False               # already together',
+  '    if self.rank[rx] < self.rank[ry]:',
+  '        rx, ry = ry, rx            # taller tree stays on top',
+  '    self.parent[ry] = rx',
+  '    if self.rank[rx] == self.rank[ry]:',
+  '        self.rank[rx] += 1         # only a tie grows the height',
+  '    self.count -= 1',
+  '    return True'
+];
+
+const UNION_STEPS = [[0,1],[0,2],[2,3],[4,5],[3,5],[1,3]];
+
+function buildUnion(opt){
+  opt = opt || {};
+  const byRank = opt.byRank !== false;
+  const n = 7, P = [], RK = [];
+  for (let i = 0; i < n; i++){ P.push(i); RK.push(0); }
+  let count = n;
+  const F = new Frames();
+  const panels = () => [
+    {lbl:{zh:'rank（樹高上界）', en:'rank (height bound)'},
+     chips:RK.map((r, i) => ({t:nm(i) + ':' + r, cls:P[i] === i ? (r > 0 ? 'hot' : 'ok') : 'dim'}))},
+    {lbl:{zh:'集合數量', en:'number of sets'}, chips:[{t:String(count), cls:'ok'}]}
+  ];
+  const snap = (states, line, msg) =>
+    F.push({parent:P, rank:RK, states:states, line:line, msg:msg, panels:panels()});
+
+  const findRoot = (x, states, tag) => {
+    let cur = x;
+    const st = Object.assign({}, states);
+    st[cur] = 'active';
+    snap(st, 1, {zh:`find(${nm(x)})：從 ${nm(x)} 開始往上走。`,
+                 en:`find(${nm(x)}): start climbing from ${nm(x)}.`});
+    while (P[cur] !== cur){
+      st[cur] = 'walk'; cur = P[cur]; st[cur] = 'active';
+      snap(st, 3, {zh:`parent[${nm(x)}…] 指向 ${nm(cur)}，繼續往上。`,
+                   en:`the pointer leads to ${nm(cur)}, keep climbing.`});
+    }
+    st[cur] = 'root';
+    snap(st, 4, {zh:`parent[${nm(cur)}] == ${nm(cur)}，所以 ${nm(x)} 的根是 <b>${nm(cur)}</b>（${tag}）。`,
+                 en:`parent[${nm(cur)}] == ${nm(cur)}, so the root of ${nm(x)} is <b>${nm(cur)}</b> (${tag}).`});
+    return cur;
+  };
+
+  snap({}, 6, {zh:`一開始 ${n} 個元素各自成一個集合，parent[i] == i。`,
+               en:`Seven singletons to begin with - every element is its own root, parent[i] == i.`});
+
+  for (const [a, b] of UNION_STEPS){
+    const hot = {}; hot[a] = 'hot'; hot[b] = 'hot';
+    snap(hot, 7, {zh:`<code>union(${nm(a)}, ${nm(b)})</code>：先找出兩邊的根。`,
+                  en:`<code>union(${nm(a)}, ${nm(b)})</code>: locate both roots first.`});
+    let rx = findRoot(a, hot, 'rx');
+    let ry = findRoot(b, hot, 'ry');
+
+    const both = {}; both[rx] = 'root'; both[ry] = 'root';
+    if (rx === ry){
+      const bad = {}; bad[rx] = 'bad';
+      snap(bad, 8, {zh:`兩個根一樣（都是 ${nm(rx)}）→ <b>已經同一組</b>，union 回傳 False。` +
+                        `這正是「這條邊會形成環」的訊號，Kruskal 就靠它挑邊。`,
+                    en:`Same root (${nm(rx)}) → <b>already together</b>, union returns False. ` +
+                        `That is exactly the signal "this edge would close a cycle" - the test Kruskal is built on.`});
+      continue;
+    }
+    if (byRank && RK[rx] < RK[ry]){
+      const t = rx; rx = ry; ry = t;
+      snap(both, 11, {zh:`rank[${nm(ry)}] < rank[${nm(rx)}]，交換兩者：<b>比較高的那棵留在上面</b>。`,
+                      en:`rank[${nm(ry)}] < rank[${nm(rx)}], so swap them: <b>the taller tree stays on top</b>.`});
+    }
+    P[ry] = rx; count--;
+    const merged = {}; merged[rx] = 'root'; merged[ry] = 'walk';
+    snap(merged, 12, {zh:`parent[${nm(ry)}] = ${nm(rx)}，兩棵樹接起來了，剩下 ${count} 個集合。`,
+                      en:`parent[${nm(ry)}] = ${nm(rx)} - the trees are merged, ${count} sets left.`});
+    if (RK[rx] === RK[ry]){
+      RK[rx]++;
+      snap(merged, 14, {zh:`兩邊 rank 相同，只有這種情況樹會長高：rank[${nm(rx)}] → ${RK[rx]}。`,
+                        en:`The ranks were equal - the only case where the tree gets taller: rank[${nm(rx)}] → ${RK[rx]}.`});
+    } else {
+      snap(merged, 13, {zh:`rank 不同，矮的掛到高的下面，<b>樹高完全沒變</b>。`,
+                        en:`Different ranks, so the shorter tree tucks in underneath and <b>the height does not change at all</b>.`});
+    }
+  }
+  snap({}, 16, {zh:`結束：${count} 個集合，最高的樹只有 ${Math.max.apply(null, RK) + 1} 層。` +
+                    `整個結構就是那一列 parent 陣列，沒有物件、沒有指標。`,
+                en:`Done: ${count} sets, and the tallest tree is only ${Math.max.apply(null, RK) + 1} levels deep. ` +
+                    `The entire structure is that one row of integers - no objects, no pointers.`});
+  return F.list;
+}
+</script>
+<script>
+/* ------------------------------------------------------ path compression */
+const CODE_FIND = [
+  'def find(self, x):',
+  '    root = x',
+  '    while self.parent[root] != root:   # 1st pass: locate the root',
+  '        root = self.parent[root]',
+  '    while self.parent[x] != root:      # 2nd pass: re-point the path',
+  '        self.parent[x], x = root, self.parent[x]',
+  '    return root'
+];
+
+function buildCompress(opt){
+  opt = opt || {};
+  const P = [0, 0, 1, 2, 3, 4];          // a deliberate 5 -> 4 -> 3 -> 2 -> 1 -> 0 chain
+  const n = P.length;
+  const compress = opt.compress !== false;
+  const F = new Frames();
+  let hops = 0;
+  const panels = (path) => [
+    {lbl:{zh:'目前走過的路徑', en:'path walked so far'},
+     chips:(path.length ? path : [null]).map(v => v === null
+        ? {t:'—', cls:'empty'} : {t:nm(v), cls:'hot'})},
+    {lbl:{zh:'這次 find 走了幾步', en:'pointer hops this find'},
+     chips:[{t:String(hops), cls:hops > 3 ? 'bad' : 'ok'}]}
+  ];
+  const snap = (states, line, msg, path) =>
+    F.push({parent:P, rank:[], states:states, line:line, msg:msg, panels:panels(path || [])});
+
+  snap({5:'hot'}, 0, {zh:'一條最壞情況的鏈：5 → 4 → 3 → 2 → 1 → 0。要呼叫 <code>find(5)</code>。',
+                      en:'A worst-case chain: 5 → 4 → 3 → 2 → 1 → 0. We are about to call <code>find(5)</code>.'}, []);
+
+  // pass 1
+  let cur = 5; const path = []; const st = {};
+  st[5] = 'active';
+  snap(st, 1, {zh:'第一趟：從 5 往上爬，先找到根是誰。', en:'First pass: climb from 5 and find out who the root is.'}, []);
+  while (P[cur] !== cur){
+    path.push(cur); st[cur] = 'walk'; cur = P[cur]; st[cur] = 'active'; hops++;
+    snap(st, 3, {zh:`往上一步到 ${nm(cur)}，已經走了 ${hops} 步。`,
+                 en:`One step up to ${nm(cur)} - ${hops} hops so far.`}, path.slice());
+  }
+  st[cur] = 'root';
+  snap(st, 3, {zh:`找到根 <b>${nm(cur)}</b>。沒有壓縮的話，下次 find(5) 還要再走 ${hops} 步。`,
+               en:`Root found: <b>${nm(cur)}</b>. Without compression the next find(5) pays the same ${hops} hops again.`},
+       path.slice());
+
+  if (!compress){
+    snap(st, 6, {zh:`回傳 ${nm(cur)}，但 parent 陣列<b>一個字都沒改</b>——這就是每次 find 都是 O(n) 的原因。`,
+                 en:`Return ${nm(cur)}, but the parent array is <b>completely unchanged</b> - which is why every find stays O(n).`},
+         path.slice());
+    return F.list;
+  }
+
+  // pass 2 - compression
+  const root = cur;
+  let x = 5;
+  snap(st, 4, {zh:'第二趟：把剛剛走過的每個節點，直接改指到根。',
+               en:'Second pass: re-point every node on that path straight at the root.'}, path.slice());
+  while (P[x] !== root){
+    const nxt = P[x];
+    P[x] = root;
+    const s2 = Object.assign({}, st); s2[x] = 'path'; s2[root] = 'root';
+    snap(s2, 5, {zh:`parent[${nm(x)}] = ${nm(root)}，${nm(x)} 一步就到根了。`,
+                 en:`parent[${nm(x)}] = ${nm(root)} - ${nm(x)} is now one hop from the root.`}, path.slice());
+    x = nxt;
+  }
+  const flat = {}; for (let i = 0; i < n; i++) flat[i] = P[i] === i ? 'root' : 'path';
+  snap(flat, 6, {zh:'整條路徑攤平了。樹高從 6 變成 2，<b>下一次 find 是 O(1)</b>。' +
+                     '剛剛付出的力氣不會再付第二次——這就是攤還分析裡的「攤還」。',
+                 en:'The whole path is flat. The tree went from 6 levels to 2, and <b>the next find is O(1)</b>. ' +
+                     'The work just done is never repeated - that is the "amortised" in amortised O(α(n)).'}, path.slice());
+  return F.list;
+}
+
+/* ------------------------------------------------- the naive union (bad) */
+const CODE_NAIVE = [
+  'def union(self, x, y):          # no rank, no compression',
+  '    rx, ry = self.find(x), self.find(y)',
+  '    if rx != ry:',
+  '        self.parent[ry] = rx    # blind attach',
+  '',
+  '# union(1, 0), union(2, 1), union(3, 2), ...',
+  '# every merge hangs the whole tree one level deeper'
+];
+
+function buildNaive(){
+  const n = 6, P = [];
+  for (let i = 0; i < n; i++) P.push(i);
+  const F = new Frames();
+  let depth = 0;
+  const panels = () => [
+    {lbl:{zh:'樹高', en:'tree height'},
+     chips:[{t:String(depth + 1), cls:depth >= 3 ? 'bad' : 'ok'}]},
+    {lbl:{zh:'find(最深的那個) 要走幾步', en:'hops for find(deepest)'},
+     chips:[{t:String(depth), cls:depth >= 3 ? 'bad' : 'ok'}]}
+  ];
+  const snap = (states, line, msg) =>
+    F.push({parent:P, rank:[], states:states, line:line, msg:msg, panels:panels()});
+
+  snap({}, 0, {zh:'同樣的元素，但這次 union <b>不看 rank</b>，永遠把 y 的根掛到 x 的根下面。',
+               en:'Same elements, but this union <b>ignores rank</b> and always hangs y’s root under x’s root.'});
+  for (let i = 1; i < n; i++){
+    const st = {}; st[i] = 'hot'; st[i - 1] = 'hot';
+    snap(st, 1, {zh:`<code>union(${i}, ${i - 1})</code>`, en:`<code>union(${i}, ${i - 1})</code>`});
+    P[i - 1] = i;                     // whole existing tree sinks one level
+    depth++;
+    const st2 = {}; st2[i] = 'root'; st2[i - 1] = 'walk';
+    snap(st2, 3, {zh:`整棵舊樹被掛到 ${i} 底下，樹高變成 ${depth + 1}。`,
+                  en:`The entire old tree hangs under ${i}; the height is now ${depth + 1}.`});
+  }
+  const st = {}; st[0] = 'bad'; st[n - 1] = 'root';
+  snap(st, 6, {zh:`一條 ${n} 層的鏈。<code>find(0)</code> 要走 ${depth} 步，n 個元素就是 O(n)——` +
+                   `一百萬個元素時，這跟按秩合併差了幾萬倍。這就是為什麼那兩行 rank 判斷不能省。`,
+               en:`A ${n}-level chain. <code>find(0)</code> costs ${depth} hops, i.e. O(n) - ` +
+                   `with a million elements that is tens of thousands of times slower than union by rank. ` +
+                   `That is what those two lines of rank comparison buy you.`});
+  return F.list;
+}
+
+/* ------------------------------------------ LeetCode 547 - provinces */
+const CODE_LC = [
+  'def find_circle_num(is_connected):',
+  '    n = len(is_connected)',
+  '    uf = UnionFind(n)',
+  '    for i in range(n):',
+  '        for j in range(i + 1, n):   # symmetric -> upper triangle only',
+  '            if is_connected[i][j]:',
+  '                uf.union(i, j)',
+  '    return uf.count'
+];
+
+const MAT = [[1,1,0,0,0],
+             [1,1,0,0,0],
+             [0,0,1,1,0],
+             [0,0,1,1,0],
+             [0,0,0,0,1]];
+
+function buildProvinces(){
+  const n = 5, P = [], RK = [];
+  for (let i = 0; i < n; i++){ P.push(i); RK.push(0); }
+  let count = n;
+  const F = new Frames();
+  const panels = () => [
+    {lbl:{zh:'集合數量 = 省份數', en:'sets left = provinces'}, chips:[{t:String(count), cls:'ok'}]},
+    {lbl:{zh:'parent', en:'parent'},
+     chips:P.map((v, i) => ({t:i + '→' + v, cls:v === i ? 'ok' : 'dim'}))}
+  ];
+  const snap = (states, line, msg, scan) =>
+    F.push({parent:P, rank:RK, states:states, line:line, msg:msg,
+            panels:panels(), matrix:MAT, scan:scan || null});
+  const find = x => { while (P[x] !== x) x = P[x]; return x; };
+
+  snap({}, 2, {zh:'五座城市，一開始每座自成一省。<code>isConnected[i][j] == 1</code> 代表 i、j 直接相連。',
+               en:'Five cities, each its own province to start with. <code>isConnected[i][j] == 1</code> means i and j are directly linked.'});
+  for (let i = 0; i < n; i++){
+    for (let j = i + 1; j < n; j++){
+      const st = {}; st[i] = 'hot'; st[j] = 'hot';
+      if (MAT[i][j]){
+        snap(st, 5, {zh:`isConnected[${i}][${j}] = 1 → 這兩座城市要合併。`,
+                     en:`isConnected[${i}][${j}] = 1 → merge these two cities.`}, [i, j]);
+        const rx = find(i), ry = find(j);
+        if (rx !== ry){
+          let a = rx, b = ry;
+          if (RK[a] < RK[b]){ const t = a; a = b; b = t; }
+          P[b] = a; if (RK[a] === RK[b]) RK[a]++;
+          count--;
+          const st2 = {}; st2[a] = 'root'; st2[b] = 'walk';
+          snap(st2, 6, {zh:`union(${i}, ${j}) 成功，剩下 ${count} 個省份。`,
+                        en:`union(${i}, ${j}) merged them; ${count} provinces left.`}, [i, j]);
+        } else {
+          snap(st, 6, {zh:`union(${i}, ${j}) 回傳 False——它們早就同省了，省份數不變。`,
+                       en:`union(${i}, ${j}) returns False - they were already in the same province, so the count is unchanged.`}, [i, j]);
+        }
+      } else {
+        snap({}, 4, {zh:`isConnected[${i}][${j}] = 0，跳過。`,
+                     en:`isConnected[${i}][${j}] = 0, skip.`}, [i, j]);
+      }
+    }
+  }
+  snap({}, 7, {zh:`掃完上三角，剩下 <b>${count}</b> 個集合，答案就是 ${count} 個省份。` +
+                   `BFS/DFS 也能解，但邊<b>一條一條陸續進來</b>時，走訪得整個重跑，Union-Find 只要吸收那一條。`,
+               en:`The upper triangle is done: <b>${count}</b> sets left, so the answer is ${count} provinces. ` +
+                   `BFS/DFS solves this too, but when edges <b>arrive over time</b> a traversal has to restart from scratch - ` +
+                   `Union-Find just absorbs the new edge.`});
+  return F.list;
+}
+</script>
+<script>
+/* ------------------------------------------------------------------ tabs */
+const LEG_MAIN = [
+  ['#ffc000', {zh:'目前這一步的元素', en:'element in play'}],
+  ['#00ffff', {zh:'走訪指標', en:'the climbing pointer'}],
+  ['#00ff9c', {zh:'樹根（集合代表）', en:'root - the set id'}],
+  ['#ff5555', {zh:'已在同一組 / 失敗', en:'already together / failure'}]
+];
+
+const TABS = [
+  {id:'union',
+   label:{zh:'按秩合併 union', en:'union by rank'},
+   stage:{zh:'森林與 parent 陣列', en:'the forest and the parent array'},
+   code:CODE_UNION, legend:LEG_MAIN, build:() => buildUnion({}),
+   idea:{zh:'<b>樹根就是集合的 id</b>：find 一路往上走到 parent[x] == x。union 先找兩邊的根，' +
+             '再把<b>矮的那棵掛到高的下面</b>——只有兩棵一樣高時樹才會長高一層，所以樹高是 O(log n) 而不是 O(n)。' +
+             '如果兩個根一樣，union 回傳 False：這條邊會形成環。',
+         en:'<b>The root is the id of the set</b>: find climbs until parent[x] == x. union locates both roots and ' +
+             '<b>attaches the shorter tree under the taller one</b> - only a tie can add a level, which keeps the height ' +
+             'O(log n) instead of O(n). If the two roots match, union returns False: that edge would close a cycle.'}},
+
+  {id:'compress',
+   label:{zh:'路徑壓縮 find', en:'path compression'},
+   stage:{zh:'find(5) 的兩趟走訪', en:'the two passes of find(5)'},
+   code:CODE_FIND, legend:LEG_MAIN.concat([['#00aaaa', {zh:'已壓縮到根', en:'re-pointed at the root'}]]),
+   build:(v) => buildCompress({compress:v !== 1}),
+   variants:[{zh:'有壓縮', en:'with compression'}, {zh:'沒有壓縮', en:'without'}],
+   idea:{zh:'find 走兩趟：第一趟找出根，第二趟把路徑上的每個節點<b>直接改指到根</b>。' +
+             '第二趟不花額外的階複雜度（同一條路徑再走一次），卻讓之後所有 find 都變成一步。' +
+             '切到「沒有壓縮」看看差別：陣列一個字都沒改，下次還要重走一遍。',
+         en:'find makes two passes: the first locates the root, the second <b>re-points every node on the path ' +
+             'straight at the root</b>. The second pass costs the same walk again, but every later find becomes one hop. ' +
+             'Switch to "without" and watch the array stay completely unchanged - the next find pays in full.'}},
+
+  {id:'naive',
+   label:{zh:'不看 rank 會怎樣', en:'what rank prevents'},
+   stage:{zh:'盲目合併 → 一條鏈', en:'blind attach → one long chain'},
+   code:CODE_NAIVE, legend:LEG_MAIN, build:() => buildNaive(),
+   idea:{zh:'這是同一份資料、最壞的合併順序。少了 rank 判斷，每次 union 都把整棵舊樹又壓深一層，' +
+             '最後退化成一條鏈，find 變 O(n)——跟直接用 list 掃一遍沒兩樣。' +
+             '<b>rank（或 size）與路徑壓縮擇一就能救，兩個一起用才是 O(α(n))</b>，α(n) 在現實世界裡不超過 4。',
+         en:'Same data, worst possible merge order. Without the rank test every union sinks the whole existing tree ' +
+             'one level deeper, the structure degenerates into a chain and find becomes O(n) - no better than scanning a list. ' +
+             '<b>Either rank or path compression alone already helps; together they give O(α(n))</b>, and α(n) never exceeds 4 ' +
+             'for any real input size.'}},
+
+  {id:'lc',
+   label:{zh:'LeetCode 547 省份數量', en:'LeetCode 547 provinces'},
+   stage:{zh:'isConnected → 連通分量', en:'isConnected → connected components'},
+   code:CODE_LC, legend:LEG_MAIN, build:() => buildProvinces(),
+   idea:{zh:'省份就是連通分量。掃過矩陣的<b>上三角</b>（矩陣對稱，下三角是重複資訊），把每個 1 對應的兩座城市 union 起來，' +
+             '最後剩幾個集合就是幾個省。時間 O(n²·α(n))，因為矩陣本來就要讀完。' +
+             '同樣的技巧接下來會直接餵給 Kruskal 最小生成樹：排序邊，然後只留下 union 成功的那些。',
+         en:'A province is a connected component. Scan the <b>upper triangle</b> of the matrix (it is symmetric, so the lower ' +
+             'half repeats itself), union the two cities behind every 1, and the number of sets left is the answer. ' +
+             'O(n²·α(n)), because the matrix has to be read anyway. The very same trick feeds Kruskal’s minimum spanning tree: ' +
+             'sort the edges, keep the ones where union succeeds.'}}
+];
+
+let tabIx = 0, varIx = 0, frames = [], cur = 0, timer = null;
+const $ = id => document.getElementById(id);
+const curTab = () => TABS[tabIx];
+
+function buildTabs(){
+  $('tabs').innerHTML = '';
+  TABS.forEach((t, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(t.label);
+    if (i === tabIx) b.classList.add('on');
+    b.onclick = () => { tabIx = i; varIx = 0; load(); };
+    $('tabs').appendChild(b);
+  });
+  const ex = $('extra'); ex.innerHTML = '';
+  const vs = curTab().variants;
+  if (vs) vs.forEach((v, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(v);
+    b.className = 'tabbtn' + (i === varIx ? ' on' : '');
+    b.style.cssText = 'background:' + (i === varIx ? 'var(--teal)' : 'rgba(0,38,57,.75)') +
+      ';color:' + (i === varIx ? '#00141d' : 'var(--pale)') +
+      ';border:1px solid rgba(0,147,161,.55);border-radius:8px;padding:6px 13px;' +
+      'cursor:pointer;font-family:var(--serif);font-size:14px';
+    b.onclick = () => { varIx = i; load(); };
+    ex.appendChild(b);
+  });
+}
+
+function load(){
+  stop();
+  frames = curTab().build(varIx) || [];
+  cur = 0;
+  buildTabs();
+  render();
+}
+</script>
+<script>
+/* ---------------------------------------------------------------- drawing */
+const NODE_STYLE = {
+  idle  :{fill:'#002639', stroke:'#0093a1', text:'#d6f2f4', w:.05, glow:0},
+  hot   :{fill:'#002639', stroke:'#ffc000', text:'#ffc000', w:.08, glow:.4},
+  active:{fill:'#0093a1', stroke:'#00ffff', text:'#00141d', w:.08, glow:.85},
+  walk  :{fill:'#06202b', stroke:'#00aaaa', text:'#9fc7cf', w:.06, glow:.2},
+  root  :{fill:'#003a2c', stroke:'#00ff9c', text:'#d6ffe9', w:.085,glow:.7},
+  path  :{fill:'#00aaaa', stroke:'#00ffff', text:'#00141d', w:.07, glow:.5},
+  bad   :{fill:'#2a0a0a', stroke:'#ff5555', text:'#ff8080', w:.08, glow:.4}
+};
+const EDGE_C = {idle:'#0093a1', walk:'#ffc000', path:'#00aaaa'};
+const svgNS = 'http://www.w3.org/2000/svg';
+const mk = (tag, attrs) => { const e = document.createElementNS(svgNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+const clear = svg => { while (svg.firstChild) svg.removeChild(svg.firstChild); };
+
+function svgDefs(svg){
+  const defs = mk('defs', {});
+  const filt = mk('filter', {id:'glow', x:'-60%', y:'-60%', width:'220%', height:'220%'});
+  filt.appendChild(mk('feGaussianBlur', {stdDeviation:'.06', result:'b'}));
+  const merge = mk('feMerge', {});
+  merge.appendChild(mk('feMergeNode', {in:'b'}));
+  merge.appendChild(mk('feMergeNode', {in:'SourceGraphic'}));
+  filt.appendChild(merge); defs.appendChild(filt);
+  svg.appendChild(defs);
+}
+
+/* tidy-ish forest layout straight from the parent array */
+function layout(parent){
+  const n = parent.length, kids = {}, roots = [];
+  for (let i = 0; i < n; i++){
+    if (parent[i] === i) roots.push(i);
+    else (kids[parent[i]] = kids[parent[i]] || []).push(i);
+  }
+  const slotOf = {}, depth = {};
+  let slot = 0, maxDepth = 0;
+  const place = (v, d) => {
+    depth[v] = d; if (d > maxDepth) maxDepth = d;
+    const cs = (kids[v] || []).slice().sort((a, b) => a - b);
+    if (!cs.length){ slotOf[v] = slot++; return; }
+    cs.forEach(c => place(c, d + 1));
+    slotOf[v] = (slotOf[cs[0]] + slotOf[cs[cs.length - 1]]) / 2;
+  };
+  roots.forEach(r => { place(r, 0); slot += 1; });   // one empty slot between trees
+  return {slotOf:slotOf, depth:depth, kids:kids, roots:roots, slots:Math.max(slot - 1, 1),
+          maxDepth:maxDepth};
+}
+
+function drawForest(svg, frame, x0, x1, yTop, rowH){
+  const P = frame.parent, L = layout(P);
+  const span = Math.max(L.slots - 1, 1);
+  const step = Math.min((x1 - x0) / span, 1.35);
+  const width = step * span;
+  const left = x0 + ((x1 - x0) - width) / 2;
+  const X = v => left + L.slotOf[v] * step;
+  const Y = v => yTop + L.depth[v] * rowH;
+  const R = Math.min(0.40, step * 0.36);
+
+  P.forEach((p, i) => {
+    if (p === i) return;
+    const st = frame.states[i], color = (st === 'walk' || st === 'active') ? EDGE_C.walk
+             : (st === 'path' ? EDGE_C.path : EDGE_C.idle);
+    const x1p = X(i), y1p = Y(i), x2p = X(p), y2p = Y(p);
+    const dx = x2p - x1p, dy = y2p - y1p, len = Math.hypot(dx, dy) || 1, pad = R + 0.05;
+    svg.appendChild(mk('line', {
+      x1:(x1p + dx / len * pad).toFixed(3), y1:(y1p + dy / len * pad).toFixed(3),
+      x2:(x2p - dx / len * pad).toFixed(3), y2:(y2p - dy / len * pad).toFixed(3),
+      stroke:color, 'stroke-width':(st === 'idle' || !st) ? .04 : .065,
+      opacity:(st === 'idle' || !st) ? .6 : 1, 'stroke-linecap':'round'}));
+  });
+  P.forEach((p, i) => {
+    const st = NODE_STYLE[frame.states[i] || (p === i ? 'idle' : 'idle')];
+    const c = mk('circle', {cx:X(i).toFixed(3), cy:Y(i).toFixed(3), r:R.toFixed(3),
+      fill:st.fill, stroke:st.stroke, 'stroke-width':st.w});
+    if (st.glow) c.setAttribute('filter', 'url(#glow)');
+    svg.appendChild(c);
+    const t = mk('text', {x:X(i).toFixed(3), y:(Y(i) + R * 0.34).toFixed(3),
+      'text-anchor':'middle', fill:st.text, 'font-size':(R * 0.95).toFixed(3)});
+    t.textContent = nm(i);
+    svg.appendChild(t);
+  });
+  return yTop + L.maxDepth * rowH + R;
+}
+
+function drawArray(svg, frame, yTop){
+  const P = frame.parent, n = P.length;
+  const w = Math.min(0.86, 7.6 / n), x0 = (9.6 - w * n) / 2, h = w * 0.72;
+  const lbl = mk('text', {x:x0 - 0.25, y:yTop + h * 0.68, 'text-anchor':'end',
+    fill:'#00aaaa', 'font-size':'.32'});
+  lbl.textContent = 'parent';
+  svg.appendChild(lbl);
+  for (let i = 0; i < n; i++){
+    const st = frame.states[i], hot = st && st !== 'idle';
+    const sty = NODE_STYLE[st || 'idle'];
+    svg.appendChild(mk('rect', {x:(x0 + i * w).toFixed(3), y:yTop.toFixed(3),
+      width:(w - 0.04).toFixed(3), height:h.toFixed(3), rx:.06,
+      fill:hot ? sty.fill : '#002639', stroke:hot ? sty.stroke : '#0093a1',
+      'stroke-width':hot ? .055 : .03}));
+    const v = mk('text', {x:(x0 + i * w + (w - 0.04) / 2).toFixed(3),
+      y:(yTop + h * 0.70).toFixed(3), 'text-anchor':'middle',
+      fill:hot ? sty.text : '#d6f2f4', 'font-size':(h * 0.62).toFixed(3)});
+    v.textContent = nm(P[i]);
+    svg.appendChild(v);
+    const ix = mk('text', {x:(x0 + i * w + (w - 0.04) / 2).toFixed(3),
+      y:(yTop + h + 0.36).toFixed(3), 'text-anchor':'middle',
+      fill:'#5c7a83', 'font-size':(h * 0.48).toFixed(3)});
+    ix.textContent = nm(i);
+    svg.appendChild(ix);
+  }
+  return yTop + h + 0.5;
+}
+
+function drawMatrix(svg, frame, x0, yTop){
+  const M = frame.matrix, n = M.length, w = 0.52;
+  for (let i = 0; i < n; i++){
+    for (let j = 0; j < n; j++){
+      const on = M[i][j] === 1, upper = j > i;
+      svg.appendChild(mk('rect', {x:(x0 + j * w).toFixed(3), y:(yTop + i * w).toFixed(3),
+        width:(w - .05).toFixed(3), height:(w - .05).toFixed(3), rx:.06,
+        fill:on ? '#002639' : '#292c30',
+        stroke:on ? '#ffc000' : '#0093a1', 'stroke-width':on ? .05 : .022,
+        opacity:upper ? 1 : .45}));
+      const t = mk('text', {x:(x0 + j * w + (w - .05) / 2).toFixed(3),
+        y:(yTop + i * w + w * 0.66).toFixed(3), 'text-anchor':'middle',
+        fill:on ? '#ffc000' : '#5c7a83', 'font-size':'.30', opacity:upper ? 1 : .5});
+      t.textContent = String(M[i][j]);
+      svg.appendChild(t);
+    }
+    const rl = mk('text', {x:(x0 - 0.16).toFixed(3), y:(yTop + i * w + w * 0.66).toFixed(3),
+      'text-anchor':'end', fill:'#5c7a83', 'font-size':'.28'});
+    rl.textContent = String(i); svg.appendChild(rl);
+    const cl = mk('text', {x:(x0 + i * w + (w - .05) / 2).toFixed(3), y:(yTop - 0.16).toFixed(3),
+      'text-anchor':'middle', fill:'#5c7a83', 'font-size':'.28'});
+    cl.textContent = String(i); svg.appendChild(cl);
+  }
+  if (frame.scan){
+    const [i, j] = frame.scan;
+    svg.appendChild(mk('rect', {x:(x0 + j * w - .06).toFixed(3), y:(yTop + i * w - .06).toFixed(3),
+      width:(w + .05).toFixed(3), height:(w + .05).toFixed(3), rx:.09, fill:'none',
+      stroke:'#ff0000', 'stroke-width':.055, 'stroke-dasharray':'.12 .09'}));
+  }
+  const cap = mk('text', {x:(x0 + n * w / 2).toFixed(3), y:(yTop + n * w + 0.42).toFixed(3),
+    'text-anchor':'middle', fill:'#5c7a83', 'font-size':'.30'});
+  cap.textContent = LANG === 'zh' ? '只掃上三角' : 'upper triangle only';
+  svg.appendChild(cap);
+}
+
+function renderStage(frame){
+  const svg = $('stage');
+  clear(svg); svgDefs(svg);
+  let bottom;
+  if (frame.matrix){
+    svg.setAttribute('viewBox', '0 0 9.6 6.4');
+    drawMatrix(svg, frame, 0.65, 0.65);
+    bottom = drawForest(svg, frame, 4.4, 9.3, 1.0, 1.15);
+    drawArray(svg, frame, 4.6);
+  } else {
+    const L = layout(frame.parent);
+    const h = 1.9 + L.maxDepth * 1.1 + 1.6;
+    svg.setAttribute('viewBox', '0 0 9.6 ' + Math.max(h, 5.2).toFixed(2));
+    bottom = drawForest(svg, frame, 0.9, 8.7, 0.85, 1.1);
+    drawArray(svg, frame, Math.max(bottom + 0.75, 3.6));
+  }
+}
+
+function drawPanels(frame){
+  const box = $('panels'); box.innerHTML = '';
+  (frame.panels || []).forEach(p => {
+    const d = document.createElement('div'); d.className = 'panel';
+    const l = document.createElement('div'); l.className = 'lbl'; l.textContent = tr(p.lbl);
+    const c = document.createElement('div'); c.className = 'chips';
+    p.chips.forEach(ch => { const s = document.createElement('span');
+      s.className = 'chip ' + (ch.cls || ''); s.textContent = ch.t; c.appendChild(s); });
+    d.appendChild(l); d.appendChild(c); box.appendChild(d);
+  });
+}
+
+function drawCode(frame){
+  const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  $('code').innerHTML = curTab().code.map((ln, i) => {
+    const h = esc(ln).replace(/(#.*)$/, '<span class="cm">$1</span>');
+    return '<span class="ln' + (i === frame.line ? ' on' : '') + '">' + (h || ' ') + '</span>';
+  }).join('');
+}
+
+function drawLegend(){
+  $('legend').innerHTML = curTab().legend.map(([c, txt]) =>
+    '<span><i style="background:' + c + '"></i>' + tr(txt) + '</span>').join('');
+}
+
+function render(){
+  if (!frames.length) return;
+  cur = Math.max(0, Math.min(cur, frames.length - 1));
+  const f = frames[cur];
+  $('stage-title').textContent = tr(curTab().stage);
+  renderStage(f);
+  drawPanels(f); drawCode(f); drawLegend();
+  $('narr').innerHTML = tr(f.msg);
+  $('idea').innerHTML = tr(curTab().idea);
+  $('stepno').textContent = (cur + 1) + ' / ' + frames.length;
+  $('prev').disabled = cur === 0;
+  $('next').disabled = cur === frames.length - 1;
+}
+
+/* --------------------------------------------------------------- controls */
+function step(d){ stop(); cur += d; render(); }
+function reset(){ stop(); cur = 0; render(); }
+function stop(){ if (timer){ clearInterval(timer); timer = null;
+  $('play').textContent = tr(T.play); } }
+function togglePlay(){
+  if (timer) { stop(); return; }
+  if (cur >= frames.length - 1) cur = 0;
+  $('play').textContent = tr(T.pause);
+  timer = setInterval(() => {
+    if (cur >= frames.length - 1) { stop(); return; }
+    cur++; render();
+  }, Number($('speed').value));
+}
+$('speed').addEventListener('input', () => { if (timer){ stop(); togglePlay(); } });
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight') { step(1); e.preventDefault(); }
+  else if (e.key === 'ArrowLeft') { step(-1); e.preventDefault(); }
+  else if (e.key === ' ') { togglePlay(); e.preventDefault(); }
+});
+
+setLang('zh');
+load();
+</script>
+</body>
+</html>

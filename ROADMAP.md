@@ -1,6 +1,6 @@
 # 100 Days of Python — Roadmap
 
-已完成 Day 01–11（linked list → graph）。以下為 Day 12–100 的規劃。
+已完成 Day 01–14（linked list → Union-Find）。以下為 Day 12–100 的規劃。
 原則：先把經典資料結構／演算法走完，中段轉進 AI 時代真正天天在用的東西，
 最後 6 天做中型專案，把前面 94 天的積木組起來。
 
