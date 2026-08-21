@@ -3,6 +3,9 @@
 More details in:
 https://medium.com/100-days-of-python/day-09-hash-table-chaining-ef74baa6732
 
+Interactive walkthrough: [demo.html](demo.html) - a single self-contained page
+(no build step, works offline, 中文 / English toggle) that animates hashing into buckets, chain lookup, deletion and resizing step by step.
+
 ![img](https://upload.wikimedia.org/wikipedia/commons/thumb/7/7d/Hash_table_3_1_1_0_1_0_0_SP.svg/315px-Hash_table_3_1_1_0_1_0_0_SP.svg.png)
 
 In computing, a hash table (hash map) is a data structure which implements an associative array abstract data type, a structure that can map keys to values. A hash table uses a hash function to compute an index into an array of buckets or slots, from which the desired value can be found

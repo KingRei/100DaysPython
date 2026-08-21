@@ -3,6 +3,9 @@
 More details in:
 https://medium.com/100-days-of-python/day-04-data-structure-binary-search-tree-8aef2a8f61eb
 
+Interactive walkthrough: [demo.html](demo.html) - a single self-contained page
+(no build step, works offline, 中文 / English toggle) that animates BST insertion, search hits and misses, and all three deletion cases step by step.
+
 Yesterday(day 03) we mentioned BST. Today, let's go deeper. 
 
 ![BST](https://upload.wikimedia.org/wikipedia/commons/thumb/d/da/Binary_search_tree.svg/300px-Binary_search_tree.svg.png)

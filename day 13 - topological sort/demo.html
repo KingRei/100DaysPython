@@ -7,16 +7,16 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='%23002639' stroke='%230093a1' stroke-width='2'/><path d='M9 16h14M17 11l6 5-6 5' stroke='%2300aaaa' stroke-width='2' fill='none'/></svg>">
 <style>
 :root{
-  --navy:#002639; --navy-d:#001824; --teal:#0093a1; --teal-l:#00aaaa;
-  --cyan:#00ffff; --grey:#292c30; --grey-l:#818181; --red:#ff0000;
-  --amber:#ffc000; --pale:#d6f2f4; --white:#ffffff;
+  --navy:#062434; --navy-d:#04121c; --teal:#12b3b8; --teal-l:#3fe0dd;
+  --cyan:#5ef0ec; --grey:#123240; --grey-l:#8fa3ac; --red:#ff5c5c;
+  --amber:#ff9736; --pale:#dff2f5; --white:#ffffff;
   --serif:"Latin Modern Roman","Liberation Serif",Georgia,"Times New Roman",serif;
   --mono:"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
 body{
-  background:radial-gradient(1200px 700px at 50% -10%,#00344a 0%,var(--navy-d) 60%,#000f18 100%);
+  background:radial-gradient(1200px 700px at 50% -10%,#0a3a4a 0%,var(--navy-d) 60%,#030d15 100%);
   color:var(--pale); font-family:var(--serif); min-height:100vh;
   -webkit-font-smoothing:antialiased;
 }
@@ -24,7 +24,7 @@ a{color:var(--teal-l)}
 .wrap{max-width:1180px;margin:0 auto;padding:26px 20px 60px}
 header{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-bottom:6px}
 h1{font-size:30px;margin:0;color:var(--white);letter-spacing:.4px;
-   text-shadow:0 0 14px rgba(0,255,255,.35)}
+   text-shadow:0 0 14px rgba(94,240,236,.35)}
 .day{font-size:13px;letter-spacing:2.4px;text-transform:uppercase;color:var(--teal-l);
      border:1px solid var(--teal);border-radius:999px;padding:4px 12px}
 .sub{color:var(--grey-l);font-size:15px;margin:8px 0 20px;max-width:70ch;line-height:1.6}
@@ -32,52 +32,52 @@ h1{font-size:30px;margin:0;color:var(--white);letter-spacing:.4px;
 .lang{display:flex;border:1px solid var(--teal);border-radius:999px;overflow:hidden}
 .lang button{background:transparent;color:var(--teal-l);border:0;padding:5px 14px;
   font-family:var(--serif);font-size:14px;cursor:pointer}
-.lang button.on{background:var(--teal);color:#00141d}
+.lang button.on{background:var(--teal);color:#04121c}
 .tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
 .tabs button{
-  background:rgba(0,38,57,.75);border:1px solid rgba(0,147,161,.55);color:var(--pale);
+  background:rgba(6,36,52,.75);border:1px solid rgba(18,179,184,.55);color:var(--pale);
   padding:9px 16px;border-radius:8px;cursor:pointer;font-family:var(--serif);font-size:15px;
   transition:.18s}
 .tabs button:hover{border-color:var(--teal-l);color:var(--white)}
-.tabs button.on{background:var(--teal);border-color:var(--teal-l);color:#00141d;
-  box-shadow:0 0 18px rgba(0,255,255,.25)}
+.tabs button.on{background:var(--teal);border-color:var(--teal-l);color:#04121c;
+  box-shadow:0 0 18px rgba(94,240,236,.25)}
 .grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:18px}
 @media(max-width:900px){.grid{grid-template-columns:1fr}}
-.card{background:rgba(0,24,36,.72);border:1px solid rgba(0,147,161,.35);border-radius:12px;
+.card{background:rgba(4,18,28,.72);border:1px solid rgba(18,179,184,.35);border-radius:12px;
       padding:14px 16px}
 .card h3{margin:0 0 10px;font-size:14px;letter-spacing:2px;text-transform:uppercase;
          color:var(--teal-l);font-weight:normal}
 svg.stage{width:100%;height:auto;display:block;touch-action:none}
 svg.stage text{font-family:var(--serif);user-select:none}
 .narr{min-height:52px;margin-top:10px;padding:10px 12px;border-left:3px solid var(--amber);
-      background:rgba(255,192,0,.06);font-size:16px;line-height:1.55;color:var(--white)}
+      background:rgba(255,151,54,.06);font-size:16px;line-height:1.55;color:var(--white)}
 .narr code{font-family:var(--mono);font-size:14px;color:var(--amber)}
 .ctrl{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
 .ctrl button{background:var(--navy);border:1px solid var(--teal);color:var(--teal-l);
   border-radius:8px;padding:7px 13px;cursor:pointer;font-family:var(--serif);font-size:15px;
   min-width:44px;transition:.15s}
-.ctrl button:hover:not(:disabled){background:var(--teal);color:#00141d}
+.ctrl button:hover:not(:disabled){background:var(--teal);color:#04121c}
 .ctrl button:disabled{opacity:.35;cursor:default}
 .ctrl .play{min-width:92px;font-weight:bold}
 .ctrl input[type=range]{width:120px;accent-color:var(--teal-l)}
 .stepno{color:var(--grey-l);font-size:14px;font-family:var(--mono)}
 .chips{display:flex;flex-wrap:wrap;gap:6px;min-height:30px}
 .chip{border:1px solid var(--teal);border-radius:6px;padding:3px 9px;font-family:var(--mono);
-      font-size:14px;color:var(--pale);background:rgba(0,147,161,.10)}
-.chip.hot{border-color:var(--amber);color:var(--amber);background:rgba(255,192,0,.12);
-  box-shadow:0 0 12px rgba(255,192,0,.25)}
-.chip.dim{border-color:#3a4a52;color:var(--grey-l);background:transparent}
-.chip.bad{border-color:var(--red);color:#ff8080;background:rgba(255,0,0,.12)}
-.chip.ok{border-color:var(--teal-l);color:var(--cyan);background:rgba(0,255,255,.08)}
-.chip.empty{border-style:dashed;color:var(--grey-l);border-color:#3a4a52}
+      font-size:14px;color:var(--pale);background:rgba(18,179,184,.10)}
+.chip.hot{border-color:var(--amber);color:var(--amber);background:rgba(255,151,54,.12);
+  box-shadow:0 0 12px rgba(255,151,54,.25)}
+.chip.dim{border-color:#2b4a58;color:var(--grey-l);background:transparent}
+.chip.bad{border-color:var(--red);color:#ffbe6b;background:rgba(255,92,92,.12)}
+.chip.ok{border-color:var(--teal-l);color:var(--cyan);background:rgba(94,240,236,.08)}
+.chip.empty{border-style:dashed;color:var(--grey-l);border-color:#2b4a58}
 .panel+.panel{margin-top:12px}
 .panel .lbl{font-size:13px;letter-spacing:1.6px;text-transform:uppercase;color:var(--grey-l);
   margin-bottom:5px}
 pre.code{margin:0;font-family:var(--mono);font-size:13.5px;line-height:1.72;overflow-x:auto;
-  color:#9fc7cf}
+  color:#c7a6ff}
 pre.code .ln{display:block;padding:0 8px;border-left:3px solid transparent;white-space:pre}
-pre.code .ln.on{background:rgba(0,255,255,.10);border-left-color:var(--cyan);color:var(--white)}
-pre.code .cm{color:#5c7a83;font-style:italic}
+pre.code .ln.on{background:rgba(94,240,236,.10);border-left-color:var(--cyan);color:var(--white)}
+pre.code .cm{color:#6f8f9b;font-style:italic}
 pre.code .kw{color:var(--amber)}
 .legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:13.5px;color:var(--grey-l)}
 .legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;
@@ -85,7 +85,7 @@ pre.code .kw{color:var(--amber)}
 .note{font-size:15px;line-height:1.65;color:var(--pale)}
 .note b{color:var(--amber);font-weight:normal}
 .toggle-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
-footer{margin-top:32px;padding-top:16px;border-top:1px solid rgba(0,147,161,.3);
+footer{margin-top:32px;padding-top:16px;border-top:1px solid rgba(18,179,184,.3);
   color:var(--grey-l);font-size:14px;display:flex;gap:18px;flex-wrap:wrap}
 .hidden{display:none!important}
 </style>
@@ -434,8 +434,8 @@ const TABS = [
        graph:DAG_LEX, opt:{smallest:true}}
     ],
     build:(g,o)=>buildKahn(g,o),
-    legend:[['#0093a1',{zh:'還沒動到',en:'untouched'}],['#ffc000',{zh:'in-degree = 0，可以開始',en:'in-degree 0, ready'}],
-            ['#00ffff',{zh:'正在處理',en:'being processed'}],['#3a4a52',{zh:'已輸出',en:'already output'}]],
+    legend:[['#12b3b8',{zh:'還沒動到',en:'untouched'}],['#ff9736',{zh:'in-degree = 0，可以開始',en:'in-degree 0, ready'}],
+            ['#5ef0ec',{zh:'正在處理',en:'being processed'}],['#2b4a58',{zh:'已輸出',en:'already output'}]],
     idea:{zh:'把「還欠幾個前置」記成一個數字，就是 in-degree。<b>只有欠 0 個的人可以動</b>，做完他就替所有下游各還一筆債，'+
              '誰的債剛好清光就換誰上場。每個節點進出 queue 一次、每條邊看一次，所以是 O(V + E)。'+
              '若最後輸出的數量少於節點數，剩下的人互相欠債，那就是<b>環</b>。換成 min-heap 就得到字典序最小的順序（LeetCode 210 常見追問）。',
@@ -446,8 +446,8 @@ const TABS = [
     label:{zh:'② DFS 後序', en:'② DFS post-order'},
     stage:{zh:'DFS：先把子孫做完，自己最後才收工', en:'DFS: finish every descendant first, yourself last'},
     variants:[], build:(g,o)=>buildDFS(g,o),
-    legend:[['#0093a1',{zh:'WHITE 沒看過',en:'WHITE unseen'}],['#ffc000',{zh:'GREY 在遞迴路徑上',en:'GREY on the path'}],
-            ['#00ffff',{zh:'目前這一格',en:'current frame'}],['#3a4a52',{zh:'BLACK 完成',en:'BLACK finished'}]],
+    legend:[['#12b3b8',{zh:'WHITE 沒看過',en:'WHITE unseen'}],['#ff9736',{zh:'GREY 在遞迴路徑上',en:'GREY on the path'}],
+            ['#5ef0ec',{zh:'目前這一格',en:'current frame'}],['#2b4a58',{zh:'BLACK 完成',en:'BLACK finished'}]],
     idea:{zh:'DFS 不追蹤 in-degree，而是靠<b>完成時間</b>：一個節點被塗黑時，它所有後代早就黑了。'+
              '所以「完成順序」正好是拓樸順序的<b>相反</b>，最後 reverse 一次即可。'+
              '注意輸出跟 Kahn 不同，但兩個都對；遞迴深度等於圖的深度，很深的圖要改寫成迭代版，CPython 預設只有 1000 層。',
@@ -459,8 +459,8 @@ const TABS = [
     label:{zh:'③ 環 = back edge', en:'③ Cycles = back edges'},
     stage:{zh:'為什麼你的 build 會卡住：一條指回 GREY 的邊', en:'Why your build hangs: an edge pointing back at GREY'},
     variants:[], build:(g,o)=>buildDFS(g,Object.assign({stopOnCycle:true},o)),
-    legend:[['#ffc000',{zh:'GREY：還在這條路徑上',en:'GREY: still on this path'}],['#3a4a52',{zh:'BLACK：完成',en:'BLACK: finished'}],
-            ['#ff0000',{zh:'back edge 與環',en:'back edge and cycle'}]],
+    legend:[['#ff9736',{zh:'GREY：還在這條路徑上',en:'GREY: still on this path'}],['#2b4a58',{zh:'BLACK：完成',en:'BLACK: finished'}],
+            ['#ff5c5c',{zh:'back edge 與環',en:'back edge and cycle'}]],
     idea:{zh:'只有兩個顏色不夠。<b>GREY 是「還在遞迴堆疊上」</b>，指回 GREY 的邊代表你繞回了自己還沒離開的節點——那就是環。'+
              '指回 BLACK 完全正常（只是走過的捷徑），所以拿 visited 布林值判斷環會誤報。'+
              '把 GREY 路徑從被指到的那個節點截到現在這個節點，就是可以印給使用者看的循環相依清單。',
@@ -477,8 +477,8 @@ const TABS = [
        graph:LC_BAD, opt:{verdict:true}}
     ],
     build:(g,o)=>buildKahn(g,o),
-    legend:[['#0093a1',{zh:'還沒修',en:'not taken'}],['#ffc000',{zh:'先修都修完了',en:'prerequisites met'}],
-            ['#00ffff',{zh:'正在修',en:'taking it now'}],['#3a4a52',{zh:'已修完',en:'done'}]],
+    legend:[['#12b3b8',{zh:'還沒修',en:'not taken'}],['#ff9736',{zh:'先修都修完了',en:'prerequisites met'}],
+            ['#5ef0ec',{zh:'正在修',en:'taking it now'}],['#2b4a58',{zh:'已修完',en:'done'}]],
     idea:{zh:'題目給的是 <code>[a, b]</code>＝「要修 a 必須先修 b」，所以邊要建成 <b>b → a</b>，'+
              '很多人反過來寫，範例還會過。207 只要問「輸出的數量有沒有等於 numCourses」；'+
              '210 直接回傳那條順序（無解回空陣列）。若追問「有多個答案要字典序最小」，把 queue 換成 min-heap 就好——回第①頁看動畫。',
@@ -528,20 +528,20 @@ function load(){
 /* ---------------------------------------------------------------- drawing */
 const R = 0.40, VH = 7;
 const NODE_STYLE = {
-  idle  :{fill:'#002639', stroke:'#0093a1', text:'#d6f2f4', w:.05, glow:0},
-  queued:{fill:'#002639', stroke:'#ffc000', text:'#ffc000', w:.07, glow:.35},
-  active:{fill:'#0093a1', stroke:'#00ffff', text:'#00141d', w:.08, glow:.85},
-  done  :{fill:'#06202b', stroke:'#3a4a52', text:'#818181', w:.045,glow:0},
-  grey  :{fill:'#002639', stroke:'#ffc000', text:'#ffc000', w:.07, glow:.3},
-  black :{fill:'#06202b', stroke:'#0093a1', text:'#9fc7cf', w:.045,glow:0},
-  cycle :{fill:'#2a0008', stroke:'#ff0000', text:'#ff8080', w:.08, glow:.6}
+  idle  :{fill:'#062434', stroke:'#12b3b8', text:'#dff2f5', w:.05, glow:0},
+  queued:{fill:'#062434', stroke:'#ff9736', text:'#ff9736', w:.07, glow:.35},
+  active:{fill:'#12b3b8', stroke:'#5ef0ec', text:'#04121c', w:.08, glow:.85},
+  done  :{fill:'#072a3a', stroke:'#2b4a58', text:'#8fa3ac', w:.045,glow:0},
+  grey  :{fill:'#062434', stroke:'#ff9736', text:'#ff9736', w:.07, glow:.3},
+  black :{fill:'#072a3a', stroke:'#12b3b8', text:'#c7a6ff', w:.045,glow:0},
+  cycle :{fill:'#33101a', stroke:'#ff5c5c', text:'#ffbe6b', w:.08, glow:.6}
 };
 const EDGE_STYLE = {
-  idle  :{c:'#0093a1', w:.038, o:.55},
-  active:{c:'#ffc000', w:.075, o:1},
-  tree  :{c:'#00aaaa', w:.062, o:1},
-  back  :{c:'#ff0000', w:.075, o:1},
-  dim   :{c:'#3a4a52', w:.032, o:.6}
+  idle  :{c:'#12b3b8', w:.038, o:.55},
+  active:{c:'#ff9736', w:.075, o:1},
+  tree  :{c:'#3fe0dd', w:.062, o:1},
+  back  :{c:'#ff5c5c', w:.075, o:1},
+  dim   :{c:'#2b4a58', w:.032, o:.6}
 };
 const svgNS = 'http://www.w3.org/2000/svg';
 const mk = (tag, attrs) => { const e = document.createElementNS(svgNS, tag);

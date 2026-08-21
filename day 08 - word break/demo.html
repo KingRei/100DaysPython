@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 08 - Word Break / Word Break</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='2' y='2' width='28' height='28' rx='7' fill='%23062434'/><circle cx='11' cy='12' r='4' fill='%2312b3b8'/><circle cx='21' cy='12' r='4' fill='%239d6bff'/><circle cx='16' cy='22' r='4' fill='%23ff9736'/></svg>">
+<style>
+:root{
+  --bg0:#04121c; --bg1:#062434; --card:rgba(6,36,52,.72);
+  --teal:#12b3b8; --teal-d:#0a6b74; --teal-l:#3fe0dd;
+  --purple:#9d6bff; --purple-d:#241542; --purple-l:#c7a6ff;
+  --orange:#ff9736; --orange-d:#3a2109; --orange-l:#ffbe6b;
+  --red:#ff5c5c; --grey:#8fa3ac; --pale:#dff2f5; --white:#ffffff;
+  --serif:"Latin Modern Roman","Liberation Serif",Georgia,"Times New Roman",serif;
+  --mono:"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:
+    radial-gradient(900px 520px at 12% -8%,rgba(157,107,255,.20) 0%,rgba(157,107,255,0) 62%),
+    radial-gradient(900px 520px at 88% -4%,rgba(255,151,54,.16) 0%,rgba(255,151,54,0) 60%),
+    radial-gradient(1200px 800px at 50% 30%,#083041 0%,var(--bg1) 45%,var(--bg0) 100%);
+  color:var(--pale); font-family:var(--serif); min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--teal-l)}
+.wrap{max-width:1180px;margin:0 auto;padding:26px 20px 60px}
+header{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-bottom:6px}
+h1{font-size:30px;margin:0;color:var(--white);letter-spacing:.4px;
+   text-shadow:0 0 16px rgba(63,224,221,.35)}
+.day{font-size:13px;letter-spacing:2.4px;text-transform:uppercase;color:var(--orange-l);
+     border:1px solid var(--orange);border-radius:999px;padding:4px 12px;
+     background:rgba(255,151,54,.10)}
+.sub{color:var(--grey);font-size:15px;margin:8px 0 20px;max-width:72ch;line-height:1.6}
+.spacer{flex:1}
+.lang{display:flex;border:1px solid var(--teal-d);border-radius:999px;overflow:hidden}
+.lang button{background:transparent;color:var(--teal-l);border:0;padding:5px 14px;
+  font-family:var(--serif);font-size:14px;cursor:pointer}
+.lang button.on{background:var(--teal);color:#022}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
+.tabs button{
+  background:rgba(6,40,58,.75);border:1px solid rgba(18,179,184,.45);color:var(--pale);
+  padding:9px 16px;border-radius:9px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  transition:.18s}
+.tabs button:hover{border-color:var(--teal-l);color:var(--white)}
+.tabs button.on{background:linear-gradient(135deg,var(--teal) 0%,var(--purple) 140%);
+  border-color:var(--teal-l);color:#03222a;box-shadow:0 0 18px rgba(18,179,184,.30)}
+.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:18px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid rgba(18,179,184,.28);border-radius:13px;
+      padding:14px 16px}
+.card h3{margin:0 0 10px;font-size:14px;letter-spacing:2px;text-transform:uppercase;
+         color:var(--teal-l);font-weight:normal}
+svg.stage{width:100%;height:auto;display:block;touch-action:none}
+svg.stage text{font-family:var(--serif);user-select:none}
+.narr{min-height:52px;margin-top:10px;padding:10px 12px;border-left:3px solid var(--orange);
+      background:rgba(255,151,54,.07);font-size:16px;line-height:1.55;color:var(--white)}
+.narr code{font-family:var(--mono);font-size:14px;color:var(--orange-l)}
+.narr b{color:var(--orange-l);font-weight:normal}
+.ctrl{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
+.ctrl button{background:rgba(6,40,58,.9);border:1px solid var(--teal-d);color:var(--teal-l);
+  border-radius:8px;padding:7px 13px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  min-width:44px;transition:.15s}
+.ctrl button:hover:not(:disabled){background:var(--teal);color:#03222a}
+.ctrl button:disabled{opacity:.35;cursor:default}
+.ctrl .play{min-width:92px;font-weight:bold;border-color:var(--orange);color:var(--orange-l)}
+.ctrl .play:hover{background:var(--orange);color:#2a1400}
+.ctrl input[type=range]{width:120px;accent-color:var(--purple)}
+.stepno{color:var(--grey);font-size:14px;font-family:var(--mono)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;min-height:30px}
+.chip{border:1px solid var(--teal-d);border-radius:6px;padding:3px 9px;font-family:var(--mono);
+      font-size:14px;color:var(--pale);background:rgba(18,179,184,.10)}
+.chip.hot{border-color:var(--orange);color:var(--orange-l);background:rgba(255,151,54,.14)}
+.chip.act{border-color:var(--purple);color:var(--purple-l);background:rgba(157,107,255,.16)}
+.chip.ok{border-color:var(--teal-l);color:var(--teal-l);background:rgba(63,224,221,.12)}
+.chip.dim{border-color:#2f5661;color:var(--grey);background:transparent}
+.chip.bad{border-color:var(--red);color:#ff9a9a;background:rgba(255,92,92,.14)}
+.chip.empty{border-style:dashed;color:var(--grey);border-color:#2f5661}
+.panel+.panel{margin-top:12px}
+.panel .lbl{font-size:13px;letter-spacing:1.6px;text-transform:uppercase;color:var(--grey);
+  margin-bottom:5px}
+pre.code{margin:0;font-family:var(--mono);font-size:13.5px;line-height:1.72;overflow-x:auto;
+  color:#a8c8d0}
+pre.code .ln{display:block;padding:0 8px;border-left:3px solid transparent;white-space:pre}
+pre.code .ln.on{background:rgba(255,151,54,.12);border-left-color:var(--orange);color:var(--white)}
+pre.code .cm{color:#5f7b85;font-style:italic}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:13.5px;color:var(--grey)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;
+  vertical-align:-1px;border:1px solid rgba(255,255,255,.22)}
+.note{font-size:15px;line-height:1.65;color:var(--pale)}
+.note b{color:var(--purple-l);font-weight:normal}
+.note code{font-family:var(--mono);font-size:13.5px;color:var(--teal-l)}
+.toggle-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.toggle-row button{border:1px solid rgba(18,179,184,.45);border-radius:8px;padding:6px 13px;
+  cursor:pointer;font-family:var(--serif);font-size:14px;
+  background:rgba(6,40,58,.75);color:var(--pale)}
+.toggle-row button.on{background:var(--purple);border-color:var(--purple-l);color:#150a2b}
+footer{margin-top:32px;padding-top:16px;border-top:1px solid rgba(18,179,184,.25);
+  color:var(--grey);font-size:14px;display:flex;gap:18px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <span class="day">Day 08</span>
+  <h1 data-i18n="title">Word Break</h1>
+  <span class="spacer"></span>
+  <div class="lang">
+    <button id="btn-zh" class="on" onclick="setLang('zh')">中文</button>
+    <button id="btn-en" onclick="setLang('en')">EN</button>
+  </div>
+</header>
+<p class="sub" data-i18n="sub">從指數級的暴力切法，到記憶化，再到一維 DP——同一題三種寫法看清楚重疊子問題。</p>
+
+<div class="tabs" id="tabs"></div>
+
+<div class="grid">
+  <div>
+    <div class="card">
+      <h3 id="stage-title"></h3>
+      <svg class="stage" id="stage" viewBox="0 0 10 6.4" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="legend" id="legend"></div>
+      <div class="narr" id="narr"></div>
+      <div class="ctrl">
+        <button onclick="reset()" title="reset">⟲</button>
+        <button id="prev" onclick="step(-1)">◀</button>
+        <button class="play" id="play" onclick="togglePlay()" data-i18n="play">▶ 播放</button>
+        <button id="next" onclick="step(1)">▶</button>
+        <span class="stepno" id="stepno">0 / 0</span>
+        <span class="spacer"></span>
+        <span style="font-size:13px;color:var(--grey)" data-i18n="speed">速度</span>
+        <input type="range" id="speed" min="180" max="1600" step="20" value="820">
+      </div>
+      <div class="toggle-row" id="extra"></div>
+    </div>
+  </div>
+  <div>
+    <div class="card" id="state-card">
+      <h3 data-i18n="state">演算法狀態</h3>
+      <div id="panels"></div>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="code">程式碼</h3>
+      <pre class="code" id="code"></pre>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="idea">重點</h3>
+      <div class="note" id="idea"></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <span>100 Days of Python — Day 08</span>
+  <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2008%20-%20word%20break" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://medium.com/100-days-of-python/day-08-problem-word-break-15d8256cd0f9" target="_blank" rel="noopener">Medium</a>
+</footer>
+</div>
+<script>
+// DAY: 08
+// TITLE_ZH: Word Break
+// TITLE_EN: Word Break
+// SUB_ZH: 從指數級的暴力切法，到記憶化，再到一維 DP——同一題三種寫法看清楚重疊子問題。
+// SUB_EN: From exponential brute force to memoisation to a one-line DP.
+// FOLDER: day%2008%20-%20word%20break
+// MEDIUM: https://medium.com/100-days-of-python/day-08-problem-word-break-15d8256cd0f9
+
+const SS = 'catsanddog';
+const DICT = ['cat', 'cats', 'and', 'sand', 'dog'];
+const LW = .78, LH = .88, LY = 1.25, LX = 5.0 - SS.length * LW / 2;
+function strShapesOf(str, states, cuts){
+  const out = [], x0 = 5.0 - str.length * LW / 2;
+  for (let i = 0; i < str.length; i++)
+    out.push(S.r(x0 + i * LW, LY, LW - .06, LH, (states && states[i]) || 'idle', str[i], {fs:.44}));
+  for (let i = 0; i <= str.length; i++)
+    out.push(S.t(x0 + i * LW - .03, LY - .26, String(i), {c:'#8fa3ac', fs:.24}));
+  (cuts || []).forEach(c => out.push(S.e(x0 + c * LW - .03, LY - .12, x0 + c * LW - .03, LY + LH + .16,
+    {s:'act', arrow:false, w:.06})));
+  return out;
+}
+const strShapes = (states, cuts) => strShapesOf(SS, states, cuts);
+function dpShapes(dp, states){
+  const out = [], y = 3.1;
+  for (let i = 0; i < dp.length; i++){
+    const v = dp[i];
+    out.push(S.r(LX + i * LW - .38, y, LW - .06, LH,
+      (states && states[i]) || (v === true ? 'ok' : (v === false ? 'done' : 'ghost')),
+      v === null ? '?' : (v ? 'T' : 'F'), {fs:.40}));
+    out.push(S.t(LX + i * LW - .38 + (LW - .06) / 2, y + LH + .32, String(i), {c:'#8fa3ac', fs:.24}));
+  }
+  out.push(S.t(LX - .70, y + LH * .62, 'dp', {c:'#3fe0dd', fs:.34, anchor:'end'}));
+  return out;
+}
+const dictChips = hot => ({lbl:{zh:'字典', en:'word dict'},
+  chips:DICT.map(w => ({t:w, cls:w === hot ? 'ok' : ''}))});
+const chipsOf = (a, cls) => a.map(x => ({t:String(x), cls:cls || ''}));
+
+const CODE_DP = [
+'def word_break(s, words):       # LeetCode 139',
+'    ws = set(words)             # O(1) 查字典',
+'    dp = [False] * (len(s) + 1)',
+'    dp[0] = True                # 空字串一定切得出來',
+'    for i in range(1, len(s) + 1):',
+'        for j in range(i):',
+'            if dp[j] and s[j:i] in ws:',
+'                dp[i] = True    # 前 i 個字切得開',
+'                break',
+'    return dp[len(s)]'];
+const CODE_REC = [
+'def word_break(s, words, memo=None):',
+'    if memo is None: memo = {}',
+'    if s in memo: return memo[s]        # 查快取',
+'    if s == "": return True',
+'    for w in words:',
+'        if s.startswith(w):',
+'            if word_break(s[len(w):], words, memo):',
+'                memo[s] = True',
+'                return True',
+'    memo[s] = False                     # 記住「這段切不開」',
+'    return False'];
+const CODE_II = [
+'def word_break_ii(s, words):    # LeetCode 140：回傳所有切法',
+'    ws, memo = set(words), {}',
+'    def go(rest):',
+'        if rest in memo: return memo[rest]',
+'        if rest == "": return [""]',
+'        out = []',
+'        for i in range(1, len(rest) + 1):',
+'            w = rest[:i]',
+'            if w in ws:',
+'                for tail in go(rest[i:]):',
+'                    out.append(w if tail == "" else w + " " + tail)',
+'        memo[rest] = out',
+'        return out',
+'    return go(s)'];
+
+function buildDP(){
+  const F = new Frames(), n = SS.length;
+  const dp = new Array(n + 1).fill(null); dp[0] = true;
+  F.push({shapes:strShapes({}).concat(dpShapes(dp, {0:'ok'})),
+    panels:[dictChips()], line:3,
+    msg:{zh:'定義 <b>dp[i] = 前 i 個字元能不能剛好切成字典裡的詞</b>。' +
+            '<b>dp[0] = True</b>：空字串當然切得出來（這個起手式決定了整個遞推能不能跑）。',
+         en:'Define <b>dp[i] = can the first i characters be split exactly into dictionary words</b>. <b>dp[0] = True</b>: the empty string trivially can - and that seed is what makes the whole recurrence work.'}});
+  for (let i = 1; i <= n; i++){
+    dp[i] = false;
+    for (let j = 0; j < i; j++){
+      const w = SS.slice(j, i), ok = dp[j] && DICT.indexOf(w) >= 0;
+      const st = {}; for (let k = j; k < i; k++) st[k] = dp[j] ? 'hot' : 'done';
+      F.push({shapes:strShapes(st, [j, i]).concat(dpShapes(dp, {[j]:dp[j] ? 'ok' : 'done', [i]:'hot'})),
+        panels:[dictChips(DICT.indexOf(w) >= 0 ? w : null)], line:6,
+        msg:{zh:'試切點 <b>j = ' + j + '</b>：左邊 dp[' + j + '] = <b>' + (dp[j] ? 'True' : 'False') +
+                '</b>，右邊那段是 <b>"' + w + '"</b>' +
+                (dp[j] ? (DICT.indexOf(w) >= 0 ? '，在字典裡 → dp[' + i + '] = True。'
+                                               : '，不在字典裡。')
+                       : '。左邊本來就切不開，這個切點直接跳過。'),
+             en:'Try cut <b>j = ' + j + '</b>: dp[' + j + '] is <b>' + (dp[j] ? 'True' : 'False') +
+                '</b> and the piece is <b>"' + w + '"</b>' +
+                (dp[j] ? (DICT.indexOf(w) >= 0 ? ', which is in the dictionary, so dp[' + i + '] = True.'
+                                               : ', which is not in the dictionary.')
+                       : '. The left part is unsplittable, so this cut is skipped.')}});
+      if (ok){ dp[i] = true; break; }
+    }
+    if (!dp[i])
+      F.push({shapes:strShapes({}).concat(dpShapes(dp, {[i]:'done'})), panels:[dictChips()], line:9,
+        msg:{zh:'所有切點都試過了，<b>dp[' + i + '] = False</b>。前 ' + i + ' 個字（"' +
+                SS.slice(0, i) + '"）切不開。',
+             en:'Every cut failed, so <b>dp[' + i + '] = False</b>: the first ' + i + ' characters ("' +
+                SS.slice(0, i) + '") cannot be split.'}});
+  }
+  F.push({shapes:strShapes({}, [3, 7]).concat(dpShapes(dp, {[n]:'ok'})), panels:[dictChips()], line:9,
+    msg:{zh:'<b>dp[' + n + '] = True</b>，答案是可以（cats | and | dog）。' +
+            '兩層迴圈是 <b>O(n²)</b> 次切點，每次比對字串 O(n)，' +
+            '而且<b>每個 dp[i] 只算一次</b>——這就是動態規劃相對於暴力遞迴的全部差別。',
+         en:'<b>dp[' + n + '] = True</b>: yes, it splits (cats | and | dog). Two loops give <b>O(n²)</b> cuts, and crucially <b>each dp[i] is computed exactly once</b> - that is the entire difference from brute force.'}});
+  return F.list;
+}
+
+function buildRec(v){
+  const STR = v === 1 ? 'catsandog' : SS;
+  const F = new Frames(), memo = {};
+  const stack = [];
+  const P = () => [
+    {lbl:{zh:'呼叫堆疊（剩下的字串）', en:'call stack (remaining suffix)'}, chips:chipsOf(stack, 'act')},
+    {lbl:{zh:'memo 快取', en:'memo cache'},
+     chips:Object.keys(memo).map(k => ({t:(k || '""') + '=' + (memo[k] ? 'T' : 'F'), cls:memo[k] ? 'ok' : 'bad'}))}];
+  const showSuffix = (rest, st) => {
+    const start = STR.length - rest.length, states = {};
+    for (let i = 0; i < start; i++) states[i] = 'done';
+    for (let i = start; i < STR.length; i++) states[i] = st || 'hot';
+    return strShapesOf(STR, states, [start]);
+  };
+  let hits = 0;
+  const go = rest => {
+    stack.push(rest || '""');
+    if (rest in memo){
+      hits++;
+      F.push({shapes:showSuffix(rest, 'ok'), panels:P(), line:2,
+        msg:{zh:'<b>"' + rest + '"</b> 之前算過了 → 直接從 memo 拿 <b>' + memo[rest] +
+                '</b>。這一步省下的是<b>一整棵子樹</b>的計算。',
+             en:'<b>"' + rest + '"</b> was solved before, so read <b>' + memo[rest] +
+                '</b> from memo. What that saves is <b>an entire subtree</b> of work.'}});
+      stack.pop();
+      return memo[rest];
+    }
+    F.push({shapes:showSuffix(rest), panels:P(), line:4,
+      msg:{zh:'處理剩下的 <b>"' + (rest || '（空）') + '"</b>：試每一個開頭符合的字典詞。',
+           en:'Handling the remaining <b>"' + (rest || '(empty)') + '"</b>: try every dictionary word that prefixes it.'}});
+    if (rest === ''){
+      F.push({shapes:showSuffix('', 'ok'), panels:P(), line:3,
+        msg:{zh:'剩下空字串 → <b>True</b>。這條切法成功了。',
+             en:'Nothing left, so <b>True</b> - this chain of cuts works.'}});
+      stack.pop(); return true;
+    }
+    for (const w of DICT){
+      if (rest.indexOf(w) === 0){
+        F.push({shapes:showSuffix(rest, 'act'), panels:[dictChips(w), P()[1]], line:5,
+          msg:{zh:'開頭配到 <b>"' + w + '"</b> → 遞迴處理剩下的 <b>"' + rest.slice(w.length) + '"</b>。',
+               en:'It starts with <b>"' + w + '"</b>, so recurse on the rest: <b>"' + rest.slice(w.length) + '"</b>.'}});
+        if (go(rest.slice(w.length))){ memo[rest] = true; stack.pop(); return true; }
+      }
+    }
+    memo[rest] = false;
+    F.push({shapes:showSuffix(rest, 'bad'), panels:P(), line:9,
+      msg:{zh:'<b>"' + rest + '"</b> 怎麼切都不行 → 記進 memo。' +
+              '<b>記住失敗比記住成功更值錢</b>：以後別的路徑走到同一段就不用再試一次。',
+           en:'<b>"' + rest + '"</b> fails every way, so record it. <b>Remembering failures matters more than remembering successes</b>: any other path reaching this suffix stops immediately.'}});
+    stack.pop(); return false;
+  };
+  F.push({shapes:strShapesOf(STR, {}), panels:P(), line:0,
+    msg:{zh:'字串是 <b>"' + STR + '"</b>。換個角度：<b>切掉開頭的一個詞，剩下的還是同一個問題</b>。' +
+            '直接遞迴會把同一段字串重算很多次，所以加一個 memo。',
+         en:'Another angle: <b>strip one word off the front and the rest is the same problem</b>. Plain recursion re-solves the same suffix over and over, so we add a memo.'}});
+  const ans = go(STR);
+  F.push({shapes:strShapesOf(STR, {}, v === 1 ? [] : [3, 7]), panels:P(), line:2,
+    msg:{zh:'答案 <b>' + ans + '</b>。過程中命中快取 <b>' + hits + '</b> 次。' +
+            '不同的切法一定會走到相同的後綴——<b>重疊子問題</b>就是這樣長出來的，' +
+            '有了 memo，狀態數就從指數變成「後綴的數量」也就是 O(n)。',
+         en:'Answer <b>' + ans + '</b>, with <b>' + hits + '</b> cache hits. Different cut sequences inevitably land on the same suffix - that is what <b>overlapping subproblems</b> means - and with a memo the state count drops from exponential to "number of suffixes", i.e. O(n).'}});
+  return F.list;
+}
+
+function buildII(){
+  const F = new Frames(), memo = {};
+  const showSuffix = (rest, st) => {
+    const start = SS.length - rest.length, states = {};
+    for (let i = 0; i < start; i++) states[i] = 'done';
+    for (let i = start; i < SS.length; i++) states[i] = st || 'hot';
+    return strShapes(states, [start]);
+  };
+  const P = () => [{lbl:{zh:'memo：每段後綴的所有切法', en:'memo: all splits per suffix'},
+    chips:Object.keys(memo).map(k => ({t:(k || '""') + ' → ' + memo[k].length, cls:memo[k].length ? 'ok' : 'bad'}))}];
+  F.push({shapes:strShapes({}), panels:P(), line:0,
+    msg:{zh:'LeetCode 140 要的不是「能不能」，而是<b>所有切法</b>。' +
+            '布林 dp 不夠用了——每個狀態要存的是<b>一串答案</b>。',
+         en:'LeetCode 140 asks not "can it" but <b>for every split</b>. A boolean dp is no longer enough: each state must hold <b>a list of answers</b>.'}});
+  const go = rest => {
+    if (rest in memo) return memo[rest];
+    if (rest === '') return [''];
+    const out = [];
+    for (let i = 1; i <= rest.length; i++){
+      const w = rest.slice(0, i);
+      if (DICT.indexOf(w) >= 0){
+        F.push({shapes:showSuffix(rest, 'act'), panels:[dictChips(w)].concat(P()), line:8,
+          msg:{zh:'在 <b>"' + rest + '"</b> 的開頭找到 <b>"' + w + '"</b>，' +
+                  '把剩下的 <b>"' + rest.slice(i) + '"</b> 的每一種切法都接在後面。',
+               en:'Found the prefix <b>"' + w + '"</b> of <b>"' + rest + '"</b>; every split of the remaining <b>"' +
+                  rest.slice(i) + '"</b> gets it prepended.'}});
+        go(rest.slice(i)).forEach(tail => out.push(tail === '' ? w : w + ' ' + tail));
+      }
+    }
+    memo[rest] = out;
+    F.push({shapes:showSuffix(rest, out.length ? 'ok' : 'bad'),
+      panels:[{lbl:{zh:'"' + rest + '" 的切法', en:'splits of "' + rest + '"'},
+               chips:out.length ? out.map(o => ({t:o, cls:'ok'})) : []}].concat(P()), line:11,
+      msg:{zh:'<b>"' + rest + '"</b> 一共有 <b>' + out.length + '</b> 種切法，存進 memo。' +
+              '注意存的是<b>這一段的答案</b>，跟前面怎麼切完全無關——這正是子問題可以共用的原因。',
+           en:'<b>"' + rest + '"</b> has <b>' + out.length + '</b> splits; store them. Note the entry describes <b>this suffix alone</b>, independent of how we arrived - which is precisely why subproblems can be shared.'}});
+    return out;
+  };
+  const all = go(SS);
+  F.push({shapes:strShapes({}, [4, 8]),
+    panels:[{lbl:{zh:'最終答案', en:'final answer'}, chips:all.map(a => ({t:a, cls:'ok'}))}], line:12,
+    msg:{zh:'答案：<b>' + all.join('　/　') + '</b>。' +
+            '兩題的骨架一模一樣，差別只在 memo 存布林還是存清單。' +
+            '不過要小心：<b>切法的數量本身可能是指數級</b>，memo 能省重算，但省不掉輸出。',
+         en:'Answer: <b>' + all.join('  /  ') + '</b>. Same skeleton as before; only the memo payload changed from a boolean to a list. One caveat: <b>the number of splits can itself be exponential</b> - memoisation removes recomputation, not output size.'}});
+  return F.list;
+}
+
+const DAY_META = {
+  title:{zh:'Word Break', en:'Word Break'},
+  sub:{zh:'從指數級的暴力切法，到記憶化，再到一維 DP——同一題三種寫法看清楚重疊子問題。',
+       en:'Brute force, memoisation, then a one-dimensional DP - one problem, three angles on overlapping subproblems.'},
+  tabs:[
+    {id:'dp', label:{zh:'一維 DP（LC 139）', en:'1-D DP (LC 139)'},
+     stage:{zh:'dp[i] = 前 i 個字切得開嗎', en:'dp[i]: can the first i characters split?'},
+     idea:{zh:'DP 的三件事：<b>狀態</b>（dp[i]）、<b>轉移</b>（找一個切點 j，左邊已知可切、右邊是個詞）、' +
+              '<b>起始值</b>（dp[0] = True）。想清楚這三件事，程式只有五行。',
+           en:'A DP needs three things: a <b>state</b> (dp[i]), a <b>transition</b> (find a cut j where the left is already splittable and the right is a word), and a <b>base case</b> (dp[0] = True). Get those right and the code is five lines.'},
+     legend:['hot', 'ok', 'done', 'idle'], code:CODE_DP, build:buildDP},
+    {id:'rec', label:{zh:'遞迴 + 記憶化', en:'recursion + memo'},
+     stage:{zh:'同一段後綴只算一次', en:'Each suffix is solved once'},
+     variants:[{zh:'成功 catsanddog', en:'success: catsanddog'}, {zh:'失敗 catsandog', en:'failure: catsandog'}],
+     idea:{zh:'不同的切法會走到相同的後綴，這就是<b>重疊子問題</b>。' +
+              '加一個 memo 之後，狀態數等於後綴數量，指數級就塌成線性。' +
+              '記得<b>失敗也要記</b>，那才是省下最多時間的部分。',
+           en:'Different cut sequences reach the same suffix - the definition of <b>overlapping subproblems</b>. With a memo the state count equals the number of suffixes and the exponential collapses. Remember to <b>cache failures too</b>; that is where most of the savings are.'},
+     legend:['hot', 'act', 'ok', 'bad'], code:CODE_REC, build:buildRec},
+    {id:'ii', label:{zh:'Word Break II（LC 140）', en:'Word Break II (LC 140)'},
+     stage:{zh:'memo 從布林換成清單', en:'The memo now holds lists, not booleans'},
+     idea:{zh:'「能不能」變成「有幾種」時，骨架不用改，只要把每個狀態的內容從 True/False 換成一串答案。' +
+              '這個「狀態存什麼」的選擇，是 DP 題目之間唯一真正的差別。',
+           en:'Turning "can it?" into "in how many ways?" leaves the skeleton alone: only the payload of each state changes from a boolean to a list. Choosing what a state stores is the one thing that really differs between DP problems.'},
+     legend:['hot', 'act', 'ok', 'bad'], code:CODE_II, build:buildII}
+  ]
+};
+
+</script>
+<script>
+/* =========================================================================
+   100 Days of Python - shared demo engine
+   palette: teal/blue-green base, purple pointers, orange "current step"
+   ========================================================================= */
+const T = {
+  title:{zh:DAY_META.title.zh, en:DAY_META.title.en},
+  sub:{zh:DAY_META.sub.zh, en:DAY_META.sub.en},
+  play:{zh:'▶ 播放', en:'▶ Play'}, pause:{zh:'❚❚ 暫停', en:'❚❚ Pause'},
+  speed:{zh:'速度', en:'Speed'}, state:{zh:'演算法狀態', en:'Algorithm state'},
+  code:{zh:'程式碼', en:'Code'}, idea:{zh:'重點', en:'The idea'}
+};
+let LANG = 'zh';
+const tr = o => (o == null ? '' : (typeof o === 'string' ? o : (o[LANG] != null ? o[LANG] : o.en)));
+const $ = id => document.getElementById(id);
+
+function setLang(l){
+  LANG = l;
+  document.documentElement.lang = l === 'zh' ? 'zh-Hant' : 'en';
+  $('btn-zh').classList.toggle('on', l === 'zh');
+  $('btn-en').classList.toggle('on', l === 'en');
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.getAttribute('data-i18n');
+    if (T[k]) el.textContent = tr(T[k]);
+  });
+  buildTabs(); render();
+}
+
+/* --------------------------------------------------------------- palette */
+const STY = {
+  idle :{fill:'#07293a', stroke:'#0a6b74', text:'#dff2f5', w:.045, glow:0},
+  soft :{fill:'#052330', stroke:'#0a6b74', text:'#a8c8d0', w:.035, glow:0},
+  hot  :{fill:'#3a2109', stroke:'#ff9736', text:'#ffbe6b', w:.075, glow:.65},
+  act  :{fill:'#241542', stroke:'#9d6bff', text:'#c7a6ff', w:.070, glow:.55},
+  ok   :{fill:'#08414a', stroke:'#3fe0dd', text:'#d9ffff', w:.070, glow:.5},
+  done :{fill:'#062430', stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0},
+  bad  :{fill:'#3a0d0d', stroke:'#ff5c5c', text:'#ff9a9a', w:.070, glow:.4},
+  ghost:{fill:'none',    stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0, dash:'.12 .10'}
+};
+const COL = {teal:'#12b3b8', tealL:'#3fe0dd', purple:'#9d6bff', purpleL:'#c7a6ff',
+             orange:'#ff9736', orangeL:'#ffbe6b', red:'#ff5c5c', grey:'#8fa3ac',
+             pale:'#dff2f5', white:'#ffffff'};
+const LEGEND = {
+  hot:[COL.orange, {zh:'目前這一步', en:'current step'}],
+  act:[COL.purple, {zh:'指標 / 走訪位置', en:'pointer / cursor'}],
+  ok:[COL.tealL,  {zh:'完成 / 結果', en:'done / result'}],
+  bad:[COL.red,   {zh:'失敗 / 要避開的寫法', en:'failure / the wrong way'}],
+  done:['#2f5661', {zh:'已處理完', en:'already done'}],
+  soft:['#0a6b74', {zh:'其他元素', en:'other items'}],
+  idle:['#0a6b74', {zh:'尚未處理', en:'untouched'}]
+};
+const leg = (...keys) => keys.map(k => LEGEND[k]);
+
+/* ---------------------------------------------------------- frame buffer */
+function Frames(){
+  this.list = [];
+  this.push = (o) => this.list.push({
+    shapes:JSON.parse(JSON.stringify(o.shapes || [])),
+    panels:JSON.parse(JSON.stringify(o.panels || [])),
+    view:(o.view || null), line:(o.line == null ? 0 : o.line), msg:o.msg
+  });
+}
+/* shape helpers - engines call these, the renderer just draws */
+const S = {
+  r:(x, y, w, h, s, lab, o) => Object.assign({t:'r', x:x, y:y, w:w, h:h, s:s || 'idle', lab:lab}, o || {}),
+  c:(x, y, r, s, lab, o) => Object.assign({t:'c', x:x, y:y, r:r, s:s || 'idle', lab:lab}, o || {}),
+  e:(x1, y1, x2, y2, o) => Object.assign({t:'e', x1:x1, y1:y1, x2:x2, y2:y2}, o || {}),
+  t:(x, y, s, o) => Object.assign({t:'t', x:x, y:y, s:s}, o || {})
+};
+/* a labelled row of array cells; returns shapes */
+function cellRow(vals, x0, y, w, h, opt){
+  opt = opt || {};
+  const out = [], st = opt.states || {};
+  vals.forEach((v, i) => {
+    out.push(S.r(x0 + i * w, y, w - (opt.gap == null ? .06 : opt.gap), h, st[i] || 'idle',
+                 v == null ? '' : String(v), {fs:opt.fs || h * .52}));
+    if (opt.index !== false)
+      out.push(S.t(x0 + i * w + (w - .06) / 2, y + h + (opt.ilift || .34),
+                   opt.labels ? opt.labels[i] : String(i),
+                   {c:st[i] && st[i] !== 'idle' ? COL.orangeL : COL.grey, fs:opt.ifs || .30}));
+  });
+  if (opt.title) out.push(S.t(x0 - .22, y + h * .62, opt.title, {c:COL.tealL, fs:.32, anchor:'end'}));
+  return out;
+}
+/* binary-tree layout from a heap-style array (index 0 = root, 2i+1 / 2i+2) */
+function heapTreeShapes(arr, x0, y0, w, rowH, states, opt){
+  opt = opt || {};
+  const n = arr.length, out = [], R = opt.r || .34;
+  const depth = i => Math.floor(Math.log2(i + 1));
+  const maxD = n ? depth(n - 1) : 0;
+  const px = i => {
+    const d = depth(i), first = Math.pow(2, d) - 1, k = i - first;
+    const slots = Math.pow(2, d), span = w;
+    return x0 + span * (k + .5) / slots;
+  };
+  const py = i => y0 + depth(i) * rowH;
+  for (let i = 1; i < n; i++){
+    if (arr[i] == null) continue;
+    const p = Math.floor((i - 1) / 2);
+    out.push(S.e(px(p), py(p), px(i), py(i), {pad:R + .04,
+      s:(states && (states[i] === 'hot' || states[i] === 'act')) ? states[i] : 'idle'}));
+  }
+  for (let i = 0; i < n; i++){
+    if (arr[i] == null) continue;
+    out.push(S.c(px(i), py(i), R, (states && states[i]) || 'idle', String(arr[i]), {fs:R * .95}));
+    if (opt.showIndex)
+      out.push(S.t(px(i), py(i) + R + .34, String(i), {c:COL.grey, fs:.26}));
+  }
+  return out;
+}
+
+/* -------------------------------------------------------------- renderer */
+const svgNS = 'http://www.w3.org/2000/svg';
+const mk = (tag, a) => { const e = document.createElementNS(svgNS, tag);
+  for (const k in a) e.setAttribute(k, a[k]); return e; };
+const clear = svg => { while (svg.firstChild) svg.removeChild(svg.firstChild); };
+
+function defs(svg){
+  const d = mk('defs', {});
+  const f = mk('filter', {id:'glow', x:'-70%', y:'-70%', width:'240%', height:'240%'});
+  f.appendChild(mk('feGaussianBlur', {stdDeviation:'.055', result:'b'}));
+  const m = mk('feMerge', {});
+  m.appendChild(mk('feMergeNode', {in:'b'}));
+  m.appendChild(mk('feMergeNode', {in:'SourceGraphic'}));
+  f.appendChild(m); d.appendChild(f);
+  Object.keys(STY).forEach(k => {
+    const mk2 = mk('marker', {id:'ar-' + k, viewBox:'0 0 10 10', refX:'8.5', refY:'5',
+      markerWidth:'5.2', markerHeight:'5.2', orient:'auto-start-reverse'});
+    mk2.appendChild(mk('path', {d:'M 0 1 L 9 5 L 0 9 z', fill:STY[k].stroke}));
+    d.appendChild(mk2);
+  });
+  svg.appendChild(d);
+}
+
+function drawShape(svg, sh){
+  const st = STY[sh.s || 'idle'];
+  if (sh.t === 'e'){
+    let {x1, y1, x2, y2} = sh;
+    if (sh.pad){
+      const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+      x1 += dx / L * sh.pad; y1 += dy / L * sh.pad;
+      x2 -= dx / L * sh.pad; y2 -= dy / L * sh.pad;
+    }
+    const a = {x1:x1.toFixed(3), y1:y1.toFixed(3), x2:x2.toFixed(3), y2:y2.toFixed(3),
+      stroke:st.stroke, 'stroke-width':(sh.w || st.w || .05), 'stroke-linecap':'round',
+      opacity:(sh.o == null ? (sh.s && sh.s !== 'idle' ? 1 : .75) : sh.o)};
+    if (sh.dash || st.dash) a['stroke-dasharray'] = sh.dash || st.dash;
+    if (sh.arrow !== false) a['marker-end'] = 'url(#ar-' + (sh.s || 'idle') + ')';
+    svg.appendChild(mk('line', a));
+    if (sh.lab != null)
+      svg.appendChild(txt((x1 + x2) / 2 + (sh.lx || 0), (y1 + y2) / 2 + (sh.ly || -.16),
+        tr(sh.lab), st.stroke, sh.fs || .30, 'middle'));
+    return;
+  }
+  if (sh.t === 't'){
+    svg.appendChild(txt(sh.x, sh.y, tr(sh.s), sh.c || COL.pale, sh.fs || .32,
+      sh.anchor || 'middle', sh.o));
+    return;
+  }
+  let node;
+  if (sh.t === 'c'){
+    node = mk('circle', {cx:sh.x.toFixed(3), cy:sh.y.toFixed(3), r:sh.r.toFixed(3),
+      fill:st.fill, stroke:st.stroke, 'stroke-width':st.w});
+  } else {
+    node = mk('rect', {x:sh.x.toFixed(3), y:sh.y.toFixed(3), width:sh.w.toFixed(3),
+      height:sh.h.toFixed(3), rx:(sh.rx == null ? .09 : sh.rx), fill:st.fill,
+      stroke:st.stroke, 'stroke-width':st.w});
+  }
+  if (st.dash || sh.dash) node.setAttribute('stroke-dasharray', sh.dash || st.dash);
+  if (st.glow) node.setAttribute('filter', 'url(#glow)');
+  if (sh.o != null) node.setAttribute('opacity', sh.o);
+  svg.appendChild(node);
+  const cx = sh.t === 'c' ? sh.x : sh.x + sh.w / 2;
+  const cy = sh.t === 'c' ? sh.y : sh.y + sh.h / 2;
+  if (sh.lab != null && sh.lab !== '')
+    svg.appendChild(txt(cx + (sh.dx || 0), cy + (sh.fs || .40) * .35, tr(sh.lab), st.text,
+      sh.fs || .40, 'middle'));
+  if (sh.sub != null)
+    svg.appendChild(txt(cx, cy + (sh.t === 'c' ? sh.r : sh.h) + .34, tr(sh.sub),
+      sh.subc || COL.grey, sh.subfs || .28, 'middle'));
+  if (sh.top != null)
+    svg.appendChild(txt(cx, cy - (sh.t === 'c' ? sh.r : sh.h / 2) - .22, tr(sh.top),
+      sh.topc || COL.purpleL, sh.topfs || .28, 'middle'));
+}
+function txt(x, y, s, c, fs, anchor, o){
+  const t = mk('text', {x:(+x).toFixed(3), y:(+y).toFixed(3), 'text-anchor':anchor || 'middle',
+    fill:c, 'font-size':(+fs).toFixed(3)});
+  if (o != null) t.setAttribute('opacity', o);
+  t.textContent = s;
+  return t;
+}
+
+function renderStage(frame){
+  const svg = $('stage');
+  clear(svg); defs(svg);
+  const v = frame.view || curTab().view || [10, 6.4];
+  svg.setAttribute('viewBox', '0 0 ' + v[0] + ' ' + v[1]);
+  (frame.shapes || []).forEach(sh => drawShape(svg, sh));
+}
+
+function drawPanels(frame){
+  const box = $('panels'); box.innerHTML = '';
+  (frame.panels || []).forEach(p => {
+    const d = document.createElement('div'); d.className = 'panel';
+    const l = document.createElement('div'); l.className = 'lbl'; l.textContent = tr(p.lbl);
+    const c = document.createElement('div'); c.className = 'chips';
+    (p.chips.length ? p.chips : [{t:'—', cls:'empty'}]).forEach(ch => {
+      const s = document.createElement('span');
+      s.className = 'chip ' + (ch.cls || ''); s.textContent = ch.t; c.appendChild(s);
+    });
+    d.appendChild(l); d.appendChild(c); box.appendChild(d);
+  });
+}
+function drawCode(frame){
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  $('code').innerHTML = curTab().code.map((ln, i) => {
+    const h = esc(ln).replace(/(#.*)$/, '<span class="cm">$1</span>');
+    return '<span class="ln' + (i === frame.line ? ' on' : '') + '">' + (h || ' ') + '</span>';
+  }).join('');
+}
+function drawLegend(){
+  const keys = curTab().legend || ['hot', 'act', 'ok', 'idle'];
+  $('legend').innerHTML = keys.map(k => {
+    const [c, txt] = Array.isArray(k) ? k : LEGEND[k];
+    return '<span><i style="background:' + c + '"></i>' + tr(txt) + '</span>';
+  }).join('');
+}
+
+let tabIx = 0, varIx = 0, frames = [], cur = 0, timer = null;
+const TABS = DAY_META.tabs;
+const curTab = () => TABS[tabIx];
+
+function render(){
+  if (!frames.length) return;
+  cur = Math.max(0, Math.min(cur, frames.length - 1));
+  const f = frames[cur];
+  $('stage-title').textContent = tr(curTab().stage);
+  renderStage(f); drawPanels(f); drawCode(f); drawLegend();
+  $('narr').innerHTML = tr(f.msg);
+  $('idea').innerHTML = tr(curTab().idea);
+  $('stepno').textContent = (cur + 1) + ' / ' + frames.length;
+  $('prev').disabled = cur === 0;
+  $('next').disabled = cur === frames.length - 1;
+}
+function buildTabs(){
+  $('tabs').innerHTML = '';
+  TABS.forEach((t, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(t.label);
+    if (i === tabIx) b.classList.add('on');
+    b.onclick = () => { tabIx = i; varIx = 0; load(); };
+    $('tabs').appendChild(b);
+  });
+  const ex = $('extra'); ex.innerHTML = '';
+  const vs = curTab().variants;
+  if (vs) vs.forEach((v, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(v);
+    if (i === varIx) b.classList.add('on');
+    b.onclick = () => { varIx = i; load(); };
+    ex.appendChild(b);
+  });
+}
+function load(){
+  stop();
+  frames = curTab().build(varIx) || [];
+  cur = 0; buildTabs(); render();
+}
+function step(d){ stop(); cur += d; render(); }
+function reset(){ stop(); cur = 0; render(); }
+function stop(){ if (timer){ clearInterval(timer); timer = null; $('play').textContent = tr(T.play); } }
+function togglePlay(){
+  if (timer){ stop(); return; }
+  if (cur >= frames.length - 1) cur = 0;
+  $('play').textContent = tr(T.pause);
+  timer = setInterval(() => {
+    if (cur >= frames.length - 1){ stop(); return; }
+    cur++; render();
+  }, Number($('speed').value));
+}
+$('speed').addEventListener('input', () => { if (timer){ stop(); togglePlay(); } });
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight'){ step(1); e.preventDefault(); }
+  else if (e.key === 'ArrowLeft'){ step(-1); e.preventDefault(); }
+  else if (e.key === ' '){ togglePlay(); e.preventDefault(); }
+});
+setLang('zh');
+load();
+
+</script>
+</body>
+</html>

@@ -142,22 +142,37 @@ what you see is exactly what gets pasted.
 
 Every day also ships `demo.html`: one self-contained page that animates the day's
 algorithm and the paired LeetCode problem, so the idea can be *watched* rather than
-read. `day 13 - topological sort/demo.html` is the reference implementation - copy its
-structure rather than inventing a new one.
+read. **Do not write one from scratch** - the repo has a shared builder at
+`tools/demokit/` (see its README). Days 01-11 were all generated from it, and Days
+12-14 follow the same palette.
+
+    tools/demokit/
+      shell_head.html / shell_tail.html   page shell, palette, controls, zh/en toggle
+      common.js                           renderer, shapes, frames, i18n, playback
+      days/dayNN.js                       per-day engine + DAY_META
+      build.py                            dayNN.js -> out/dayNN.html (+ .html.js for tests)
+      domtest.mjs + drive.js              headless verification
+
+    python3 build.py days/day09.js
+    node domtest.mjs out/day09.html.js
+    cp out/day09.html "../../day 09 - hash table - chaining/demo.html"
 
 Requirements:
 
 - **Single file, no build step, no CDN.** Inline CSS and JS; it must render offline
   straight off disk.
-- **Same visual language as the figures**: navy `#002639` fills, teal `#0093a1`
-  outlines, `#00aaaa` / cyan `#00ffff` highlights, amber `#ffc000` for the active
-  element, red `#ff0000` for failure, Latin Modern Roman / serif, dark background.
-- **中英切換按鈕** in the header, `data-i18n` keys plus a `tr()` helper, exactly like
-  StarGZR and 黑洞觀測台. Step narration is `{zh, en}` objects, not a single string.
+- **Palette (since 2026-08-18): teal / purple / orange.** Base teal `#12b3b8` with
+  `#3fe0dd` highlights, purple `#9d6bff` / `#c7a6ff` for pointers, cursors and labels,
+  orange `#ff9736` / `#ffbe6b` for the *current* step, red `#ff5c5c` for failure, grey
+  `#8fa3ac` for inert, pale `#dff2f5` text on a `#04121c`-`#062434` background,
+  Latin Modern Roman / serif. The figures in `imgs/` keep their own navy/cyan style;
+  only the demo pages use this palette.
+- **中英切換按鈕** in the header, `data-i18n` keys plus a `tr()` helper. Step narration
+  is `{zh, en}` objects, not a single string.
 - **Tabs**, one per idea (algorithm variant 1, variant 2, the failure case, the
   LeetCode problem), and optional variant buttons inside a tab.
 - **Frame-based animation**: the algorithm runs once up front and *records* frames
-  (`{nodes, edges, panels, line, msg}`); the UI just replays them. Never hand-write the
+  (`{shapes, panels, view, line, msg}`); the UI just replays them. Never hand-write the
   steps - they must come from actually executing the algorithm, so the page can never
   drift from `<topic>.py`.
 - Controls: reset / prev / play-pause / next, a speed slider, a step counter, and
@@ -165,16 +180,20 @@ Requirements:
 - Right-hand column shows the live data structures (in-degree, queue, colours, stack,
   output) as chips, the Python code with the current line highlighted, and a short
   "the idea" note.
+- **Every frame must teach the *why***, not just narrate the *what*: why the pointer
+  order matters, why the smaller child is the one to swap with, why a tombstone is
+  needed, why the answer changes if edges are stored one-way. A frame that only says
+  "now we move to the next node" is a wasted frame.
 - Show *why the naive version breaks* somewhere: the cycle, the wrong edge direction,
-  the off-by-one - that failure case is usually the most valuable tab.
+  the off-by-one, the deleted slot - that failure case is usually the most valuable tab.
 
-**Verify it headlessly.** The VM has no browser, but it has `node`. Concatenate the
-`<script>` bodies into a `.js` file, stub a minimal DOM (`getElementById`,
-`createElement(NS)`, `appendChild`, `setAttribute`, `classList`, `querySelectorAll`,
-`setInterval`), then drive every tab x variant x frame x language through `render()` and
-assert: no exception, no empty narration, every `line` index exists in the code array,
-and no `NaN`/`undefined` in any SVG attribute. Also check the final orders the engine
-produces match what `<topic>.py` prints.
+**Verify it headlessly.** The VM has no browser, but it has `node`.
+`node domtest.mjs out/dayNN.html.js` stubs a minimal DOM and drives every
+tab x variant x frame x language through `render()`, asserting: no exception, no empty
+narration, every `line` index exists in the code array, and no `NaN`/`undefined` in any
+SVG attribute. Also check the final orders the engine produces match what
+`<topic>.py` prints. For a hand-written page (Days 12-14), extract the `<script>`
+bodies into a `.js` first and run the same harness.
 
 ## Diagram style
 

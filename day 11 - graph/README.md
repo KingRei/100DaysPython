@@ -3,6 +3,9 @@
 More details in:
 https://medium.com/100-days-of-python/day-11-data-structure-graph-a4229c3dabaf
 
+Interactive walkthrough: [demo.html](demo.html) - a single self-contained page
+(no build step, works offline, 中文 / English toggle) that animates add_vertex/add_edge, adjacency list vs matrix and degree centrality step by step.
+
 ![img](https://cdn-images-1.medium.com/max/800/1*Q9n58avTamrRmY66Ne0Hug.png)
 
 In computer science, a graph is an abstract data type that is meant to implement the undirected graph and directed graph concepts from mathematics, specifically the field of graph theory.

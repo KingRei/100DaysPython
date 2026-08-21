@@ -3,6 +3,9 @@
 More details in:
 https://medium.com/100-days-of-python/day-05-data-structure-priority-queue-binary-heap-6a35149c8c16
 
+Interactive walkthrough: [demo.html](demo.html) - a single self-contained page
+(no build step, works offline, 中文 / English toggle) that animates percolate-up insertion, extract-min, O(n) heapify and heap sort step by step.
+
 ![Heap](https://upload.wikimedia.org/wikipedia/commons/thumb/3/38/Max-Heap.svg/501px-Max-Heap.svg.png)
 
 In computer science, a heap is a specialized tree-based data structure that satisfies the heap property: if P is a parent node of C, then the key (the value) of P is either greater than or equal to (in a max heap) or less than or equal to (in a min heap) the key of C. The node at the "top" of the heap (with no parents) is called the root node.

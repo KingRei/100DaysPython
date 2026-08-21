@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 07 - list, tuple, dict and set / list、tuple、dict 與 set</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='2' y='2' width='28' height='28' rx='7' fill='%23062434'/><circle cx='11' cy='12' r='4' fill='%2312b3b8'/><circle cx='21' cy='12' r='4' fill='%239d6bff'/><circle cx='16' cy='22' r='4' fill='%23ff9736'/></svg>">
+<style>
+:root{
+  --bg0:#04121c; --bg1:#062434; --card:rgba(6,36,52,.72);
+  --teal:#12b3b8; --teal-d:#0a6b74; --teal-l:#3fe0dd;
+  --purple:#9d6bff; --purple-d:#241542; --purple-l:#c7a6ff;
+  --orange:#ff9736; --orange-d:#3a2109; --orange-l:#ffbe6b;
+  --red:#ff5c5c; --grey:#8fa3ac; --pale:#dff2f5; --white:#ffffff;
+  --serif:"Latin Modern Roman","Liberation Serif",Georgia,"Times New Roman",serif;
+  --mono:"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:
+    radial-gradient(900px 520px at 12% -8%,rgba(157,107,255,.20) 0%,rgba(157,107,255,0) 62%),
+    radial-gradient(900px 520px at 88% -4%,rgba(255,151,54,.16) 0%,rgba(255,151,54,0) 60%),
+    radial-gradient(1200px 800px at 50% 30%,#083041 0%,var(--bg1) 45%,var(--bg0) 100%);
+  color:var(--pale); font-family:var(--serif); min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--teal-l)}
+.wrap{max-width:1180px;margin:0 auto;padding:26px 20px 60px}
+header{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-bottom:6px}
+h1{font-size:30px;margin:0;color:var(--white);letter-spacing:.4px;
+   text-shadow:0 0 16px rgba(63,224,221,.35)}
+.day{font-size:13px;letter-spacing:2.4px;text-transform:uppercase;color:var(--orange-l);
+     border:1px solid var(--orange);border-radius:999px;padding:4px 12px;
+     background:rgba(255,151,54,.10)}
+.sub{color:var(--grey);font-size:15px;margin:8px 0 20px;max-width:72ch;line-height:1.6}
+.spacer{flex:1}
+.lang{display:flex;border:1px solid var(--teal-d);border-radius:999px;overflow:hidden}
+.lang button{background:transparent;color:var(--teal-l);border:0;padding:5px 14px;
+  font-family:var(--serif);font-size:14px;cursor:pointer}
+.lang button.on{background:var(--teal);color:#022}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
+.tabs button{
+  background:rgba(6,40,58,.75);border:1px solid rgba(18,179,184,.45);color:var(--pale);
+  padding:9px 16px;border-radius:9px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  transition:.18s}
+.tabs button:hover{border-color:var(--teal-l);color:var(--white)}
+.tabs button.on{background:linear-gradient(135deg,var(--teal) 0%,var(--purple) 140%);
+  border-color:var(--teal-l);color:#03222a;box-shadow:0 0 18px rgba(18,179,184,.30)}
+.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:18px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid rgba(18,179,184,.28);border-radius:13px;
+      padding:14px 16px}
+.card h3{margin:0 0 10px;font-size:14px;letter-spacing:2px;text-transform:uppercase;
+         color:var(--teal-l);font-weight:normal}
+svg.stage{width:100%;height:auto;display:block;touch-action:none}
+svg.stage text{font-family:var(--serif);user-select:none}
+.narr{min-height:52px;margin-top:10px;padding:10px 12px;border-left:3px solid var(--orange);
+      background:rgba(255,151,54,.07);font-size:16px;line-height:1.55;color:var(--white)}
+.narr code{font-family:var(--mono);font-size:14px;color:var(--orange-l)}
+.narr b{color:var(--orange-l);font-weight:normal}
+.ctrl{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
+.ctrl button{background:rgba(6,40,58,.9);border:1px solid var(--teal-d);color:var(--teal-l);
+  border-radius:8px;padding:7px 13px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  min-width:44px;transition:.15s}
+.ctrl button:hover:not(:disabled){background:var(--teal);color:#03222a}
+.ctrl button:disabled{opacity:.35;cursor:default}
+.ctrl .play{min-width:92px;font-weight:bold;border-color:var(--orange);color:var(--orange-l)}
+.ctrl .play:hover{background:var(--orange);color:#2a1400}
+.ctrl input[type=range]{width:120px;accent-color:var(--purple)}
+.stepno{color:var(--grey);font-size:14px;font-family:var(--mono)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;min-height:30px}
+.chip{border:1px solid var(--teal-d);border-radius:6px;padding:3px 9px;font-family:var(--mono);
+      font-size:14px;color:var(--pale);background:rgba(18,179,184,.10)}
+.chip.hot{border-color:var(--orange);color:var(--orange-l);background:rgba(255,151,54,.14)}
+.chip.act{border-color:var(--purple);color:var(--purple-l);background:rgba(157,107,255,.16)}
+.chip.ok{border-color:var(--teal-l);color:var(--teal-l);background:rgba(63,224,221,.12)}
+.chip.dim{border-color:#2f5661;color:var(--grey);background:transparent}
+.chip.bad{border-color:var(--red);color:#ff9a9a;background:rgba(255,92,92,.14)}
+.chip.empty{border-style:dashed;color:var(--grey);border-color:#2f5661}
+.panel+.panel{margin-top:12px}
+.panel .lbl{font-size:13px;letter-spacing:1.6px;text-transform:uppercase;color:var(--grey);
+  margin-bottom:5px}
+pre.code{margin:0;font-family:var(--mono);font-size:13.5px;line-height:1.72;overflow-x:auto;
+  color:#a8c8d0}
+pre.code .ln{display:block;padding:0 8px;border-left:3px solid transparent;white-space:pre}
+pre.code .ln.on{background:rgba(255,151,54,.12);border-left-color:var(--orange);color:var(--white)}
+pre.code .cm{color:#5f7b85;font-style:italic}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:13.5px;color:var(--grey)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;
+  vertical-align:-1px;border:1px solid rgba(255,255,255,.22)}
+.note{font-size:15px;line-height:1.65;color:var(--pale)}
+.note b{color:var(--purple-l);font-weight:normal}
+.note code{font-family:var(--mono);font-size:13.5px;color:var(--teal-l)}
+.toggle-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.toggle-row button{border:1px solid rgba(18,179,184,.45);border-radius:8px;padding:6px 13px;
+  cursor:pointer;font-family:var(--serif);font-size:14px;
+  background:rgba(6,40,58,.75);color:var(--pale)}
+.toggle-row button.on{background:var(--purple);border-color:var(--purple-l);color:#150a2b}
+footer{margin-top:32px;padding-top:16px;border-top:1px solid rgba(18,179,184,.25);
+  color:var(--grey);font-size:14px;display:flex;gap:18px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <span class="day">Day 07</span>
+  <h1 data-i18n="title">list、tuple、dict 與 set</h1>
+  <span class="spacer"></span>
+  <div class="lang">
+    <button id="btn-zh" class="on" onclick="setLang('zh')">中文</button>
+    <button id="btn-en" onclick="setLang('en')">EN</button>
+  </div>
+</header>
+<p class="sub" data-i18n="sub">四個內建容器不是四種語法，是四種不同的成本結構——挑錯了，程式就會慢一個級數。</p>
+
+<div class="tabs" id="tabs"></div>
+
+<div class="grid">
+  <div>
+    <div class="card">
+      <h3 id="stage-title"></h3>
+      <svg class="stage" id="stage" viewBox="0 0 10 6.4" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="legend" id="legend"></div>
+      <div class="narr" id="narr"></div>
+      <div class="ctrl">
+        <button onclick="reset()" title="reset">⟲</button>
+        <button id="prev" onclick="step(-1)">◀</button>
+        <button class="play" id="play" onclick="togglePlay()" data-i18n="play">▶ 播放</button>
+        <button id="next" onclick="step(1)">▶</button>
+        <span class="stepno" id="stepno">0 / 0</span>
+        <span class="spacer"></span>
+        <span style="font-size:13px;color:var(--grey)" data-i18n="speed">速度</span>
+        <input type="range" id="speed" min="180" max="1600" step="20" value="820">
+      </div>
+      <div class="toggle-row" id="extra"></div>
+    </div>
+  </div>
+  <div>
+    <div class="card" id="state-card">
+      <h3 data-i18n="state">演算法狀態</h3>
+      <div id="panels"></div>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="code">程式碼</h3>
+      <pre class="code" id="code"></pre>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="idea">重點</h3>
+      <div class="note" id="idea"></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <span>100 Days of Python — Day 07</span>
+  <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2007%20-%20list%20tuple%20dict%20and%20set" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://medium.com/100-days-of-python/day-07-python-list-tuple-dict-and-set-78a164a5e207" target="_blank" rel="noopener">Medium</a>
+</footer>
+</div>
+<script>
+// DAY: 07
+// TITLE_ZH: list、tuple、dict 與 set
+// TITLE_EN: list, tuple, dict and set
+// SUB_ZH: 四個內建容器不是四種語法，是四種不同的成本結構——挑錯了，程式就會慢一個級數。
+// SUB_EN: Four built-in containers, four cost models.
+// FOLDER: day%2007%20-%20list%20tuple%20dict%20and%20set
+// MEDIUM: https://medium.com/100-days-of-python/day-07-python-list-tuple-dict-and-set-78a164a5e207
+
+const CW = 1.02, CH = .86;
+const row = (vals, y, states, opt) => cellRow(vals, 5.0 - vals.length * CW / 2, y, CW, CH,
+  Object.assign({states:states, fs:.42, ilift:.32}, opt || {}));
+const chipsOf = (a, cls) => a.map(x => ({t:String(x), cls:cls || ''}));
+const note = (y, s, c) => S.t(5.0, y, s, {c:c || '#8fa3ac', fs:.34});
+
+const CODE_LIST = [
+'nums = [10, 20, 30, 40]',
+'',
+'nums.append(50)      # 尾端加 -> 攤還 O(1)',
+'nums.insert(0, 5)    # 頭部插 -> O(n)，後面全部要搬',
+'nums.pop(0)          # 頭部刪 -> O(n)，同樣要搬',
+'',
+'30 in nums           # 成員檢查 -> O(n)，一格一格比'];
+const CODE_TUPLE = [
+'t = (10, 20)         # 建立後就不能改',
+'t[0] = 99            # TypeError!',
+'',
+'seen = {}',
+'seen[(3, 4)] = "座標"   # tuple 可以當 key（可雜湊）',
+'seen[[3, 4]] = "座標"   # TypeError: unhashable type: list',
+'',
+'x, y = t             # 解包，函式回傳多個值就靠它'];
+const CODE_DICT = [
+'ages = {"ann": 31, "bob": 24}',
+'',
+'ages["cat"] = 28     # 插入 -> 平均 O(1)',
+'ages["bob"]          # 查詢 -> 平均 O(1)，不用掃過其他 key',
+'"bob" in ages        # 成員檢查 -> O(1)',
+'',
+'# 對照組：在 list 裡找同樣的東西是 O(n)'];
+const CODE_SET = [
+'a = {1, 2, 3, 4}',
+'b = {3, 4, 5}',
+'',
+'a & b                # 交集 {3, 4}',
+'a | b                # 聯集 {1, 2, 3, 4, 5}',
+'a - b                # 差集 {1, 2}',
+'',
+'list(set(data))      # 去重複的一行寫法'];
+
+function buildList(){
+  const F = new Frames();
+  let a = [10, 20, 30, 40];
+  const P = () => [{lbl:{zh:'list', en:'list'}, chips:chipsOf(a, 'act')}];
+  F.push({shapes:row(a, 2.6, {}).concat([note(4.5, {zh:'list 是一排連續的位置，索引 = 直接算地址',
+    en:'a list is a contiguous run of slots; index = direct address'}, '#3fe0dd')]),
+    panels:P(), line:0,
+    msg:{zh:'list 的底層是一塊<b>連續</b>的空間。因為連續，<b>a[i] 永遠是 O(1)</b>——' +
+            '直接算得出地址，不用走訪。所有的取捨都從「連續」這件事來。',
+         en:'A list is one <b>contiguous</b> block. Because it is contiguous, <b>a[i] is always O(1)</b>: the address is computed, not walked. Every trade-off below follows from that.'}});
+  F.push({shapes:row(a.concat([50]), 2.6, {4:'hot'}), panels:P(), line:2,
+    msg:{zh:'<b>append</b>：尾端本來就留了備用空間，直接寫進去。偶爾空間用完要整批搬家，' +
+            '但平均下來是<b>攤還 O(1)</b>。',
+         en:'<b>append</b>: there is already spare room at the end, so it just writes. Occasionally the block is full and everything is copied, but averaged out it is <b>amortised O(1)</b>.'}});
+  a = a.concat([50]);
+  const shifted = {}; a.forEach((_, i) => shifted[i] = 'bad');
+  F.push({shapes:row(a, 2.6, shifted).concat([note(4.5, {zh:'insert(0, 5)：每一格都要往右搬一格',
+    en:'insert(0, 5): every element shifts one slot right'}, '#ff9736')]), panels:P(), line:3,
+    msg:{zh:'<b>insert(0, 5)</b> 就完全不同了：索引 0 已經有人，' +
+            '<b>後面 ' + a.length + ' 個元素全部要往右搬一格</b>。這是 <b>O(n)</b>。',
+         en:'<b>insert(0, 5)</b> is a different story: slot 0 is occupied, so <b>all ' + a.length +
+            ' elements shift one place right</b>. That is <b>O(n)</b>.'}});
+  a = [5].concat(a);
+  F.push({shapes:row(a, 2.6, {0:'ok'}), panels:P(), line:3,
+    msg:{zh:'搬完才輪到新值就位。<b>pop(0)</b> 也一樣要把後面全部往回搬。' +
+            '需要頻繁在頭部進出，就該換 <b>deque</b>。',
+         en:'Only after the shuffle does the new value land. <b>pop(0)</b> pays the same price in reverse. If you push and pop at the front a lot, reach for a <b>deque</b>.'}});
+  const key = 30;
+  for (let i = 0; i < a.length; i++){
+    const st = {}; for (let j = 0; j < i; j++) st[j] = 'done'; st[i] = a[i] === key ? 'ok' : 'hot';
+    F.push({shapes:row(a, 2.6, st), panels:P(), line:6,
+      msg:a[i] === key
+        ? {zh:'第 ' + (i + 1) + ' 次比對才找到 <b>30</b>。<b>「x in list」是 O(n)</b>——' +
+              '在迴圈裡這樣寫，複雜度會直接乘上去。',
+           en:'Found <b>30</b> on comparison ' + (i + 1) + '. <b>"x in list" is O(n)</b>, and writing that inside a loop multiplies your complexity.'}
+        : {zh:'<b>30 in nums</b>：list 不知道自己裝了什麼，只能一格一格比（現在是 ' + a[i] + '）。',
+           en:'<b>30 in nums</b>: a list has no idea what it contains, so it compares slot by slot (currently ' + a[i] + ').'}});
+    if (a[i] === key) break;
+  }
+  F.push({shapes:row(a, 2.6, {}).concat([note(4.5, {zh:'要頻繁查「有沒有」→ 換 set 或 dict',
+    en:'checking membership a lot? use a set or dict'}, '#c7a6ff')]), panels:P(), line:6,
+    msg:{zh:'記住這張成本表：<b>索引 O(1)、尾端 append 攤還 O(1)、頭部操作 O(n)、成員檢查 O(n)</b>。' +
+            '最後一項是新手效能問題最常見的來源。',
+         en:'Remember the cost table: <b>indexing O(1), append amortised O(1), front operations O(n), membership O(n)</b>. That last one is the most common performance bug of all.'}});
+  return F.list;
+}
+
+function buildTuple(){
+  const F = new Frames(), t = [10, 20];
+  const P = extra => { const p = [{lbl:{zh:'tuple', en:'tuple'}, chips:chipsOf(t, 'ok')}];
+    if (extra) p.push(extra); return p; };
+  F.push({shapes:row(t, 2.6, {0:'ok', 1:'ok'}).concat([note(4.4, {zh:'tuple = 建好之後不能改',
+    en:'tuple = fixed once created'}, '#3fe0dd')]), panels:P(), line:0,
+    msg:{zh:'tuple 跟 list 長得很像，差別只有一個字：<b>不可變</b>。' +
+            '但這個差別會一路影響到能不能當 key、能不能安全共用。',
+         en:'A tuple looks like a list; the difference is one word: <b>immutable</b>. That single word decides whether it can be a dict key and whether it is safe to share.'}});
+  F.push({shapes:row(t, 2.6, {0:'bad'}).concat([note(4.4, 'TypeError: object does not support item assignment', '#ff5c5c')]),
+    panels:P(), line:1,
+    msg:{zh:'<b>t[0] = 99</b> 直接丟 TypeError。不可變不是限制你，而是<b>給你保證</b>：' +
+            '傳出去的 tuple 不會被別人偷偷改掉。',
+         en:'<b>t[0] = 99</b> raises TypeError. Immutability is not a restriction so much as a <b>guarantee</b>: a tuple you hand out cannot be modified behind your back.'}});
+  F.push({shapes:[S.r(1.4, 2.2, 2.4, CH, 'ok', '(3, 4)', {fs:.40}),
+                  S.e(3.95, 2.2 + CH / 2, 5.6, 2.2 + CH / 2, {s:'ok'}),
+                  S.t(4.8, 1.95, 'hash()', {c:'#3fe0dd', fs:.30}),
+                  S.r(5.8, 2.2, 2.6, CH, 'ok', '#8a3f...', {fs:.36}),
+                  S.r(1.4, 3.9, 2.4, CH, 'bad', '[3, 4]', {fs:.40}),
+                  S.e(3.95, 3.9 + CH / 2, 5.6, 3.9 + CH / 2, {s:'bad'}),
+                  S.t(4.8, 3.65, 'hash()', {c:'#ff5c5c', fs:.30}),
+                  S.t(6.9, 4.42, 'TypeError: unhashable', {c:'#ff5c5c', fs:.34})],
+    panels:P(), line:4,
+    msg:{zh:'關鍵差別在這裡：<b>tuple 可以雜湊，list 不行</b>。' +
+            '因為 dict 的 key 一旦算出雜湊值就會被放進某個位置，' +
+            '如果 key 之後還能被改，那個位置就<b>永遠找不回來</b>了。',
+         en:'Here is the crux: <b>a tuple is hashable, a list is not</b>. A dict places a key by its hash; if the key could change afterwards, the entry would be <b>lost forever</b> in the wrong slot.'}});
+  F.push({shapes:[S.r(2.0, 2.4, 2.2, CH, 'act', '(3, 4)', {fs:.40, top:{zh:'座標當 key', en:'coordinate key'}}),
+                  S.e(4.35, 2.4 + CH / 2, 5.3, 2.4 + CH / 2, {s:'act'}),
+                  S.r(5.5, 2.4, 2.6, CH, 'ok', '"座標"', {fs:.36})],
+    panels:P({lbl:{zh:'常見用途', en:'typical uses'},
+      chips:[{t:'grid[(r, c)]', cls:'ok'}, {t:'return a, b', cls:'ok'}, {t:'@lru_cache', cls:'ok'}]}), line:5,
+    msg:{zh:'所以「用座標當 key」「函式回傳多個值」「memo 快取的參數」都是 tuple 的地盤。' +
+            '需要不停修改的資料才用 list——<b>選擇的依據是會不會變，不是喜好</b>。',
+         en:'So grid coordinates as keys, multiple return values, and memo cache keys are all tuple territory. Use a list when the data must change - <b>the criterion is mutability, not taste</b>.'}});
+  return F.list;
+}
+
+function buildDict(){
+  const F = new Frames();
+  const keys = ['ann', 'bob', 'cat'], vals = [31, 24, 28];
+  const SL = 8, slotY = 3.9, sw = 1.0, sx = 5.0 - SL * sw / 2;
+  const hash = k => ({ann:1, bob:5, cat:3})[k];
+  const slots = new Array(SL).fill(null);
+  const drawSlots = states => {
+    const out = [];
+    for (let i = 0; i < SL; i++)
+      out.push(S.r(sx + i * sw, slotY, sw - .08, CH, states[i] || (slots[i] ? 'idle' : 'ghost'),
+        slots[i] ? slots[i][0] : '', {fs:.34, sub:slots[i] ? String(slots[i][1]) : null}),
+        S.t(sx + i * sw + (sw - .08) / 2, slotY - .22, String(i), {c:'#8fa3ac', fs:.24}));
+    return out;
+  };
+  const P = () => [{lbl:{zh:'dict 內容', en:'dict contents'},
+    chips:slots.filter(Boolean).map(e => ({t:e[0] + ': ' + e[1], cls:'ok'}))}];
+  F.push({shapes:drawSlots({}).concat([note(1.4, {zh:'dict 背後是一排「桶子」',
+    en:'a dict is backed by a row of buckets'}, '#3fe0dd')]), panels:P(), line:0,
+    msg:{zh:'dict 不是一串鍵值對，而是<b>一排桶子 + 一個把 key 變成位置的函式</b>。' +
+            '這一天先看行為，之後兩天會把這排桶子拆開來看。',
+         en:'A dict is not a list of pairs: it is <b>a row of buckets plus a function turning a key into a position</b>. Today we look at behaviour; the next two days open the buckets up.'}});
+  keys.forEach((k, i) => {
+    const h = hash(k);
+    F.push({shapes:drawSlots({[h]:'hot'}).concat([
+      S.r(1.0, 1.5, 1.9, CH, 'act', '"' + k + '"', {fs:.36}),
+      S.e(3.0, 1.5 + CH / 2, 4.4, 1.5 + CH / 2, {s:'act'}),
+      S.t(3.7, 1.28, 'hash()', {c:'#c7a6ff', fs:.28}),
+      S.r(4.6, 1.5, 2.3, CH, 'hot', '→ ' + h, {fs:.36})]), panels:P(), line:2,
+      msg:{zh:'放 <b>' + k + '</b>：先算 <b>hash("' + k + '")</b>，取餘數得到位置 <b>' + h +
+              '</b>，然後<b>直接跳過去</b>——不需要比較其他任何 key。',
+           en:'Storing <b>' + k + '</b>: compute <b>hash("' + k + '")</b>, reduce it to slot <b>' + h +
+              '</b> and <b>jump straight there</b> - no other key is ever compared.'}});
+    slots[h] = [k, vals[i]];
+    F.push({shapes:drawSlots({[h]:'ok'}), panels:P(), line:2,
+      msg:{zh:'寫進桶子 ' + h + '。<b>字典的插入與查詢平均都是 O(1)</b>，' +
+              '而且跟裡面有多少筆資料無關。',
+           en:'Written into bucket ' + h + '. <b>Insert and lookup are both O(1) on average</b>, regardless of how much is already stored.'}});
+  });
+  F.push({shapes:drawSlots({5:'ok'}).concat([
+    S.r(1.0, 1.5, 1.9, CH, 'act', '"bob"', {fs:.36}),
+    S.e(3.0, 1.5 + CH / 2, 4.4, 1.5 + CH / 2, {s:'act'}),
+    S.r(4.6, 1.5, 2.3, CH, 'ok', '→ 5', {fs:.36})]), panels:P(), line:3,
+    msg:{zh:'查 <b>ages["bob"]</b>：同一個雜湊函式算出 <b>5</b>，一步到位。' +
+            '對照 list 的成員檢查要一格一格比——這就是<b>用空間換時間</b>。',
+         en:'Looking up <b>ages["bob"]</b>: the same hash gives <b>5</b>, one jump. Compare that with scanning a list slot by slot - this is <b>space traded for time</b>.'}});
+  F.push({shapes:drawSlots({}).concat([note(1.4, {zh:'Python 3.7 起：走訪順序 = 插入順序',
+    en:'since Python 3.7: iteration follows insertion order'}, '#c7a6ff')]), panels:P(), line:6,
+    msg:{zh:'兩個常被誤會的點：<b>dict 從 Python 3.7 起保證走訪順序等於插入順序</b>（但它仍然不是排序），' +
+            '而且 O(1) 是<b>平均</b>——碰撞很多時會退化，這正是接下來兩天要處理的問題。',
+         en:'Two things people get wrong: <b>since Python 3.7 iteration order equals insertion order</b> (which is still not sorted), and O(1) is an <b>average</b> - heavy collisions degrade it, which is exactly what the next two days are about.'}});
+  return F.list;
+}
+
+function buildSet(){
+  const F = new Frames();
+  const data = [3, 1, 4, 1, 5, 3, 4];
+  const seen = [];
+  const P = () => [{lbl:{zh:'set 內容', en:'set contents'}, chips:chipsOf(seen, 'ok')}];
+  F.push({shapes:row(data, 1.6, {}).concat([note(3.0, {zh:'原始資料（有重複）',
+    en:'raw data (with duplicates)'})]), panels:P(), line:0,
+    msg:{zh:'set 就是<b>只有 key 沒有 value 的 dict</b>：同樣用雜湊，所以「有沒有出現過」是 O(1)。',
+         en:'A set is <b>a dict with keys but no values</b>: same hashing, so "have I seen this?" costs O(1).'}});
+  data.forEach((v, i) => {
+    const dup = seen.indexOf(v) >= 0;
+    const st = {}; for (let j = 0; j < i; j++) st[j] = 'done'; st[i] = dup ? 'bad' : 'hot';
+    F.push({shapes:row(data, 1.6, st).concat(row(seen.concat(dup ? [] : [v]), 3.6,
+      dup ? {} : {[seen.length]:'ok'}, {index:false}))
+      .concat([note(5.2, {zh:'set（自動去重複）', en:'set (deduplicated)'})]),
+      panels:P(), line:0,
+      msg:dup ? {zh:'<b>' + v + '</b> 已經在裡面了 → 直接忽略。判斷「在不在」只花 O(1)。',
+                 en:'<b>' + v + '</b> is already there, so it is ignored. The membership test itself was O(1).'}
+              : {zh:'<b>' + v + '</b> 沒看過 → 加進去。',
+                 en:'<b>' + v + '</b> is new, so it goes in.'}});
+    if (!dup) seen.push(v);
+  });
+  const A = [1, 2, 3, 4], B = [3, 4, 5];
+  const setBox = (x, vals, s, lbl) => {
+    const out = [S.t(x + 1.1, 1.35, lbl, {c:'#3fe0dd', fs:.34})];
+    vals.forEach((v, i) => out.push(S.c(x + .45 + i * .78, 2.1, .32, s, String(v), {fs:.34})));
+    return out;
+  };
+  const ops = [
+    ['&', [3, 4], {zh:'交集：兩邊都有的', en:'intersection: in both'},
+     {zh:'找共同好友、找重複的檔案，都是這一行。', en:'mutual friends, duplicate files - all one line.'}],
+    ['|', [1, 2, 3, 4, 5], {zh:'聯集：任一邊有的', en:'union: in either'},
+     {zh:'合併兩批資料又不想有重複的時候用。', en:'merging two batches without duplicates.'}],
+    ['-', [1, 2], {zh:'差集：只有 A 有的', en:'difference: only in A'},
+     {zh:'「上次有、這次沒有」——比對前後差異的標準做法。',
+      en:'"present before, gone now" - the standard way to diff two snapshots.'}]];
+  ops.forEach(([op, res, name, why], k) => {
+    F.push({shapes:setBox(.6, A, 'act', 'A = {1,2,3,4}').concat(setBox(5.8, B, 'hot', 'B = {3,4,5}'),
+      [S.t(5.0, 3.9, 'A ' + op + ' B', {c:'#ffbe6b', fs:.46})],
+      res.map((v, i) => S.c(3.4 + i * .8, 4.9, .32, 'ok', String(v), {fs:.34})),
+      [S.t(5.0, 5.9, name, {c:'#8fa3ac', fs:.32})]),
+      panels:[{lbl:{zh:'結果', en:'result'}, chips:chipsOf(res, 'ok')}], line:3 + k,
+      msg:{zh:'<b>A ' + op + ' B = {' + res.join(', ') + '}</b>。' + tr(why) +
+              '用 set 運算取代雙層迴圈，通常是從 O(n·m) 直接掉到 O(n+m)。',
+           en:'<b>A ' + op + ' B = {' + res.join(', ') + '}</b>. ' + tr(why) +
+              ' Replacing a nested loop with a set operation usually turns O(n·m) into O(n+m).'}});
+  });
+  F.push({shapes:[note(2.6, {zh:'挑容器的順序：要不要改？要不要順序？要不要查得快？',
+    en:'choosing a container: mutable? ordered? fast lookup?'}, '#3fe0dd'),
+    note(3.6, {zh:'list = 順序 / tuple = 固定 + 可當 key / dict = 對應 / set = 成員與去重',
+      en:'list = order / tuple = fixed + hashable / dict = mapping / set = membership'}, '#c7a6ff')],
+    panels:[], line:7,
+    msg:{zh:'四個容器不是四種寫法，是四種成本結構。<b>在寫迴圈之前先問自己選對了沒有</b>——' +
+            '很多「演算法優化」其實只是把 list 換成 set。',
+         en:'These are four cost models, not four syntaxes. <b>Ask whether the container is right before optimising the loop</b> - a great deal of "algorithm tuning" is really just a list becoming a set.'}});
+  return F.list;
+}
+
+const DAY_META = {
+  title:{zh:'list、tuple、dict 與 set', en:'list, tuple, dict and set'},
+  sub:{zh:'四個內建容器不是四種語法，是四種不同的成本結構——挑錯了，程式就會慢一個級數。',
+       en:'Four built-in containers are four cost models, not four syntaxes - pick the wrong one and you lose a whole order of growth.'},
+  tabs:[
+    {id:'list', label:{zh:'list', en:'list'},
+     stage:{zh:'連續空間帶來的好處與代價', en:'What contiguity buys and costs'},
+     idea:{zh:'連續配置讓索引變成一次位址計算（O(1)），但也讓<b>頭部插入與刪除必須整排搬家</b>（O(n)）。' +
+              '成員檢查同樣是 O(n)——這是實務上最常見的效能陷阱。',
+           en:'Contiguity makes indexing a single address computation (O(1)) but forces <b>front insertions and deletions to shuffle the whole block</b> (O(n)). Membership is O(n) too - the most common performance trap in practice.'},
+     legend:['hot', 'ok', 'bad', 'done'], code:CODE_LIST, build:buildList},
+    {id:'tuple', label:{zh:'tuple', en:'tuple'},
+     stage:{zh:'不可變換來的能力', en:'What immutability buys'},
+     idea:{zh:'tuple 的重點不是「唯讀的 list」，而是<b>可雜湊</b>：能當 dict 的 key、能放進 set。' +
+              '會變的東西不能當 key，因為位置一旦算好就不能再變。',
+           en:'A tuple is not "a read-only list"; it is <b>hashable</b>, so it can be a dict key or a set member. Anything mutable cannot be a key, because its slot is decided once and must stay valid.'},
+     legend:['ok', 'act', 'bad'], code:CODE_TUPLE, build:buildTuple},
+    {id:'dict', label:{zh:'dict', en:'dict'},
+     stage:{zh:'key → 位置，一步到位', en:'key to slot in one jump'},
+     idea:{zh:'dict 用<b>雜湊函式把 key 直接換算成位置</b>，所以查詢跟資料量無關，平均 O(1)。' +
+              '代價是額外的空間與「平均」兩個字——碰撞多的時候會退化。',
+           en:'A dict <b>turns a key straight into a slot</b>, so lookup is independent of size: O(1) on average. The price is extra memory and that word "average" - collisions degrade it.'},
+     legend:['hot', 'act', 'ok', 'idle'], code:CODE_DICT, build:buildDict},
+    {id:'set', label:{zh:'set', en:'set'},
+     stage:{zh:'去重複與集合運算', en:'Dedup and set algebra'},
+     idea:{zh:'set 是沒有 value 的 dict。除了 O(1) 的成員檢查，' +
+              '<b>交集、聯集、差集可以取代雙層迴圈</b>，常常直接把 O(n·m) 變成 O(n+m)。',
+           en:'A set is a dict without values. Beyond O(1) membership, <b>intersection, union and difference replace nested loops</b>, often turning O(n·m) into O(n+m).'},
+     legend:['hot', 'ok', 'bad', 'done'], code:CODE_SET, build:buildSet}
+  ]
+};
+
+</script>
+<script>
+/* =========================================================================
+   100 Days of Python - shared demo engine
+   palette: teal/blue-green base, purple pointers, orange "current step"
+   ========================================================================= */
+const T = {
+  title:{zh:DAY_META.title.zh, en:DAY_META.title.en},
+  sub:{zh:DAY_META.sub.zh, en:DAY_META.sub.en},
+  play:{zh:'▶ 播放', en:'▶ Play'}, pause:{zh:'❚❚ 暫停', en:'❚❚ Pause'},
+  speed:{zh:'速度', en:'Speed'}, state:{zh:'演算法狀態', en:'Algorithm state'},
+  code:{zh:'程式碼', en:'Code'}, idea:{zh:'重點', en:'The idea'}
+};
+let LANG = 'zh';
+const tr = o => (o == null ? '' : (typeof o === 'string' ? o : (o[LANG] != null ? o[LANG] : o.en)));
+const $ = id => document.getElementById(id);
+
+function setLang(l){
+  LANG = l;
+  document.documentElement.lang = l === 'zh' ? 'zh-Hant' : 'en';
+  $('btn-zh').classList.toggle('on', l === 'zh');
+  $('btn-en').classList.toggle('on', l === 'en');
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.getAttribute('data-i18n');
+    if (T[k]) el.textContent = tr(T[k]);
+  });
+  buildTabs(); render();
+}
+
+/* --------------------------------------------------------------- palette */
+const STY = {
+  idle :{fill:'#07293a', stroke:'#0a6b74', text:'#dff2f5', w:.045, glow:0},
+  soft :{fill:'#052330', stroke:'#0a6b74', text:'#a8c8d0', w:.035, glow:0},
+  hot  :{fill:'#3a2109', stroke:'#ff9736', text:'#ffbe6b', w:.075, glow:.65},
+  act  :{fill:'#241542', stroke:'#9d6bff', text:'#c7a6ff', w:.070, glow:.55},
+  ok   :{fill:'#08414a', stroke:'#3fe0dd', text:'#d9ffff', w:.070, glow:.5},
+  done :{fill:'#062430', stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0},
+  bad  :{fill:'#3a0d0d', stroke:'#ff5c5c', text:'#ff9a9a', w:.070, glow:.4},
+  ghost:{fill:'none',    stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0, dash:'.12 .10'}
+};
+const COL = {teal:'#12b3b8', tealL:'#3fe0dd', purple:'#9d6bff', purpleL:'#c7a6ff',
+             orange:'#ff9736', orangeL:'#ffbe6b', red:'#ff5c5c', grey:'#8fa3ac',
+             pale:'#dff2f5', white:'#ffffff'};
+const LEGEND = {
+  hot:[COL.orange, {zh:'目前這一步', en:'current step'}],
+  act:[COL.purple, {zh:'指標 / 走訪位置', en:'pointer / cursor'}],
+  ok:[COL.tealL,  {zh:'完成 / 結果', en:'done / result'}],
+  bad:[COL.red,   {zh:'失敗 / 要避開的寫法', en:'failure / the wrong way'}],
+  done:['#2f5661', {zh:'已處理完', en:'already done'}],
+  soft:['#0a6b74', {zh:'其他元素', en:'other items'}],
+  idle:['#0a6b74', {zh:'尚未處理', en:'untouched'}]
+};
+const leg = (...keys) => keys.map(k => LEGEND[k]);
+
+/* ---------------------------------------------------------- frame buffer */
+function Frames(){
+  this.list = [];
+  this.push = (o) => this.list.push({
+    shapes:JSON.parse(JSON.stringify(o.shapes || [])),
+    panels:JSON.parse(JSON.stringify(o.panels || [])),
+    view:(o.view || null), line:(o.line == null ? 0 : o.line), msg:o.msg
+  });
+}
+/* shape helpers - engines call these, the renderer just draws */
+const S = {
+  r:(x, y, w, h, s, lab, o) => Object.assign({t:'r', x:x, y:y, w:w, h:h, s:s || 'idle', lab:lab}, o || {}),
+  c:(x, y, r, s, lab, o) => Object.assign({t:'c', x:x, y:y, r:r, s:s || 'idle', lab:lab}, o || {}),
+  e:(x1, y1, x2, y2, o) => Object.assign({t:'e', x1:x1, y1:y1, x2:x2, y2:y2}, o || {}),
+  t:(x, y, s, o) => Object.assign({t:'t', x:x, y:y, s:s}, o || {})
+};
+/* a labelled row of array cells; returns shapes */
+function cellRow(vals, x0, y, w, h, opt){
+  opt = opt || {};
+  const out = [], st = opt.states || {};
+  vals.forEach((v, i) => {
+    out.push(S.r(x0 + i * w, y, w - (opt.gap == null ? .06 : opt.gap), h, st[i] || 'idle',
+                 v == null ? '' : String(v), {fs:opt.fs || h * .52}));
+    if (opt.index !== false)
+      out.push(S.t(x0 + i * w + (w - .06) / 2, y + h + (opt.ilift || .34),
+                   opt.labels ? opt.labels[i] : String(i),
+                   {c:st[i] && st[i] !== 'idle' ? COL.orangeL : COL.grey, fs:opt.ifs || .30}));
+  });
+  if (opt.title) out.push(S.t(x0 - .22, y + h * .62, opt.title, {c:COL.tealL, fs:.32, anchor:'end'}));
+  return out;
+}
+/* binary-tree layout from a heap-style array (index 0 = root, 2i+1 / 2i+2) */
+function heapTreeShapes(arr, x0, y0, w, rowH, states, opt){
+  opt = opt || {};
+  const n = arr.length, out = [], R = opt.r || .34;
+  const depth = i => Math.floor(Math.log2(i + 1));
+  const maxD = n ? depth(n - 1) : 0;
+  const px = i => {
+    const d = depth(i), first = Math.pow(2, d) - 1, k = i - first;
+    const slots = Math.pow(2, d), span = w;
+    return x0 + span * (k + .5) / slots;
+  };
+  const py = i => y0 + depth(i) * rowH;
+  for (let i = 1; i < n; i++){
+    if (arr[i] == null) continue;
+    const p = Math.floor((i - 1) / 2);
+    out.push(S.e(px(p), py(p), px(i), py(i), {pad:R + .04,
+      s:(states && (states[i] === 'hot' || states[i] === 'act')) ? states[i] : 'idle'}));
+  }
+  for (let i = 0; i < n; i++){
+    if (arr[i] == null) continue;
+    out.push(S.c(px(i), py(i), R, (states && states[i]) || 'idle', String(arr[i]), {fs:R * .95}));
+    if (opt.showIndex)
+      out.push(S.t(px(i), py(i) + R + .34, String(i), {c:COL.grey, fs:.26}));
+  }
+  return out;
+}
+
+/* -------------------------------------------------------------- renderer */
+const svgNS = 'http://www.w3.org/2000/svg';
+const mk = (tag, a) => { const e = document.createElementNS(svgNS, tag);
+  for (const k in a) e.setAttribute(k, a[k]); return e; };
+const clear = svg => { while (svg.firstChild) svg.removeChild(svg.firstChild); };
+
+function defs(svg){
+  const d = mk('defs', {});
+  const f = mk('filter', {id:'glow', x:'-70%', y:'-70%', width:'240%', height:'240%'});
+  f.appendChild(mk('feGaussianBlur', {stdDeviation:'.055', result:'b'}));
+  const m = mk('feMerge', {});
+  m.appendChild(mk('feMergeNode', {in:'b'}));
+  m.appendChild(mk('feMergeNode', {in:'SourceGraphic'}));
+  f.appendChild(m); d.appendChild(f);
+  Object.keys(STY).forEach(k => {
+    const mk2 = mk('marker', {id:'ar-' + k, viewBox:'0 0 10 10', refX:'8.5', refY:'5',
+      markerWidth:'5.2', markerHeight:'5.2', orient:'auto-start-reverse'});
+    mk2.appendChild(mk('path', {d:'M 0 1 L 9 5 L 0 9 z', fill:STY[k].stroke}));
+    d.appendChild(mk2);
+  });
+  svg.appendChild(d);
+}
+
+function drawShape(svg, sh){
+  const st = STY[sh.s || 'idle'];
+  if (sh.t === 'e'){
+    let {x1, y1, x2, y2} = sh;
+    if (sh.pad){
+      const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+      x1 += dx / L * sh.pad; y1 += dy / L * sh.pad;
+      x2 -= dx / L * sh.pad; y2 -= dy / L * sh.pad;
+    }
+    const a = {x1:x1.toFixed(3), y1:y1.toFixed(3), x2:x2.toFixed(3), y2:y2.toFixed(3),
+      stroke:st.stroke, 'stroke-width':(sh.w || st.w || .05), 'stroke-linecap':'round',
+      opacity:(sh.o == null ? (sh.s && sh.s !== 'idle' ? 1 : .75) : sh.o)};
+    if (sh.dash || st.dash) a['stroke-dasharray'] = sh.dash || st.dash;
+    if (sh.arrow !== false) a['marker-end'] = 'url(#ar-' + (sh.s || 'idle') + ')';
+    svg.appendChild(mk('line', a));
+    if (sh.lab != null)
+      svg.appendChild(txt((x1 + x2) / 2 + (sh.lx || 0), (y1 + y2) / 2 + (sh.ly || -.16),
+        tr(sh.lab), st.stroke, sh.fs || .30, 'middle'));
+    return;
+  }
+  if (sh.t === 't'){
+    svg.appendChild(txt(sh.x, sh.y, tr(sh.s), sh.c || COL.pale, sh.fs || .32,
+      sh.anchor || 'middle', sh.o));
+    return;
+  }
+  let node;
+  if (sh.t === 'c'){
+    node = mk('circle', {cx:sh.x.toFixed(3), cy:sh.y.toFixed(3), r:sh.r.toFixed(3),
+      fill:st.fill, stroke:st.stroke, 'stroke-width':st.w});
+  } else {
+    node = mk('rect', {x:sh.x.toFixed(3), y:sh.y.toFixed(3), width:sh.w.toFixed(3),
+      height:sh.h.toFixed(3), rx:(sh.rx == null ? .09 : sh.rx), fill:st.fill,
+      stroke:st.stroke, 'stroke-width':st.w});
+  }
+  if (st.dash || sh.dash) node.setAttribute('stroke-dasharray', sh.dash || st.dash);
+  if (st.glow) node.setAttribute('filter', 'url(#glow)');
+  if (sh.o != null) node.setAttribute('opacity', sh.o);
+  svg.appendChild(node);
+  const cx = sh.t === 'c' ? sh.x : sh.x + sh.w / 2;
+  const cy = sh.t === 'c' ? sh.y : sh.y + sh.h / 2;
+  if (sh.lab != null && sh.lab !== '')
+    svg.appendChild(txt(cx + (sh.dx || 0), cy + (sh.fs || .40) * .35, tr(sh.lab), st.text,
+      sh.fs || .40, 'middle'));
+  if (sh.sub != null)
+    svg.appendChild(txt(cx, cy + (sh.t === 'c' ? sh.r : sh.h) + .34, tr(sh.sub),
+      sh.subc || COL.grey, sh.subfs || .28, 'middle'));
+  if (sh.top != null)
+    svg.appendChild(txt(cx, cy - (sh.t === 'c' ? sh.r : sh.h / 2) - .22, tr(sh.top),
+      sh.topc || COL.purpleL, sh.topfs || .28, 'middle'));
+}
+function txt(x, y, s, c, fs, anchor, o){
+  const t = mk('text', {x:(+x).toFixed(3), y:(+y).toFixed(3), 'text-anchor':anchor || 'middle',
+    fill:c, 'font-size':(+fs).toFixed(3)});
+  if (o != null) t.setAttribute('opacity', o);
+  t.textContent = s;
+  return t;
+}
+
+function renderStage(frame){
+  const svg = $('stage');
+  clear(svg); defs(svg);
+  const v = frame.view || curTab().view || [10, 6.4];
+  svg.setAttribute('viewBox', '0 0 ' + v[0] + ' ' + v[1]);
+  (frame.shapes || []).forEach(sh => drawShape(svg, sh));
+}
+
+function drawPanels(frame){
+  const box = $('panels'); box.innerHTML = '';
+  (frame.panels || []).forEach(p => {
+    const d = document.createElement('div'); d.className = 'panel';
+    const l = document.createElement('div'); l.className = 'lbl'; l.textContent = tr(p.lbl);
+    const c = document.createElement('div'); c.className = 'chips';
+    (p.chips.length ? p.chips : [{t:'—', cls:'empty'}]).forEach(ch => {
+      const s = document.createElement('span');
+      s.className = 'chip ' + (ch.cls || ''); s.textContent = ch.t; c.appendChild(s);
+    });
+    d.appendChild(l); d.appendChild(c); box.appendChild(d);
+  });
+}
+function drawCode(frame){
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  $('code').innerHTML = curTab().code.map((ln, i) => {
+    const h = esc(ln).replace(/(#.*)$/, '<span class="cm">$1</span>');
+    return '<span class="ln' + (i === frame.line ? ' on' : '') + '">' + (h || ' ') + '</span>';
+  }).join('');
+}
+function drawLegend(){
+  const keys = curTab().legend || ['hot', 'act', 'ok', 'idle'];
+  $('legend').innerHTML = keys.map(k => {
+    const [c, txt] = Array.isArray(k) ? k : LEGEND[k];
+    return '<span><i style="background:' + c + '"></i>' + tr(txt) + '</span>';
+  }).join('');
+}
+
+let tabIx = 0, varIx = 0, frames = [], cur = 0, timer = null;
+const TABS = DAY_META.tabs;
+const curTab = () => TABS[tabIx];
+
+function render(){
+  if (!frames.length) return;
+  cur = Math.max(0, Math.min(cur, frames.length - 1));
+  const f = frames[cur];
+  $('stage-title').textContent = tr(curTab().stage);
+  renderStage(f); drawPanels(f); drawCode(f); drawLegend();
+  $('narr').innerHTML = tr(f.msg);
+  $('idea').innerHTML = tr(curTab().idea);
+  $('stepno').textContent = (cur + 1) + ' / ' + frames.length;
+  $('prev').disabled = cur === 0;
+  $('next').disabled = cur === frames.length - 1;
+}
+function buildTabs(){
+  $('tabs').innerHTML = '';
+  TABS.forEach((t, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(t.label);
+    if (i === tabIx) b.classList.add('on');
+    b.onclick = () => { tabIx = i; varIx = 0; load(); };
+    $('tabs').appendChild(b);
+  });
+  const ex = $('extra'); ex.innerHTML = '';
+  const vs = curTab().variants;
+  if (vs) vs.forEach((v, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(v);
+    if (i === varIx) b.classList.add('on');
+    b.onclick = () => { varIx = i; load(); };
+    ex.appendChild(b);
+  });
+}
+function load(){
+  stop();
+  frames = curTab().build(varIx) || [];
+  cur = 0; buildTabs(); render();
+}
+function step(d){ stop(); cur += d; render(); }
+function reset(){ stop(); cur = 0; render(); }
+function stop(){ if (timer){ clearInterval(timer); timer = null; $('play').textContent = tr(T.play); } }
+function togglePlay(){
+  if (timer){ stop(); return; }
+  if (cur >= frames.length - 1) cur = 0;
+  $('play').textContent = tr(T.pause);
+  timer = setInterval(() => {
+    if (cur >= frames.length - 1){ stop(); return; }
+    cur++; render();
+  }, Number($('speed').value));
+}
+$('speed').addEventListener('input', () => { if (timer){ stop(); togglePlay(); } });
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight'){ step(1); e.preventDefault(); }
+  else if (e.key === 'ArrowLeft'){ step(-1); e.preventDefault(); }
+  else if (e.key === ' '){ togglePlay(); e.preventDefault(); }
+});
+setLang('zh');
+load();
+
+</script>
+</body>
+</html>

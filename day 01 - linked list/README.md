@@ -14,6 +14,9 @@ Linked list has two key things to note:
 More details in:
 https://medium.com/100-days-of-python/day-01-linked-list-cf91b8937fc6
 
+Interactive walkthrough: [demo.html](demo.html) - a single self-contained page
+(no build step, works offline, 中文 / English toggle) that animates push-front, search, deletion and the doubly linked unlink step by step.
+
 
 ## References
 

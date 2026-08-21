@@ -3,6 +3,9 @@
 More details in:
 https://medium.com/100-days-of-python/day-06-binomial-heap-88ca2edb8255
 
+Interactive walkthrough: [demo.html](demo.html) - a single self-contained page
+(no build step, works offline, 中文 / English toggle) that animates tree linking, binary-carry merging and extract-min step by step.
+
 ![Binomial Heap](https://upload.wikimedia.org/wikipedia/commons/thumb/c/cf/Binomial_Trees.svg/500px-Binomial_Trees.svg.png)
 
 A binomial heap is implemented as a set of binomial trees (compare with a binary heap, which has a shape of a single binary tree), which are defined recursively as follows:

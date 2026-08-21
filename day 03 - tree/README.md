@@ -3,6 +3,9 @@
 More details in:
 https://medium.com/100-days-of-python/day-03-tree-fe4bfcb4c8e7
 
+Interactive walkthrough: [demo.html](demo.html) - a single self-contained page
+(no build step, works offline, 中文 / English toggle) that animates preorder/inorder/postorder DFS, level-order BFS and recursive height step by step.
+
 ![tree](https://upload.wikimedia.org/wikipedia/commons/thumb/f/f7/Binary_tree.svg/300px-Binary_tree.svg.png)
 
 In computer science, a tree is a widely used abstract data type (ADT) that simulates a hierarchical tree structure, with a root value and subtrees of children with a parent node, represented as a set of linked nodes.

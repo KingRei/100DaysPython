@@ -1,0 +1,403 @@
+// DAY: 16
+// TITLE_ZH: Prim 與 Dijkstra：同一套 heap greedy 骨架
+// TITLE_EN: Prim and Dijkstra - one heap-greedy skeleton
+// SUB_ZH: 兩個看起來完全不同的演算法，程式碼只差一個 key：Prim 比「這條邊多貴」，Dijkstra 比「走到那裡總共多貴」。
+// SUB_EN: Two algorithms that look unrelated are one lambda apart - Prim compares the edge, Dijkstra compares the whole path.
+// FOLDER: day%2016%20-%20prim%20and%20dijkstra
+// MEDIUM: https://medium.com/100-days-of-python
+
+const NM = 'ABCDEFG';
+const P = [[1.1, 3.3], [3.4, 2.4], [7.0, 3.0], [2.4, 4.4], [5.4, 4.4], [2.5, 6.2], [7.6, 5.8]];
+const G = [[7, 0, 1], [5, 0, 3], [8, 1, 2], [9, 1, 3], [7, 1, 4], [5, 2, 4],
+           [15, 3, 4], [6, 3, 5], [8, 4, 5], [9, 4, 6], [11, 5, 6]];
+const RAD = .46, INF = Infinity;
+const ekey = (u, v) => Math.min(u, v) + '-' + Math.max(u, v);
+
+function adjOf(edges, n){
+  const a = []; for (let i = 0; i < n; i++) a.push([]);
+  edges.forEach(([w, u, v]) => { a[u].push([v, w]); a[v].push([u, w]); });
+  return a;
+}
+const ADJ = adjOf(G, 7);
+
+function gShapes(o){
+  o = o || {}; const out = [];
+  G.forEach(([w, u, v]) => {
+    const st = (o.est && o.est[ekey(u, v)]) || 'ghost';
+    const [x1, y1] = P[u], [x2, y2] = P[v];
+    const dx = x2 - x1, dy = y2 - y1, L = Math.sqrt(dx * dx + dy * dy), ux = dx / L, uy = dy / L;
+    out.push(S.e(x1 + ux * RAD, y1 + uy * RAD, x2 - ux * RAD, y2 - uy * RAD,
+      {s:st, w:(st === 'ok' || st === 'done') ? .12 : .05, noArrow:true}));
+    out.push(S.t((x1 + x2) / 2 + uy * .30, (y1 + y2) / 2 - ux * .30, String(w),
+      {c:st === 'ghost' ? '#8fa3ac' : (st === 'bad' ? '#ff5c5c' : '#ffbe6b'), fs:.28}));
+  });
+  for (let i = 0; i < NM.length; i++){
+    const lb = (o.best && o.best[i] != null && o.best[i] < INF) ? String(o.best[i]) : '';
+    out.push(S.c(P[i][0], P[i][1], RAD, (o.st && o.st[i]) || 'idle', NM[i],
+      lb === '' ? {fs:.32} : {fs:.32, sub:lb, subfs:.26}));
+  }
+  return out;
+}
+function heapPanel(pq, done){
+  const items = pq.slice().sort((a, b) => a[0] - b[0]);
+  return {lbl:{zh:'heap（最小的在前）', en:'heap (smallest first)'},
+    chips:items.length ? items.map(([d, u], i) => ({t:NM[u] + ':' + d + (done[u] ? ' x' : ''),
+      cls:done[u] ? 'bad' : (i === 0 ? 'hot' : '')}))
+      : [{t:LANG === 'zh' ? '空' : 'empty', cls:''}]};
+}
+function bestPanel(best, done, lbl){
+  return {lbl:lbl, chips:best.map((b, i) => ({t:NM[i] + ' ' + (b < INF ? b : '∞'),
+    cls:done[i] ? 'ok' : (b < INF ? '' : 'soft')}))};
+}
+
+const CODE = [
+'def heap_greedy(n, adj, src, key):',
+'    best   = [INF] * n',
+'    parent = [-1] * n',
+'    done   = [False] * n',
+'    best[src] = 0; pq = [(0, src)]',
+'',
+'    while pq:',
+'        d, u = heappop(pq)',
+'        if done[u]: continue          # 堆裡的舊副本',
+'        done[u] = True',
+'        for v, w in adj[u]:',
+'            nd = key(d, w)            # Prim: w   Dijkstra: d + w',
+'            if not done[v] and nd < best[v]:',
+'                best[v] = nd; parent[v] = u',
+'                heappush(pq, (nd, v))',
+'    return best, parent'];
+
+// ---- tab 1: the shared skeleton -------------------------------------------
+function buildSkeleton(v){
+  const F = new Frames(), n = 7, isPrim = (v === 0);
+  const key = isPrim ? ((d, w) => w) : ((d, w) => d + w);
+  const best = [], parent = [], done = [], est = {};
+  for (let i = 0; i < n; i++){ best.push(INF); parent.push(-1); done.push(false); }
+  best[0] = 0;
+  let pq = [[0, 0]], total = 0;
+  const st = () => { const s = {}; for (let i = 0; i < n; i++)
+      s[i] = done[i] ? 'ok' : (best[i] < INF ? 'soft' : 'idle'); return s; };
+  const snap = (extra, line, msg) => F.push({
+    shapes:gShapes({est:Object.assign({}, est, extra && extra.est),
+                    st:Object.assign(st(), extra && extra.st), best:best}),
+    panels:[heapPanel(pq, done), bestPanel(best, done,
+      isPrim ? {zh:'best = 接上這棵樹最便宜的一條邊', en:'best = cheapest edge into the tree'}
+             : {zh:'best = 從 A 走過來的最短距離', en:'best = shortest distance from A'})],
+    line:line, msg:msg});
+
+  snap({st:{0:'hot'}}, 4, isPrim
+    ? {zh:'<b>Prim</b>：從 A 開始，讓一棵樹<b>長大</b>。每一步問「把哪個還沒進來的點拉進來最便宜」，' +
+          '比的是<b>那一條邊的重量</b>。heap 裡放的就是每個外點目前<b>最便宜的入場券</b>。',
+       en:'<b>Prim</b>: start at A and <b>grow one tree</b>. Each step asks which outside vertex is cheapest to pull in, comparing <b>the weight of that single edge</b>. The heap holds each outsider\'s current <b>cheapest ticket in</b>.'}
+    : {zh:'<b>Dijkstra</b>：一模一樣的迴圈、一模一樣的 heap，只有 <code>key</code> 換成 <code>d + w</code>。' +
+          '現在 heap 裡放的不是入場券，而是<b>從 A 一路走過來的總距離</b>。',
+       en:'<b>Dijkstra</b>: identical loop, identical heap, only <code>key</code> becomes <code>d + w</code>. Now the heap holds not a ticket price but the <b>total distance walked from A</b>.'});
+
+  let guard = 0;
+  while (pq.length && guard++ < 60){
+    pq.sort((a, b) => a[0] - b[0]);
+    const top = pq.shift(), d = top[0], u = top[1];
+    if (done[u]){
+      snap({st:{[u]:'bad'}}, 8,
+        {zh:'彈出 <b>' + NM[u] + ':' + d + '</b>，但 ' + NM[u] + ' 早就處理完了。' +
+            '我們<b>從來沒有真的去 heap 裡改舊資料</b>（那要 O(n) 找），而是直接再 push 一份新的，' +
+            '舊的留在裡面變成垃圾——這叫 <b>lazy deletion</b>，一行 <code>if done[u]: continue</code> 就清掉。',
+         en:'Pop <b>' + NM[u] + ':' + d + '</b> - but ' + NM[u] + ' is already settled. We never edit an entry inside the heap (finding it would cost O(n)); we push a fresh copy and let the stale one rot. That is <b>lazy deletion</b>, cleaned up by the single line <code>if done[u]: continue</code>.'});
+      continue;
+    }
+    done[u] = true;
+    if (parent[u] >= 0){ est[ekey(parent[u], u)] = 'ok'; total += isPrim ? d : (d - best[parent[u]]); }
+    snap({st:{[u]:'hot'}}, 9, u === 0
+      ? {zh:'A 先進來，距離 0。<b>heap 的最小值就是下一個該定案的點</b>——這是整個演算法唯一的推理。',
+         en:'A settles first at 0. <b>The minimum of the heap is the next vertex that can be finalised</b> - that single claim is the whole algorithm.'}
+      : (isPrim
+        ? {zh:'<b>' + NM[u] + '</b> 是目前最便宜的入場券（' + d + '，從 ' + NM[parent[u]] + ' 接進來）。' +
+              '為什麼可以直接定案？因為任何連到樹外的路，<b>第一條跨出樹的邊都不會比它便宜</b>——' +
+              '這就是昨天 Kruskal 用的 cut property，只是這裡的 cut 固定是「樹 ｜ 其他」。' +
+              '樹的總重量現在是 <b>' + total + '</b>。',
+           en:'<b>' + NM[u] + '</b> has the cheapest ticket (' + d + ', entering from ' + NM[parent[u]] + '). Why can it be finalised on the spot? Any route out of the tree must cross the boundary somewhere, and <b>no crossing edge is cheaper than this one</b> - the same cut property Kruskal used yesterday, with the cut fixed as "tree | rest". The tree now weighs <b>' + total + '</b>.'}
+        : {zh:'<b>' + NM[u] + '</b> 定案在 <b>' + d + '</b>。為什麼不用怕之後冒出更短的路？' +
+              '任何別的路都得先經過一個<b>還在 heap 裡的點</b>，而那個點的距離 ≥ ' + d + '，' +
+              '再加上非負的邊只會更長。<b>「邊不能是負的」這個前提，就藏在這句話裡。</b>',
+           en:'<b>' + NM[u] + '</b> is fixed at <b>' + d + '</b>. Why can no shorter route appear later? Any alternative must pass through a vertex still in the heap, whose distance is already >= ' + d + ', and adding non-negative edges only makes it longer. <b>The requirement that weights are non-negative lives entirely inside that sentence.</b>'}));
+    const improved = [], hotE = {};
+    ADJ[u].forEach(pair => {
+      const v2 = pair[0], w = pair[1], nd = key(d, w);
+      if (!done[v2] && nd < best[v2]){
+        best[v2] = nd; parent[v2] = u; pq.push([nd, v2]);
+        improved.push(NM[v2] + '=' + nd); hotE[ekey(u, v2)] = 'hot';
+      }
+    });
+    if (improved.length)
+      snap({st:{[u]:'ok'}, est:hotE}, 12,
+        {zh:'放鬆 ' + NM[u] + ' 的鄰居，更新了 <b>' + improved.join('、') + '</b>。' +
+            (isPrim ? '記住：Prim 存的是<b>邊的重量</b>，不累加，所以 ' + NM[u] +
+                      ' 的鄰居可能比 ' + NM[u] + ' 自己的數字還小。'
+                    : '記住：Dijkstra 存的是 <b>' + d + ' + 邊重</b>，會一路累加下去。') +
+            '被改到的點<b>再 push 一份</b>進 heap，舊的那份不動。',
+         en:'Relaxing ' + NM[u] + '\'s neighbours updates <b>' + improved.join(', ') + '</b>. ' +
+            (isPrim ? 'Remember that Prim stores <b>the edge weight itself</b>, with no accumulation, so a neighbour can carry a smaller number than ' + NM[u] + ' did.'
+                    : 'Remember that Dijkstra stores <b>' + d + ' + edge</b>, accumulating all the way.') +
+            ' Each improved vertex gets <b>a fresh copy pushed</b>; the old entry is left alone.'});
+  }
+  const treeE = {}; for (let i = 1; i < 7; i++) if (parent[i] >= 0) treeE[ekey(parent[i], i)] = 'ok';
+  F.push({shapes:gShapes({est:treeE, st:st(), best:best}),
+    panels:[heapPanel(pq, done), bestPanel(best, done, {zh:'結果', en:'result'})],
+    line:15,
+    msg:isPrim
+      ? {zh:'7 個點全部進來，總權重 <b>' + total + '</b>——和昨天 Kruskal 算出來的<b>完全一樣</b>，' +
+            '雖然收邊的順序不同。複雜度 <b>O(E log V)</b>：每條邊最多 push 一次。',
+         en:'All seven vertices are in and the tree weighs <b>' + total + '</b> - <b>exactly</b> what Kruskal produced yesterday, even though the edges were taken in a different order. Complexity <b>O(E log V)</b>: every edge is pushed at most once.'}
+      : {zh:'每個點的最短距離都定案了：' + best.map((b, i) => NM[i] + '=' + b).join('、') + '。' +
+            '同樣是 <b>O(E log V)</b>，同樣的一份程式碼。<b>差別只有那個 lambda。</b>',
+         en:'Every shortest distance is final: ' + best.map((b, i) => NM[i] + '=' + b).join(', ') +
+            '. Same <b>O(E log V)</b>, same source file. <b>The only difference was that lambda.</b>'}});
+  return F.list;
+}
+
+// ---- tab 2: the two trees are not the same --------------------------------
+const MST_E = [[0, 1], [0, 3], [1, 4], [2, 4], [3, 5], [4, 6]];
+const SPT_E = [[0, 1], [0, 3], [1, 2], [1, 4], [3, 5], [5, 6]];
+const mapOf = (list, s) => { const m = {}; list.forEach(([u, v]) => m[ekey(u, v)] = s); return m; };
+function buildDiff(){
+  const F = new Frames();
+  const mst = mapOf(MST_E, 'ok'), spt = mapOf(SPT_E, 'ok');
+  const allOk = {}; for (let i = 0; i < 7; i++) allOk[i] = 'ok';
+  F.push({shapes:gShapes({est:mst, st:allOk}), panels:[
+    {lbl:{zh:'Prim 的樹', en:'Prim tree'}, chips:[{t:'AB AD BE CE DF EG', cls:''},
+      {t:(LANG === 'zh' ? '總重 ' : 'total ') + '39', cls:'ok'}]}], line:15,
+    msg:{zh:'Prim 得到的是<b>最小生成樹</b>：六條邊加起來 <b>39</b>，沒有更輕的生成樹了。',
+         en:'Prim gives the <b>minimum spanning tree</b>: six edges totalling <b>39</b>, and no spanning tree is lighter.'}});
+  F.push({shapes:gShapes({est:spt, st:allOk}), panels:[
+    {lbl:{zh:'Dijkstra 的樹', en:'Dijkstra tree'}, chips:[{t:'AB AD BC BE DF FG', cls:''},
+      {t:(LANG === 'zh' ? '總重 ' : 'total ') + '44', cls:'hot'}]}], line:15,
+    msg:{zh:'Dijkstra 的 <code>parent</code> 也構成一棵生成樹，但總重是 <b>44</b>，比 39 重。' +
+            '<b>它從來沒有要最小化總重</b>——它最小化的是「A 到每個點」那六個數字。',
+         en:'Dijkstra\'s <code>parent</code> array also forms a spanning tree, but it weighs <b>44</b>. <b>It never tried to minimise the total</b>; it minimised the six numbers "distance from A".'}});
+  const pathM = mapOf([[0, 1], [1, 4], [4, 6]], 'hot');
+  F.push({shapes:gShapes({est:Object.assign({}, mst, pathM),
+    st:{0:'act', 1:'hot', 4:'hot', 6:'act'}}), panels:[
+    {lbl:{zh:'在 MST 上走 A → G', en:'A to G inside the MST'},
+      chips:[{t:'A-B 7', cls:''}, {t:'B-E 7', cls:''}, {t:'E-G 9', cls:''}, {t:'= 23', cls:'bad'}]}],
+    line:15,
+    msg:{zh:'在最小生成樹上從 A 走到 G：<b>A–B–E–G = 23</b>。',
+         en:'Walking A to G inside the minimum spanning tree: <b>A-B-E-G = 23</b>.'}});
+  const pathS = mapOf([[0, 3], [3, 5], [5, 6]], 'hot');
+  F.push({shapes:gShapes({est:Object.assign({}, spt, pathS),
+    st:{0:'act', 3:'hot', 5:'hot', 6:'act'}}), panels:[
+    {lbl:{zh:'真正的最短路 A → G', en:'the true shortest path'},
+      chips:[{t:'A-D 5', cls:''}, {t:'D-F 6', cls:''}, {t:'F-G 11', cls:''}, {t:'= 22', cls:'ok'}]}],
+    line:15,
+    msg:{zh:'但真正的最短路是 <b>A–D–F–G = 22</b>，而 <b>FG = 11 這條邊根本不在 MST 裡</b>。' +
+            '只差 1，卻證明了一件重要的事。',
+         en:'The real shortest path is <b>A-D-F-G = 22</b>, and <b>the edge FG = 11 is not in the MST at all</b>. A gap of one, but it proves something important.'}});
+  F.push({shapes:gShapes({est:Object.assign({}, mapOf(MST_E, 'done'), mapOf([[5, 6]], 'ok')),
+    st:allOk}), panels:[
+    {lbl:{zh:'兩個目標', en:'two objectives'},
+      chips:[{t:'min total = 39', cls:'ok'}, {t:'min dist from A = 44', cls:'hot'}]}], line:15,
+    msg:{zh:'<b>總重量最小，不等於每條路最短。</b>MST 為了省下 FG=11 而讓 G 繞遠路；' +
+            'Dijkstra 願意多花 5 的總重，換 A→G 少走 1。' +
+            '所以「鋪最少的線」和「讓每個人最快連到伺服器」是<b>兩個不同的問題</b>，' +
+            '而在程式碼裡，它們的差別只有 <code>key</code> 那一行。',
+         en:'<b>Minimising the total is not the same as minimising every path.</b> The MST avoids FG = 11 and sends G the long way round; Dijkstra happily spends 5 more overall to save 1 on A-G. "Lay the least cable" and "give everyone the fastest route to the server" are <b>different problems</b> - and in code the difference is one line: <code>key</code>.'}});
+  return F.list;
+}
+
+// ---- tab 3: a negative edge breaks Dijkstra --------------------------------
+const NNM = ['S', 'A', 'B'];
+const NP = [[1.4, 3.4], [5.4, 5.4], [5.4, 1.6]];
+const NE = [[0, 1, 5], [0, 2, 2], [1, 2, -10]];
+function nShapes(o){
+  o = o || {}; const out = [], R = .5;
+  NE.forEach(([u, v, w]) => {
+    const st = (o.est && o.est[u + '-' + v]) || 'ghost';
+    const [x1, y1] = NP[u], [x2, y2] = NP[v];
+    const dx = x2 - x1, dy = y2 - y1, L = Math.sqrt(dx * dx + dy * dy), ux = dx / L, uy = dy / L;
+    out.push(S.e(x1 + ux * R, y1 + uy * R, x2 - ux * R, y2 - uy * R,
+      {s:st, w:st === 'ghost' ? .05 : .11}));
+    out.push(S.t((x1 + x2) / 2 + uy * .34, (y1 + y2) / 2 - ux * .34, String(w),
+      {c:w < 0 ? '#ff5c5c' : (st === 'ghost' ? '#8fa3ac' : '#ffbe6b'), fs:.30}));
+  });
+  for (let i = 0; i < 3; i++){
+    const b = o.best && o.best[i];
+    out.push(S.c(NP[i][0], NP[i][1], R, (o.st && o.st[i]) || 'idle', NNM[i],
+      b == null ? {fs:.34} : {fs:.34, sub:String(b), subfs:.28}));
+  }
+  return out;
+}
+const CODE_NEG = [
+'# Dijkstra 的前提：邊都是非負的',
+'#   pop 出來的最小值 d 之所以可以定案，',
+'#   是因為「之後的路只會更長」。',
+'',
+'best = [0, INF, INF]         # S A B',
+'pop S(0)  -> best = [0, 5, 2]',
+'pop B(2)  -> done[B] = True         # 定案！',
+'pop A(5)  -> A->B 給出 5 + (-10) = -5',
+'             但 done[B] 已經是 True，這行不會執行',
+'',
+'# 修法：Bellman-Ford，不定案，掃 V-1 輪',
+'for _ in range(n - 1):',
+'    for u, v, w in edges:',
+'        dist[v] = min(dist[v], dist[u] + w)'];
+
+function buildNeg(){
+  const F = new Frames();
+  F.push({shapes:nShapes({st:{0:'act'}, best:[0, '∞', '∞']}), panels:[], line:4,
+    msg:{zh:'那個「非負」的前提如果拿掉會怎樣？三個點就夠看出 Dijkstra 出錯。' +
+            'S→A 是 5，S→B 是 2，而 <b>A→B 是 −10</b>。',
+         en:'What happens if the non-negative assumption is dropped? Three vertices are enough to break Dijkstra: S to A costs 5, S to B costs 2, and <b>A to B costs -10</b>.'}});
+  F.push({shapes:nShapes({st:{0:'ok', 1:'soft', 2:'soft'},
+    est:{'0-1':'hot', '0-2':'hot'}, best:[0, 5, 2]}), panels:[
+    {lbl:{zh:'heap', en:'heap'}, chips:[{t:'B:2', cls:'hot'}, {t:'A:5', cls:''}]}], line:5,
+    msg:{zh:'S 定案，放鬆兩條邊：<b>A = 5，B = 2</b>。到這裡一切正常。',
+         en:'S settles and both edges relax: <b>A = 5, B = 2</b>. So far so good.'}});
+  F.push({shapes:nShapes({st:{0:'ok', 1:'soft', 2:'ok'},
+    est:{'0-1':'done', '0-2':'ok'}, best:[0, 5, 2]}), panels:[
+    {lbl:{zh:'heap', en:'heap'}, chips:[{t:'A:5', cls:'hot'}]}], line:6,
+    msg:{zh:'heap 最小的是 <b>B:2</b>，於是 <b>B 定案在 2</b>，<code>done[B] = True</code>。' +
+            '演算法在這一刻<b>永遠關上了 B 的門</b>。',
+         en:'The heap minimum is <b>B:2</b>, so <b>B is finalised at 2</b> and <code>done[B] = True</code>. At this instant the algorithm has <b>closed the door on B forever</b>.'}});
+  F.push({shapes:nShapes({st:{0:'ok', 1:'ok', 2:'bad'},
+    est:{'0-1':'ok', '0-2':'ok', '1-2':'bad'}, best:[0, 5, 2]}), panels:[
+    {lbl:{zh:'應該要更新', en:'should have updated'},
+      chips:[{t:'5 + (-10) = -5', cls:'bad'},
+             {t:LANG === 'zh' ? '被 done[B] 擋掉' : 'blocked by done[B]', cls:'bad'}]}],
+    line:8,
+    msg:{zh:'接著 A 定案在 5，走 A→B 得到 <b>5 + (−10) = −5</b>，遠比 2 好。' +
+            '但 <code>if not done[v]</code> 直接把它擋掉了。<b>答案錯了，而且演算法不會察覺。</b>',
+         en:'Then A settles at 5 and the edge A to B yields <b>5 + (-10) = -5</b>, far better than 2. But <code>if not done[v]</code> throws it away. <b>The answer is wrong, and the algorithm has no way to notice.</b>'}});
+  F.push({shapes:nShapes({st:{0:'ok', 1:'ok', 2:'ok'},
+    est:{'0-1':'ok', '1-2':'ok', '0-2':'done'}, best:[0, 5, -5]}), panels:[
+    {lbl:{zh:'正解', en:'the truth'},
+      chips:[{t:'S 0', cls:'ok'}, {t:'A 5', cls:'ok'}, {t:'B -5', cls:'ok'}]}],
+    line:11,
+    msg:{zh:'正確答案是 <b>B = −5</b>。修法是<b>不要定案</b>：Bellman-Ford 掃 V−1 輪、' +
+            '每輪把所有邊都放鬆一次，用 <b>O(VE)</b> 換取對負邊的容忍。' +
+            '<b>注意 Prim 完全不受影響</b>——它的 key 是 <code>w</code>，不累加，' +
+            '負邊只是「更便宜的入場券」而已。',
+         en:'The truth is <b>B = -5</b>. The fix is to <b>stop finalising</b>: Bellman-Ford runs V-1 rounds and relaxes every edge in each round, paying <b>O(VE)</b> for tolerance of negative weights. <b>Note that Prim is untouched</b> - its key is <code>w</code> with no accumulation, so a negative edge is merely a cheaper ticket in.'}});
+  return F.list;
+}
+
+// ---- tab 4: LC 743 ---------------------------------------------------------
+const LNM = ['1', '2', '3', '4'];
+const LP = [[2.0, 2.2], [2.0, 5.4], [5.6, 5.4], [7.8, 2.6]];
+const LE = [[1, 0, 1], [1, 2, 1], [2, 3, 1]];      // 2->1, 2->3, 3->4 (0-indexed)
+function lShapes(o){
+  o = o || {}; const out = [], R = .5;
+  LE.forEach(([u, v, w]) => {
+    const st = (o.est && o.est[u + '-' + v]) || 'ghost';
+    const [x1, y1] = LP[u], [x2, y2] = LP[v];
+    const dx = x2 - x1, dy = y2 - y1, L = Math.sqrt(dx * dx + dy * dy), ux = dx / L, uy = dy / L;
+    out.push(S.e(x1 + ux * R, y1 + uy * R, x2 - ux * R, y2 - uy * R,
+      {s:st, w:st === 'ghost' ? .05 : .11}));
+    out.push(S.t((x1 + x2) / 2 + uy * .32, (y1 + y2) / 2 - ux * .32, String(w),
+      {c:st === 'ghost' ? '#8fa3ac' : '#ffbe6b', fs:.30}));
+  });
+  for (let i = 0; i < 4; i++){
+    const b = o.best && o.best[i];
+    out.push(S.c(LP[i][0], LP[i][1], R, (o.st && o.st[i]) || 'idle', LNM[i],
+      b == null ? {fs:.34} : {fs:.34, sub:String(b), subfs:.28}));
+  }
+  return out;
+}
+const CODE_LC = [
+'def networkDelayTime(self, times, n, k):',
+'    adj = [[] for _ in range(n + 1)]',
+'    for u, v, w in times:',
+'        adj[u].append((v, w))         # 單向！別兩邊都加',
+'',
+'    dist = heap_greedy(n + 1, adj, k,',
+'                       key=lambda d, w: d + w)[0]',
+'',
+'    ans = max(dist[1:])               # 最後一個收到訊號的人',
+'    return ans if ans < INF else -1   # 有人收不到 -> -1'];
+
+function buildLC(){
+  const F = new Frames();
+  F.push({shapes:lShapes({st:{1:'act'}}), panels:[], line:0,
+    msg:{zh:'<b>LeetCode 743 網路延遲時間</b>：訊號從節點 k 出發，沿<b>有向邊</b>傳播，' +
+            '問所有節點都收到要多久。',
+         en:'<b>LeetCode 743, Network Delay Time</b>: a signal starts at node k and travels along <b>directed</b> edges. How long until every node has received it?'}});
+  F.push({shapes:lShapes({st:{1:'act'}}), panels:[], line:3,
+    msg:{zh:'第一個坑在建圖：<code>times</code> 是有向邊，只能 <code>adj[u].append((v, w))</code>。' +
+            '前面整頁都在寫無向圖，很容易順手兩邊都加，答案就會偏小——而且測資不一定抓得到。',
+         en:'The first trap is building the graph: <code>times</code> holds directed edges, so only <code>adj[u].append((v, w))</code>. After a page of undirected graphs it is easy to add both directions out of habit, which makes the answer too small - and the sample tests may not catch it.'}});
+  F.push({shapes:lShapes({st:{1:'ok', 0:'soft', 2:'soft'}, est:{'1-0':'hot', '1-2':'hot'},
+    best:['1', 0, '1', null]}), panels:[
+    {lbl:{zh:'dist', en:'dist'}, chips:[{t:'1 = 1', cls:''}, {t:'2 = 0', cls:'ok'},
+      {t:'3 = 1', cls:''}, {t:'4 = ∞', cls:'soft'}]}], line:5,
+    msg:{zh:'從 k = 2 跑同一支 <code>heap_greedy</code>，key 用 <code>d + w</code>。' +
+            '2 定案在 0，放鬆出 1 和 3。<b>「訊號傳播時間」就是最短路</b>：' +
+            '訊號同時走每一條路，最先抵達的那條當然是最短的那條。',
+         en:'Run the very same <code>heap_greedy</code> from k = 2 with key <code>d + w</code>. Node 2 settles at 0 and relaxes 1 and 3. <b>Propagation time is exactly a shortest path</b>: the signal travels every route at once, so the first arrival is the shortest one.'}});
+  F.push({shapes:lShapes({st:{1:'ok', 0:'ok', 2:'ok', 3:'soft'},
+    est:{'1-0':'ok', '1-2':'ok', '2-3':'hot'}, best:['1', 0, '1', '2']}), panels:[
+    {lbl:{zh:'dist', en:'dist'}, chips:[{t:'1 = 1', cls:'ok'}, {t:'2 = 0', cls:'ok'},
+      {t:'3 = 1', cls:'ok'}, {t:'4 = 2', cls:''}]}], line:5,
+    msg:{zh:'3 定案在 1，再放鬆到 4 得到 2。四個點都有距離了。',
+         en:'Node 3 settles at 1 and relaxes 4 to 2. Every node now has a distance.'}});
+  F.push({shapes:lShapes({st:{0:'ok', 1:'ok', 2:'ok', 3:'ok'},
+    est:{'1-0':'ok', '1-2':'ok', '2-3':'ok'}, best:['1', 0, '1', '2']}), panels:[
+    {lbl:{zh:'答案', en:'answer'}, chips:[{t:'max(1, 0, 1, 2) = 2', cls:'ok'}]}], line:8,
+    msg:{zh:'答案不是某一條最短路，而是<b>所有最短路裡最大的那個</b> = <b>2</b>。' +
+            '訊號傳遍全網的時間，取決於<b>最慢收到的那個人</b>。',
+         en:'The answer is not one shortest path but <b>the largest of them all</b> = <b>2</b>. The time to cover the network is set by <b>whoever hears it last</b>.'}});
+  F.push({shapes:lShapes({st:{0:'ok', 1:'ok', 2:'ok', 3:'bad'},
+    est:{'1-0':'ok', '1-2':'ok', '2-3':'bad'}, best:['1', 0, '1', '∞']}), panels:[
+    {lbl:{zh:'不可達', en:'unreachable'},
+      chips:[{t:'dist[4] = INF', cls:'bad'}, {t:'return -1', cls:'bad'}]}], line:9,
+    msg:{zh:'最後一個坑：拿掉 3→4 這條邊，4 永遠收不到，<code>dist[4]</code> 還是 <b>INF</b>，' +
+            '這時要回傳 <b>−1</b>。<b>忘了檢查 INF 是這題最常見的 WA</b>；' +
+            '它其實就是昨天的「圖不連通」，只是換成有向版。',
+         en:'One last trap: remove the edge 3 to 4 and node 4 never hears anything, leaving <code>dist[4]</code> at <b>INF</b>, in which case the answer is <b>-1</b>. <b>Forgetting that check is the classic wrong answer here</b> - and it is yesterday\'s disconnected graph, in directed form.'}});
+  return F.list;
+}
+
+const DAY_META = {
+  title:{zh:'Prim 與 Dijkstra：同一套 heap greedy 骨架',
+         en:'Prim and Dijkstra - one heap-greedy skeleton'},
+  sub:{zh:'兩個看起來完全不同的演算法，程式碼只差一個 key：Prim 比「這條邊多貴」，Dijkstra 比「走到那裡總共多貴」。',
+       en:'Two algorithms that look unrelated are one lambda apart: Prim compares the edge, Dijkstra compares the whole path.'},
+  tabs:[
+    {id:'skel', label:{zh:'同一個骨架', en:'the shared skeleton'},
+     stage:{zh:'一個 heap、一個迴圈、兩種 key', en:'One heap, one loop, two keys'},
+     view:[10, 7.6],
+     variants:[{zh:'key = w（Prim）', en:'key = w (Prim)'},
+               {zh:'key = d + w（Dijkstra）', en:'key = d + w (Dijkstra)'}],
+     idea:{zh:'兩者都是「<b>反覆彈出 heap 裡最小的未定案點，然後放鬆它的鄰居</b>」。' +
+              'Prim 存<b>一條邊</b>的重量，Dijkstra 存<b>整條路</b>的長度——' +
+              '換掉 <code>key</code>，同一份程式碼就換了一個問題。' +
+              'heap 裡的舊資料不刪，靠 <code>if done[u]: continue</code> 略過（lazy deletion）。',
+           en:'Both are "<b>repeatedly pop the smallest unsettled vertex, then relax its neighbours</b>". Prim stores the weight of <b>one edge</b>, Dijkstra the length of <b>the whole path</b> - swap <code>key</code> and the same source file solves a different problem. Stale heap entries are never removed; <code>if done[u]: continue</code> skips them (lazy deletion).'},
+     legend:['hot', 'ok', 'soft', 'idle'], code:CODE, build:buildSkeleton},
+    {id:'diff', label:{zh:'兩棵樹不一樣', en:'the two trees differ'},
+     stage:{zh:'最小生成樹 ≠ 最短路徑樹', en:'A spanning tree is not a shortest-path tree'},
+     view:[10, 7.6],
+     idea:{zh:'Prim 的 <code>parent</code> 給出<b>總重最小</b>的樹（39），' +
+              'Dijkstra 的 <code>parent</code> 給出<b>每條路最短</b>的樹（44）。' +
+              '在同一張圖上，A→G 在 MST 上要走 23，真正的最短路只要 22。' +
+              '<b>兩個目標會互相衝突，不可能同時最佳。</b>',
+           en:'Prim\'s <code>parent</code> array gives the tree of <b>minimum total weight</b> (39); Dijkstra\'s gives the tree of <b>shortest individual paths</b> (44). On this graph A to G costs 23 inside the MST but only 22 in reality. <b>The two objectives genuinely conflict.</b>'},
+     legend:['hot', 'ok', 'done', 'act'], code:CODE, build:buildDiff},
+    {id:'neg', label:{zh:'負邊會讓 Dijkstra 出錯', en:'a negative edge breaks it'},
+     stage:{zh:'定案太早，就再也改不回來', en:'Finalise too early and there is no way back'},
+     view:[9, 7.0],
+     idea:{zh:'Dijkstra 的每一步都建立在「<b>之後的路只會更長</b>」上，' +
+              '而這句話只有在邊非負時才成立。' +
+              '一條 −10 的邊就能讓它給出 2 而不是 −5，' +
+              '而且<b>它自己不會發現</b>——沒有例外、沒有無窮迴圈，只有一個錯的答案。',
+           en:'Every step of Dijkstra rests on "<b>any later route can only be longer</b>", which is true only when weights are non-negative. A single edge of -10 makes it answer 2 instead of -5, and <b>it never notices</b>: no exception, no infinite loop, just a wrong number.'},
+     legend:['ok', 'bad', 'hot', 'soft'], code:CODE_NEG, build:buildNeg},
+    {id:'lc', label:{zh:'LC 743 網路延遲', en:'LC 743 network delay'},
+     stage:{zh:'訊號傳播就是最短路', en:'Signal propagation is a shortest path'},
+     view:[9.6, 7.0],
+     idea:{zh:'把 <code>heap_greedy</code> 原封不動搬過來，只要注意三件事：' +
+              '邊是<b>有向</b>的、答案是 <b>max(dist)</b> 不是 min、' +
+              '有人收不到時要回傳 <b>−1</b>。',
+           en:'Reuse <code>heap_greedy</code> untouched, and watch three things: the edges are <b>directed</b>, the answer is <b>max(dist)</b> rather than min, and an unreachable node means returning <b>-1</b>.'},
+     legend:['ok', 'bad', 'hot', 'soft'], code:CODE_LC, build:buildLC}
+  ]
+};

@@ -7,16 +7,16 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='%23002639' stroke='%230093a1' stroke-width='2'/><path d='M9 16h14M17 11l6 5-6 5' stroke='%2300aaaa' stroke-width='2' fill='none'/></svg>">
 <style>
 :root{
-  --navy:#002639; --navy-d:#001824; --teal:#0093a1; --teal-l:#00aaaa;
-  --cyan:#00ffff; --grey:#292c30; --grey-l:#818181; --red:#ff0000;
-  --amber:#ffc000; --pale:#d6f2f4; --white:#ffffff;
+  --navy:#062434; --navy-d:#04121c; --teal:#12b3b8; --teal-l:#3fe0dd;
+  --cyan:#5ef0ec; --grey:#123240; --grey-l:#8fa3ac; --red:#ff5c5c;
+  --amber:#ff9736; --pale:#dff2f5; --white:#ffffff;
   --serif:"Latin Modern Roman","Liberation Serif",Georgia,"Times New Roman",serif;
   --mono:"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
 body{
-  background:radial-gradient(1200px 700px at 50% -10%,#00344a 0%,var(--navy-d) 60%,#000f18 100%);
+  background:radial-gradient(1200px 700px at 50% -10%,#0a3a4a 0%,var(--navy-d) 60%,#030d15 100%);
   color:var(--pale); font-family:var(--serif); min-height:100vh;
   -webkit-font-smoothing:antialiased;
 }
@@ -24,7 +24,7 @@ a{color:var(--teal-l)}
 .wrap{max-width:1180px;margin:0 auto;padding:26px 20px 60px}
 header{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-bottom:6px}
 h1{font-size:30px;margin:0;color:var(--white);letter-spacing:.4px;
-   text-shadow:0 0 14px rgba(0,255,255,.35)}
+   text-shadow:0 0 14px rgba(94,240,236,.35)}
 .day{font-size:13px;letter-spacing:2.4px;text-transform:uppercase;color:var(--teal-l);
      border:1px solid var(--teal);border-radius:999px;padding:4px 12px}
 .sub{color:var(--grey-l);font-size:15px;margin:8px 0 20px;max-width:70ch;line-height:1.6}
@@ -32,52 +32,52 @@ h1{font-size:30px;margin:0;color:var(--white);letter-spacing:.4px;
 .lang{display:flex;border:1px solid var(--teal);border-radius:999px;overflow:hidden}
 .lang button{background:transparent;color:var(--teal-l);border:0;padding:5px 14px;
   font-family:var(--serif);font-size:14px;cursor:pointer}
-.lang button.on{background:var(--teal);color:#00141d}
+.lang button.on{background:var(--teal);color:#04121c}
 .tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
 .tabs button{
-  background:rgba(0,38,57,.75);border:1px solid rgba(0,147,161,.55);color:var(--pale);
+  background:rgba(6,36,52,.75);border:1px solid rgba(18,179,184,.55);color:var(--pale);
   padding:9px 16px;border-radius:8px;cursor:pointer;font-family:var(--serif);font-size:15px;
   transition:.18s}
 .tabs button:hover{border-color:var(--teal-l);color:var(--white)}
-.tabs button.on{background:var(--teal);border-color:var(--teal-l);color:#00141d;
-  box-shadow:0 0 18px rgba(0,255,255,.25)}
+.tabs button.on{background:var(--teal);border-color:var(--teal-l);color:#04121c;
+  box-shadow:0 0 18px rgba(94,240,236,.25)}
 .grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:18px}
 @media(max-width:900px){.grid{grid-template-columns:1fr}}
-.card{background:rgba(0,24,36,.72);border:1px solid rgba(0,147,161,.35);border-radius:12px;
+.card{background:rgba(4,18,28,.72);border:1px solid rgba(18,179,184,.35);border-radius:12px;
       padding:14px 16px}
 .card h3{margin:0 0 10px;font-size:14px;letter-spacing:2px;text-transform:uppercase;
          color:var(--teal-l);font-weight:normal}
 svg.stage{width:100%;height:auto;display:block;touch-action:none}
 svg.stage text{font-family:var(--serif);user-select:none}
 .narr{min-height:52px;margin-top:10px;padding:10px 12px;border-left:3px solid var(--amber);
-      background:rgba(255,192,0,.06);font-size:16px;line-height:1.55;color:var(--white)}
+      background:rgba(255,151,54,.06);font-size:16px;line-height:1.55;color:var(--white)}
 .narr code{font-family:var(--mono);font-size:14px;color:var(--amber)}
 .ctrl{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
 .ctrl button{background:var(--navy);border:1px solid var(--teal);color:var(--teal-l);
   border-radius:8px;padding:7px 13px;cursor:pointer;font-family:var(--serif);font-size:15px;
   min-width:44px;transition:.15s}
-.ctrl button:hover:not(:disabled){background:var(--teal);color:#00141d}
+.ctrl button:hover:not(:disabled){background:var(--teal);color:#04121c}
 .ctrl button:disabled{opacity:.35;cursor:default}
 .ctrl .play{min-width:92px;font-weight:bold}
 .ctrl input[type=range]{width:120px;accent-color:var(--teal-l)}
 .stepno{color:var(--grey-l);font-size:14px;font-family:var(--mono)}
 .chips{display:flex;flex-wrap:wrap;gap:6px;min-height:30px}
 .chip{border:1px solid var(--teal);border-radius:6px;padding:3px 9px;font-family:var(--mono);
-      font-size:14px;color:var(--pale);background:rgba(0,147,161,.10)}
-.chip.hot{border-color:var(--amber);color:var(--amber);background:rgba(255,192,0,.12);
-  box-shadow:0 0 12px rgba(255,192,0,.25)}
-.chip.dim{border-color:#3a4a52;color:var(--grey-l);background:transparent}
-.chip.bad{border-color:var(--red);color:#ff8080;background:rgba(255,0,0,.12)}
-.chip.ok{border-color:var(--teal-l);color:var(--cyan);background:rgba(0,255,255,.08)}
-.chip.empty{border-style:dashed;color:var(--grey-l);border-color:#3a4a52}
+      font-size:14px;color:var(--pale);background:rgba(18,179,184,.10)}
+.chip.hot{border-color:var(--amber);color:var(--amber);background:rgba(255,151,54,.12);
+  box-shadow:0 0 12px rgba(255,151,54,.25)}
+.chip.dim{border-color:#2b4a58;color:var(--grey-l);background:transparent}
+.chip.bad{border-color:var(--red);color:#ffbe6b;background:rgba(255,92,92,.12)}
+.chip.ok{border-color:var(--teal-l);color:var(--cyan);background:rgba(94,240,236,.08)}
+.chip.empty{border-style:dashed;color:var(--grey-l);border-color:#2b4a58}
 .panel+.panel{margin-top:12px}
 .panel .lbl{font-size:13px;letter-spacing:1.6px;text-transform:uppercase;color:var(--grey-l);
   margin-bottom:5px}
 pre.code{margin:0;font-family:var(--mono);font-size:13.5px;line-height:1.72;overflow-x:auto;
-  color:#9fc7cf}
+  color:#c7a6ff}
 pre.code .ln{display:block;padding:0 8px;border-left:3px solid transparent;white-space:pre}
-pre.code .ln.on{background:rgba(0,255,255,.10);border-left-color:var(--cyan);color:var(--white)}
-pre.code .cm{color:#5c7a83;font-style:italic}
+pre.code .ln.on{background:rgba(94,240,236,.10);border-left-color:var(--cyan);color:var(--white)}
+pre.code .cm{color:#6f8f9b;font-style:italic}
 pre.code .kw{color:var(--amber)}
 .legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:13.5px;color:var(--grey-l)}
 .legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;
@@ -85,7 +85,7 @@ pre.code .kw{color:var(--amber)}
 .note{font-size:15px;line-height:1.65;color:var(--pale)}
 .note b{color:var(--amber);font-weight:normal}
 .toggle-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
-footer{margin-top:32px;padding-top:16px;border-top:1px solid rgba(0,147,161,.3);
+footer{margin-top:32px;padding-top:16px;border-top:1px solid rgba(18,179,184,.3);
   color:var(--grey-l);font-size:14px;display:flex;gap:18px;flex-wrap:wrap}
 .hidden{display:none!important}
 </style>
@@ -477,8 +477,8 @@ const TABS = [
     label:{zh:'① BFS 一圈一圈', en:'① BFS ring by ring'},
     stage:{zh:'BFS：queue 讓你永遠先處理最近的', en:'BFS: the queue always hands you the nearest vertex'},
     variants:[], build:()=>buildBFS(G,{start:1}),
-    legend:[['#0093a1',{zh:'還沒發現',en:'undiscovered'}],['#ffc000',{zh:'在 queue 裡',en:'in the queue'}],
-            ['#00ffff',{zh:'正在展開',en:'expanding now'}],['#3a4a52',{zh:'處理完',en:'done'}]],
+    legend:[['#12b3b8',{zh:'還沒發現',en:'undiscovered'}],['#ff9736',{zh:'在 queue 裡',en:'in the queue'}],
+            ['#5ef0ec',{zh:'正在展開',en:'expanding now'}],['#2b4a58',{zh:'處理完',en:'done'}]],
     idea:{zh:'BFS = 走訪 + 一個 FIFO queue。因為先進先出，<b>離起點 d 的節點一定在距離 d+1 的節點之前出隊</b>，'+
              '所以第一次碰到某個節點時記下的距離就是最短距離，無權圖的最短路等於免費附贈。'+
              '最容易錯的一行是標記時機：<b>要在 push 進 queue 的當下標記</b>，等 pop 才標記的話，'+
@@ -492,8 +492,8 @@ const TABS = [
     label:{zh:'② 最短路徑 1 → 8', en:'② Shortest path 1 → 8'},
     stage:{zh:'多存一個 parent，就能把路徑還原出來', en:'One extra parent map turns distances into paths'},
     variants:[], build:()=>buildBFS(G,{start:1, goal:8}),
-    legend:[['#ffc000',{zh:'在 queue 裡',en:'in the queue'}],['#00ffff',{zh:'正在展開',en:'expanding now'}],
-            ['#00ff9c',{zh:'最短路徑',en:'shortest path'}],['#3a4a52',{zh:'處理完',en:'done'}]],
+    legend:[['#ff9736',{zh:'在 queue 裡',en:'in the queue'}],['#5ef0ec',{zh:'正在展開',en:'expanding now'}],
+            ['#c7a6ff',{zh:'最短路徑',en:'shortest path'}],['#2b4a58',{zh:'處理完',en:'done'}]],
     idea:{zh:'距離告訴你「幾步」，parent 告訴你「哪幾步」。每次把 v 推進 queue 時順手記 <code>parent[v] = u</code>，'+
              '最後從終點沿著 parent 一路回推再反轉，就是一條最短路徑。成本只有一個 dict。'+
              '注意 BFS 只對<b>無權圖</b>（或每條邊權重都一樣）成立；邊有不同權重時要換成優先佇列，那就是 Dijkstra。',
@@ -505,8 +505,8 @@ const TABS = [
     label:{zh:'③ DFS 一路走到底', en:'③ DFS all the way down'},
     stage:{zh:'DFS：先衝到底，走不動才回頭', en:'DFS: charge ahead, back up only when stuck'},
     variants:[], build:()=>buildDFS(G,{}),
-    legend:[['#0093a1',{zh:'沒看過',en:'unseen'}],['#ffc000',{zh:'在呼叫堆疊上',en:'on the call stack'}],
-            ['#00ffff',{zh:'目前這格',en:'current vertex'}],['#3a4a52',{zh:'已完成',en:'finished'}]],
+    legend:[['#12b3b8',{zh:'沒看過',en:'unseen'}],['#ff9736',{zh:'在呼叫堆疊上',en:'on the call stack'}],
+            ['#5ef0ec',{zh:'目前這格',en:'current vertex'}],['#2b4a58',{zh:'已完成',en:'finished'}]],
     idea:{zh:'把 BFS 的 queue 換成 stack 就是 DFS——而遞迴的呼叫堆疊本身就是那個 stack，所以程式碼還更短。'+
              'DFS 走過的邊構成一棵 <b>DFS 樹</b>，剩下的邊怎麼分類，就是後面環偵測、橋、關節點、強連通分量的全部基礎。'+
              '它不保證最短路，但記憶體只跟<b>深度</b>有關；反過來說圖很深時遞迴會爆，CPython 預設只有 1000 層，要改寫成用明確 stack 的迭代版。',
@@ -518,9 +518,9 @@ const TABS = [
     label:{zh:'④ LeetCode 200 島嶼數量', en:'④ LeetCode 200 Number of Islands'},
     stage:{zh:'格子就是圖：數島嶼 = 數連通分量', en:'A grid is a graph: counting islands is counting components'},
     variants:[], build:()=>buildIslands({}),
-    legend:[['#002639',{zh:'水 0',en:'water 0'}],['#ffc000',{zh:'陸地 1',en:'land 1'}],
-            ['#00ffff',{zh:'正在淹沒',en:'being flooded'}],['#3a4a52',{zh:'已沉沒',en:'sunk'}],
-            ['#ff0000',{zh:'掃描位置',en:'scanner'}]],
+    legend:[['#062434',{zh:'水 0',en:'water 0'}],['#ff9736',{zh:'陸地 1',en:'land 1'}],
+            ['#5ef0ec',{zh:'正在淹沒',en:'being flooded'}],['#2b4a58',{zh:'已沉沒',en:'sunk'}],
+            ['#ff5c5c',{zh:'掃描位置',en:'scanner'}]],
     idea:{zh:'不要被「格子」騙了：每個 <code>1</code> 是節點，上下左右相鄰的 <code>1</code> 有邊，'+
              '題目就變成「有幾個連通分量」。掃描遇到還沒淹的 <code>1</code> 就 count += 1，然後<b>把整座島淹掉</b>，'+
              '這樣同一座島不會被重複計數。用 BFS 或 DFS 都行——差別只在記憶體。'+
@@ -570,24 +570,24 @@ function load(){
 /* ---------------------------------------------------------------- drawing */
 const R = 0.40, VH = 7;
 const NODE_STYLE = {
-  idle  :{fill:'#002639', stroke:'#0093a1', text:'#d6f2f4', w:.05, glow:0},
-  queued:{fill:'#002639', stroke:'#ffc000', text:'#ffc000', w:.07, glow:.35},
-  active:{fill:'#0093a1', stroke:'#00ffff', text:'#00141d', w:.08, glow:.85},
-  done  :{fill:'#06202b', stroke:'#3a4a52', text:'#818181', w:.045,glow:0},
-  path  :{fill:'#00ff9c', stroke:'#00ffff', text:'#00231a', w:.08, glow:.7}
+  idle  :{fill:'#062434', stroke:'#12b3b8', text:'#dff2f5', w:.05, glow:0},
+  queued:{fill:'#062434', stroke:'#ff9736', text:'#ff9736', w:.07, glow:.35},
+  active:{fill:'#12b3b8', stroke:'#5ef0ec', text:'#04121c', w:.08, glow:.85},
+  done  :{fill:'#072a3a', stroke:'#2b4a58', text:'#8fa3ac', w:.045,glow:0},
+  path  :{fill:'#c7a6ff', stroke:'#5ef0ec', text:'#241a3d', w:.08, glow:.7}
 };
 const EDGE_STYLE = {
-  idle  :{c:'#0093a1', w:.038, o:.5},
-  active:{c:'#ffc000', w:.075, o:1},
-  tree  :{c:'#00aaaa', w:.062, o:1},
-  skip  :{c:'#818181', w:.05,  o:.9},
-  path  :{c:'#00ff9c', w:.085, o:1}
+  idle  :{c:'#12b3b8', w:.038, o:.5},
+  active:{c:'#ff9736', w:.075, o:1},
+  tree  :{c:'#3fe0dd', w:.062, o:1},
+  skip  :{c:'#8fa3ac', w:.05,  o:.9},
+  path  :{c:'#c7a6ff', w:.085, o:1}
 };
 const CELL_STYLE = {
-  water:{fill:'#06202b', stroke:'#0093a1', text:'#5c7a83', label:'0'},
-  land :{fill:'#002639', stroke:'#ffc000', text:'#ffc000', label:'1'},
-  flood:{fill:'#0093a1', stroke:'#00ffff', text:'#00141d', label:'1'},
-  sunk :{fill:'#0a1a20', stroke:'#3a4a52', text:'#4f6068', label:'0'}
+  water:{fill:'#072a3a', stroke:'#12b3b8', text:'#6f8f9b', label:'0'},
+  land :{fill:'#062434', stroke:'#ff9736', text:'#ff9736', label:'1'},
+  flood:{fill:'#12b3b8', stroke:'#5ef0ec', text:'#04121c', label:'1'},
+  sunk :{fill:'#08202c', stroke:'#2b4a58', text:'#5a7683', label:'0'}
 };
 const svgNS = 'http://www.w3.org/2000/svg';
 const mk = (tag, attrs) => { const e = document.createElementNS(svgNS, tag);
@@ -652,13 +652,13 @@ function drawGrid(frame){
   if (gr.scan){
     const [r, c] = gr.scan;
     svg.appendChild(mk('rect', {x:x0 + c * w - .04, y:y0 + r * w - .04, width:w, height:w,
-      rx:.14, fill:'none', stroke:'#ff0000', 'stroke-width':.06, 'stroke-dasharray':'.14 .10'}));
+      rx:.14, fill:'none', stroke:'#ff5c5c', 'stroke-width':.06, 'stroke-dasharray':'.14 .10'}));
   }
   const tx = x0 + gr.cols * w + 0.55;
-  const lbl = mk('text', {x:tx, y:y0 + 0.55, fill:'#00aaaa', 'font-size':'.40'});
+  const lbl = mk('text', {x:tx, y:y0 + 0.55, fill:'#3fe0dd', 'font-size':'.40'});
   lbl.textContent = LANG === 'zh' ? '紅框＝掃描位置' : 'red box = scanner';
   svg.appendChild(lbl);
-  const lbl2 = mk('text', {x:tx, y:y0 + 1.15, fill:'#818181', 'font-size':'.36'});
+  const lbl2 = mk('text', {x:tx, y:y0 + 1.15, fill:'#8fa3ac', 'font-size':'.36'});
   lbl2.textContent = LANG === 'zh' ? '沉掉的格子變成 0' : 'sunk cells become 0';
   svg.appendChild(lbl2);
 }

@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 02 - Stack and Queue / 堆疊與佇列</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='2' y='2' width='28' height='28' rx='7' fill='%23062434'/><circle cx='11' cy='12' r='4' fill='%2312b3b8'/><circle cx='21' cy='12' r='4' fill='%239d6bff'/><circle cx='16' cy='22' r='4' fill='%23ff9736'/></svg>">
+<style>
+:root{
+  --bg0:#04121c; --bg1:#062434; --card:rgba(6,36,52,.72);
+  --teal:#12b3b8; --teal-d:#0a6b74; --teal-l:#3fe0dd;
+  --purple:#9d6bff; --purple-d:#241542; --purple-l:#c7a6ff;
+  --orange:#ff9736; --orange-d:#3a2109; --orange-l:#ffbe6b;
+  --red:#ff5c5c; --grey:#8fa3ac; --pale:#dff2f5; --white:#ffffff;
+  --serif:"Latin Modern Roman","Liberation Serif",Georgia,"Times New Roman",serif;
+  --mono:"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:
+    radial-gradient(900px 520px at 12% -8%,rgba(157,107,255,.20) 0%,rgba(157,107,255,0) 62%),
+    radial-gradient(900px 520px at 88% -4%,rgba(255,151,54,.16) 0%,rgba(255,151,54,0) 60%),
+    radial-gradient(1200px 800px at 50% 30%,#083041 0%,var(--bg1) 45%,var(--bg0) 100%);
+  color:var(--pale); font-family:var(--serif); min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--teal-l)}
+.wrap{max-width:1180px;margin:0 auto;padding:26px 20px 60px}
+header{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-bottom:6px}
+h1{font-size:30px;margin:0;color:var(--white);letter-spacing:.4px;
+   text-shadow:0 0 16px rgba(63,224,221,.35)}
+.day{font-size:13px;letter-spacing:2.4px;text-transform:uppercase;color:var(--orange-l);
+     border:1px solid var(--orange);border-radius:999px;padding:4px 12px;
+     background:rgba(255,151,54,.10)}
+.sub{color:var(--grey);font-size:15px;margin:8px 0 20px;max-width:72ch;line-height:1.6}
+.spacer{flex:1}
+.lang{display:flex;border:1px solid var(--teal-d);border-radius:999px;overflow:hidden}
+.lang button{background:transparent;color:var(--teal-l);border:0;padding:5px 14px;
+  font-family:var(--serif);font-size:14px;cursor:pointer}
+.lang button.on{background:var(--teal);color:#022}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
+.tabs button{
+  background:rgba(6,40,58,.75);border:1px solid rgba(18,179,184,.45);color:var(--pale);
+  padding:9px 16px;border-radius:9px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  transition:.18s}
+.tabs button:hover{border-color:var(--teal-l);color:var(--white)}
+.tabs button.on{background:linear-gradient(135deg,var(--teal) 0%,var(--purple) 140%);
+  border-color:var(--teal-l);color:#03222a;box-shadow:0 0 18px rgba(18,179,184,.30)}
+.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:18px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid rgba(18,179,184,.28);border-radius:13px;
+      padding:14px 16px}
+.card h3{margin:0 0 10px;font-size:14px;letter-spacing:2px;text-transform:uppercase;
+         color:var(--teal-l);font-weight:normal}
+svg.stage{width:100%;height:auto;display:block;touch-action:none}
+svg.stage text{font-family:var(--serif);user-select:none}
+.narr{min-height:52px;margin-top:10px;padding:10px 12px;border-left:3px solid var(--orange);
+      background:rgba(255,151,54,.07);font-size:16px;line-height:1.55;color:var(--white)}
+.narr code{font-family:var(--mono);font-size:14px;color:var(--orange-l)}
+.narr b{color:var(--orange-l);font-weight:normal}
+.ctrl{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
+.ctrl button{background:rgba(6,40,58,.9);border:1px solid var(--teal-d);color:var(--teal-l);
+  border-radius:8px;padding:7px 13px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  min-width:44px;transition:.15s}
+.ctrl button:hover:not(:disabled){background:var(--teal);color:#03222a}
+.ctrl button:disabled{opacity:.35;cursor:default}
+.ctrl .play{min-width:92px;font-weight:bold;border-color:var(--orange);color:var(--orange-l)}
+.ctrl .play:hover{background:var(--orange);color:#2a1400}
+.ctrl input[type=range]{width:120px;accent-color:var(--purple)}
+.stepno{color:var(--grey);font-size:14px;font-family:var(--mono)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;min-height:30px}
+.chip{border:1px solid var(--teal-d);border-radius:6px;padding:3px 9px;font-family:var(--mono);
+      font-size:14px;color:var(--pale);background:rgba(18,179,184,.10)}
+.chip.hot{border-color:var(--orange);color:var(--orange-l);background:rgba(255,151,54,.14)}
+.chip.act{border-color:var(--purple);color:var(--purple-l);background:rgba(157,107,255,.16)}
+.chip.ok{border-color:var(--teal-l);color:var(--teal-l);background:rgba(63,224,221,.12)}
+.chip.dim{border-color:#2f5661;color:var(--grey);background:transparent}
+.chip.bad{border-color:var(--red);color:#ff9a9a;background:rgba(255,92,92,.14)}
+.chip.empty{border-style:dashed;color:var(--grey);border-color:#2f5661}
+.panel+.panel{margin-top:12px}
+.panel .lbl{font-size:13px;letter-spacing:1.6px;text-transform:uppercase;color:var(--grey);
+  margin-bottom:5px}
+pre.code{margin:0;font-family:var(--mono);font-size:13.5px;line-height:1.72;overflow-x:auto;
+  color:#a8c8d0}
+pre.code .ln{display:block;padding:0 8px;border-left:3px solid transparent;white-space:pre}
+pre.code .ln.on{background:rgba(255,151,54,.12);border-left-color:var(--orange);color:var(--white)}
+pre.code .cm{color:#5f7b85;font-style:italic}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:13.5px;color:var(--grey)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;
+  vertical-align:-1px;border:1px solid rgba(255,255,255,.22)}
+.note{font-size:15px;line-height:1.65;color:var(--pale)}
+.note b{color:var(--purple-l);font-weight:normal}
+.note code{font-family:var(--mono);font-size:13.5px;color:var(--teal-l)}
+.toggle-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.toggle-row button{border:1px solid rgba(18,179,184,.45);border-radius:8px;padding:6px 13px;
+  cursor:pointer;font-family:var(--serif);font-size:14px;
+  background:rgba(6,40,58,.75);color:var(--pale)}
+.toggle-row button.on{background:var(--purple);border-color:var(--purple-l);color:#150a2b}
+footer{margin-top:32px;padding-top:16px;border-top:1px solid rgba(18,179,184,.25);
+  color:var(--grey);font-size:14px;display:flex;gap:18px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <span class="day">Day 02</span>
+  <h1 data-i18n="title">堆疊與佇列</h1>
+  <span class="spacer"></span>
+  <div class="lang">
+    <button id="btn-zh" class="on" onclick="setLang('zh')">中文</button>
+    <button id="btn-en" onclick="setLang('en')">EN</button>
+  </div>
+</header>
+<p class="sub" data-i18n="sub">後進先出 vs 先進先出：兩種「只准從特定一端動手」的容器，以及它們最經典的用途。</p>
+
+<div class="tabs" id="tabs"></div>
+
+<div class="grid">
+  <div>
+    <div class="card">
+      <h3 id="stage-title"></h3>
+      <svg class="stage" id="stage" viewBox="0 0 10 6.4" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="legend" id="legend"></div>
+      <div class="narr" id="narr"></div>
+      <div class="ctrl">
+        <button onclick="reset()" title="reset">⟲</button>
+        <button id="prev" onclick="step(-1)">◀</button>
+        <button class="play" id="play" onclick="togglePlay()" data-i18n="play">▶ 播放</button>
+        <button id="next" onclick="step(1)">▶</button>
+        <span class="stepno" id="stepno">0 / 0</span>
+        <span class="spacer"></span>
+        <span style="font-size:13px;color:var(--grey)" data-i18n="speed">速度</span>
+        <input type="range" id="speed" min="180" max="1600" step="20" value="820">
+      </div>
+      <div class="toggle-row" id="extra"></div>
+    </div>
+  </div>
+  <div>
+    <div class="card" id="state-card">
+      <h3 data-i18n="state">演算法狀態</h3>
+      <div id="panels"></div>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="code">程式碼</h3>
+      <pre class="code" id="code"></pre>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="idea">重點</h3>
+      <div class="note" id="idea"></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <span>100 Days of Python — Day 02</span>
+  <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2002%20-%20stack%20and%20queue" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://medium.com/100-days-of-python/day-02-stack-queue-1ab49a7b021d" target="_blank" rel="noopener">Medium</a>
+</footer>
+</div>
+<script>
+// DAY: 02
+// TITLE_ZH: 堆疊與佇列
+// TITLE_EN: Stack and Queue
+// SUB_ZH: 後進先出 vs 先進先出：兩種「只准從特定一端動手」的容器，以及它們最經典的用途。
+// SUB_EN: LIFO vs FIFO.
+// FOLDER: day%2002%20-%20stack%20and%20queue
+// MEDIUM: https://medium.com/100-days-of-python/day-02-stack-queue-1ab49a7b021d
+
+const BW = 1.55, BH = .78, BX = 4.2, BOT = 5.35;
+function stackShapes(st, o){
+  o = o || {}; const out = [], n = st.length;
+  out.push(S.e(BX - .18, BOT + BH + .05, BX - .18, BOT + BH - 4.2, {arrow:false, s:'soft', w:.05}),
+           S.e(BX + BW + .18, BOT + BH + .05, BX + BW + .18, BOT + BH - 4.2, {arrow:false, s:'soft', w:.05}),
+           S.e(BX - .22, BOT + BH + .05, BX + BW + .22, BOT + BH + .05, {arrow:false, s:'soft', w:.05}));
+  st.forEach((v, i) => {
+    const y = BOT - i * (BH + .12);
+    out.push(S.r(BX, y, BW, BH, (o.states && o.states[i]) || 'idle', String(v), {fs:.44}));
+  });
+  const ty = BOT - (n - 1) * (BH + .12);
+  if (n) out.push(S.t(BX + BW + .95, ty + BH * .62, 'top', {c:'#c7a6ff', fs:.34}),
+                  S.e(BX + BW + .60, ty + BH / 2, BX + BW + .26, ty + BH / 2, {s:'act', w:.05}));
+  else out.push(S.t(BX + BW / 2, BOT + BH * .55, {zh:'（空的）', en:'(empty)'}, {c:'#8fa3ac', fs:.34}));
+  if (o.fly != null)
+    out.push(S.r(BX, .75, BW, BH, o.flyStyle || 'hot', String(o.fly), {fs:.44}),
+             S.e(BX + BW / 2, .75 + BH + .12, BX + BW / 2, BOT - n * (BH + .12) - .08,
+                 {s:o.flyStyle || 'hot', w:.05}));
+  out.push(S.t(BX + BW / 2, .45, o.cap || {zh:'只能從上面進出', en:'one open end'}, {c:'#8fa3ac', fs:.30}));
+  return out;
+}
+const QW = 1.25, QH = .95, QY = 2.6, QX = 1.15;
+function queueShapes(q, o){
+  o = o || {}; const out = [];
+  for (let i = 0; i < 6; i++)
+    out.push(S.r(QX + i * (QW + .14), QY, QW, QH, 'ghost', ''));
+  q.forEach((v, i) => out.push(S.r(QX + i * (QW + .14), QY, QW, QH,
+    (o.states && o.states[i]) || 'idle', String(v), {fs:.44})));
+  out.push(S.t(QX + QW / 2, QY - .55, {zh:'front 出口', en:'front (out)'}, {c:'#ffbe6b', fs:.30}),
+           S.t(QX + (q.length ? q.length - 1 : 0) * (QW + .14) + QW / 2, QY + QH + .55,
+               {zh:'rear 入口', en:'rear (in)'}, {c:'#c7a6ff', fs:.30}));
+  if (o.fly != null)
+    out.push(S.r(QX + 6.2 * (QW + .14), QY, QW, QH, o.flyStyle || 'hot', String(o.fly), {fs:.44}),
+             S.e(QX + 6.2 * (QW + .14) - .10, QY + QH / 2,
+                 QX + q.length * (QW + .14) + QW + .10, QY + QH / 2, {s:o.flyStyle || 'hot', w:.05}));
+  if (o.out != null)
+    out.push(S.r(QX - 1.85, QY, QW, QH, 'ok', String(o.out), {fs:.44}),
+             S.e(QX - .12, QY + QH / 2, QX - .55, QY + QH / 2, {s:'ok', w:.05}));
+  return out;
+}
+const chips = (a, cls) => a.map(x => ({t:String(x), cls:cls || ''}));
+
+const CODE_STACK = [
+'class Stack:',
+'    def __init__(self):',
+'        self.items = []',
+'',
+'    def push(self, item):       # 推進去 O(1)',
+'        self.items.append(item)',
+'',
+'    def pop(self):              # 拿最上面那個 O(1)',
+'        return self.items.pop()',
+'',
+'    def peak(self):             # 只看不拿',
+'        return self.items[-1]'];
+const CODE_QUEUE = [
+'from collections import deque',
+'',
+'class Queue:',
+'    def __init__(self):',
+'        self.items = deque()',
+'',
+'    def push(self, item):       # 從尾巴進 O(1)',
+'        self.items.append(item)',
+'',
+'    def pop(self):              # 從頭出 O(1)',
+'        return self.items.popleft()'];
+const CODE_BR = [
+'def is_valid(s):                # LeetCode 20',
+'    pairs = {")": "(", "]": "[", "}": "{"}',
+'    stack = []',
+'    for ch in s:',
+'        if ch in "([{":',
+'            stack.append(ch)',
+'        else:',
+'            if not stack or stack.pop() != pairs[ch]:',
+'                return False',
+'    return not stack'];
+
+function buildStack(){
+  const F = new Frames(), st = [];
+  const P = () => [{lbl:{zh:'堆疊內容（左＝底部）', en:'stack (left = bottom)'}, chips:chips(st, 'ok')}];
+  F.push({shapes:stackShapes(st), panels:P(), line:2,
+    msg:{zh:'堆疊就是一個「只開一個口」的盒子。底層其實只是 Python 的 list。',
+         en:'A stack is a box with a single opening. Underneath it is just a Python list.'}});
+  ['a', 'b', 'c'].forEach(v => {
+    F.push({shapes:stackShapes(st, {fly:v}), panels:P(), line:4,
+      msg:{zh:'<b>push(' + v + ')</b>：新元素只能從上面放進去。',
+           en:'<b>push(' + v + ')</b>: new items can only go in from the top.'}});
+    st.push(v);
+    F.push({shapes:stackShapes(st, {states:{[st.length - 1]:'ok'}}), panels:P(), line:5,
+      msg:{zh:'<b>append</b> 是在 list 尾端加一個，不用搬動任何舊資料——<b>O(1)</b>。' +
+              '<b>top</b> 永遠跟著最後放進去的那個。',
+           en:'<b>append</b> adds at the end of the list, moving nothing - <b>O(1)</b>. <b>top</b> always tracks the most recent item.'}});
+  });
+  for (let k = 0; k < 2; k++){
+    const v = st[st.length - 1];
+    F.push({shapes:stackShapes(st, {states:{[st.length - 1]:'hot'}}), panels:P(), line:8,
+      msg:{zh:'<b>pop()</b> 拿走的一定是最上面的 <b>' + v + '</b>——最後進來的最先出去，這就是 <b>LIFO</b>。',
+           en:'<b>pop()</b> always takes the top item <b>' + v + '</b> - last in, first out, i.e. <b>LIFO</b>.'}});
+    st.pop();
+    F.push({shapes:stackShapes(st, {fly:v, flyStyle:'ok', cap:{zh:'彈出 ' + v, en:'popped ' + v}}),
+      panels:P(), line:8,
+      msg:{zh:'底下的 <b>' + (st.length ? st[st.length - 1] : '（沒了）') + '</b> 這時才重見天日。' +
+              '被壓住的元素永遠要等上面的先走。',
+           en:'Only now does <b>' + (st.length ? st[st.length - 1] : '(nothing)') +
+              '</b> become reachable. Buried items always wait for the ones above them.'}});
+  }
+  F.push({shapes:stackShapes(st, {states:{0:'ok'}}), panels:P(), line:10,
+    msg:{zh:'<b>peak()</b> 只看不拿。函式呼叫、瀏覽器上一頁、編輯器的 undo，' +
+            '凡是「最近做的先撤銷」都是堆疊。',
+         en:'<b>peak()</b> looks without removing. Function calls, the browser back button, editor undo - anything shaped like "undo the most recent thing first" is a stack.'}});
+  return F.list;
+}
+
+function buildQueue(){
+  const F = new Frames(), q = [];
+  const P = () => [{lbl:{zh:'佇列內容（左＝front）', en:'queue (left = front)'}, chips:chips(q, 'ok')}];
+  F.push({shapes:queueShapes(q), panels:P(), line:4,
+    msg:{zh:'佇列有<b>兩個口</b>：尾巴進、頭出。就是排隊買票。',
+         en:'A queue has <b>two ends</b>: in at the rear, out at the front. It is a ticket line.'}});
+  ['a', 'b', 'c'].forEach(v => {
+    F.push({shapes:queueShapes(q, {fly:v}), panels:P(), line:6,
+      msg:{zh:'<b>push(' + v + ')</b>：從 rear 排進去。',
+           en:'<b>push(' + v + ')</b>: join at the rear.'}});
+    q.push(v);
+    F.push({shapes:queueShapes(q, {states:{[q.length - 1]:'ok'}}), panels:P(), line:7,
+      msg:{zh:'目前隊伍：<b>' + q.join(', ') + '</b>。',
+           en:'Queue now: <b>' + q.join(', ') + '</b>.'}});
+  });
+  for (let k = 0; k < 2; k++){
+    const v = q[0];
+    F.push({shapes:queueShapes(q, {states:{0:'hot'}}), panels:P(), line:9,
+      msg:{zh:'<b>pop()</b> 拿走 front 的 <b>' + v + '</b>——最早排的最先走，<b>FIFO</b>。',
+           en:'<b>pop()</b> takes <b>' + v + '</b> from the front - first in, first out, <b>FIFO</b>.'}});
+    q.shift();
+    F.push({shapes:queueShapes(q, {out:v, states:{0:'ok'}}), panels:P(), line:9,
+      msg:{zh:'注意用的是 <b>deque.popleft()</b> 而不是 <b>list.pop(0)</b>：' +
+              'list 拔掉第 0 格要把後面全部往前搬，是 <b>O(n)</b>；deque 兩端都是 <b>O(1)</b>。',
+           en:'Note it is <b>deque.popleft()</b>, not <b>list.pop(0)</b>: popping index 0 of a list shifts everything left, <b>O(n)</b>, while a deque is <b>O(1)</b> at both ends.'}});
+  }
+  F.push({shapes:queueShapes(q, {states:{0:'ok'}}), panels:P(), line:0,
+    msg:{zh:'公平排隊的地方就有佇列：工作排程、印表機、訊息佇列，還有一層一層擴散的圖走訪。',
+         en:'Anywhere order must stay fair you find a queue: job schedulers, printers, message queues - and the ring-by-ring graph traversal you meet later.'}});
+  return F.list;
+}
+
+function buildBrackets(v){
+  const s = v === 0 ? '{[()]}' : '([)]';
+  const F = new Frames(), pairs = {')':'(', ']':'[', '}':'{'}, st = [];
+  const strShapes = (i, styleOf) => {
+    const out = [], x0 = 2.55;
+    for (let k = 0; k < s.length; k++)
+      out.push(S.r(x0 + k * .78, .55, .68, .78, styleOf(k), s[k], {fs:.48}));
+    return out;
+  };
+  const P = () => [{lbl:{zh:'堆疊', en:'stack'}, chips:chips(st, 'act')}];
+  const view = () => stackShapes(st, {cap:{zh:'還沒配對到的左括號', en:'unmatched openers'}});
+  F.push({shapes:strShapes(-1, () => 'idle').concat(view()), panels:P(), line:2,
+    msg:{zh:'字串 <b>' + s + '</b>。括號配對的重點是：<b>最近打開的，必須最先關掉</b>——這正是堆疊。',
+         en:'String <b>' + s + '</b>. Bracket matching says: <b>the most recently opened must close first</b> - exactly a stack.'}});
+  for (let i = 0; i < s.length; i++){
+    const ch = s[i];
+    const styleOf = k => k < i ? 'done' : (k === i ? 'hot' : 'idle');
+    if ('([{'.indexOf(ch) >= 0){
+      st.push(ch);
+      F.push({shapes:strShapes(i, styleOf).concat(stackShapes(st, {states:{[st.length - 1]:'hot'}})),
+        panels:P(), line:5,
+        msg:{zh:'左括號 <b>' + ch + '</b>：先記著，push 進堆疊。',
+             en:'Opener <b>' + ch + '</b>: remember it, push onto the stack.'}});
+    } else {
+      const want = pairs[ch], got = st.length ? st[st.length - 1] : null;
+      F.push({shapes:strShapes(i, styleOf).concat(
+        stackShapes(st, {states:{[st.length - 1]:got === want ? 'ok' : 'bad'}})),
+        panels:P(), line:7,
+        msg:{zh:'右括號 <b>' + ch + '</b>，需要的搭檔是 <b>' + want + '</b>；堆疊頂端是 <b>' +
+                (got || '（空的）') + '</b>——' + (got === want ? '對上了。' : '對不上。'),
+             en:'Closer <b>' + ch + '</b> needs <b>' + want + '</b>; top of stack is <b>' +
+                (got || '(empty)') + '</b> - ' + (got === want ? 'match.' : 'mismatch.')}});
+      if (got !== want){
+        F.push({shapes:strShapes(i, k => k === i ? 'bad' : (k < i ? 'done' : 'idle')).concat(
+          stackShapes(st, {states:{[st.length - 1]:'bad'}})), panels:P(), line:8,
+          msg:{zh:'直接回傳 <b>False</b>。<b>' + s + '</b> 的括號雖然數量一樣多，' +
+                  '卻交叉了——這種錯誤只有堆疊看得出來。',
+               en:'Return <b>False</b> immediately. <b>' + s + '</b> has the right counts but the brackets cross - only a stack notices.'}});
+        return F.list;
+      }
+      st.pop();
+      F.push({shapes:strShapes(i, k => k <= i ? 'done' : 'idle').concat(stackShapes(st)),
+        panels:P(), line:7,
+        msg:{zh:'配對成功，把 <b>' + want + '</b> 彈掉。堆疊少一層。',
+             en:'Matched, so pop <b>' + want + '</b>. The stack gets one level shallower.'}});
+    }
+  }
+  F.push({shapes:strShapes(s.length, () => 'ok').concat(stackShapes(st)), panels:P(), line:9,
+    msg:{zh:'掃完了而且堆疊是空的，回傳 <b>True</b>。整個過程只掃一遍字串——<b>O(n)</b>。',
+         en:'Scanned the whole string and the stack is empty, so return <b>True</b>. One pass, <b>O(n)</b>.'}});
+  return F.list;
+}
+
+const DAY_META = {
+  title:{zh:'堆疊與佇列', en:'Stack and Queue'},
+  sub:{zh:'後進先出 vs 先進先出：兩種「只准從特定一端動手」的容器，以及它們最經典的用途。',
+       en:'LIFO vs FIFO: two containers that deliberately restrict where you may reach in, and what that restriction buys you.'},
+  tabs:[
+    {id:'stack', label:{zh:'堆疊 Stack', en:'Stack'},
+     stage:{zh:'push / pop 都在同一端', en:'push and pop share one end'},
+     idea:{zh:'堆疊的價值來自<b>限制</b>：只能碰最上面那個。因為不用搬資料，push/pop/peak 全是 <b>O(1)</b>，' +
+              '而且它天然記得「最近發生的事」。',
+           en:'A stack earns its keep by <b>restriction</b>: you may only touch the top. Nothing is ever shifted, so push/pop/peak are all <b>O(1)</b>, and it naturally remembers "what happened most recently".'},
+     legend:['hot', 'act', 'ok', 'idle'], code:CODE_STACK, build:buildStack},
+    {id:'queue', label:{zh:'佇列 Queue', en:'Queue'},
+     stage:{zh:'尾巴進、頭出', en:'in at the rear, out at the front'},
+     idea:{zh:'佇列保住的是<b>先來後到</b>。用 <b>deque</b> 而不是 list，是因為 list 的 pop(0) 要把整排往前搬；' +
+              'deque 兩端都是 O(1)。',
+           en:'A queue preserves <b>arrival order</b>. Use <b>deque</b> rather than a list: list.pop(0) shifts every element left, while a deque is O(1) at both ends.'},
+     legend:['hot', 'act', 'ok', 'idle'], code:CODE_QUEUE, build:buildQueue},
+    {id:'br', label:{zh:'應用：括號配對', en:'LeetCode 20'},
+     stage:{zh:'用堆疊檢查括號是否合法', en:'Validating brackets with a stack'},
+     variants:[{zh:'合法 {[()]}', en:'valid {[()]}'}, {zh:'交叉 ([)]', en:'crossing ([)]'}],
+     idea:{zh:'只要問題長得像「最近打開的要最先關上」——括號、HTML 標籤、函式呼叫、遞迴——' +
+              '堆疊就是答案。反過來，需要層層公平擴散的時候才換佇列。',
+           en:'Whenever a problem reads "the most recently opened must close first" - brackets, HTML tags, function calls, recursion - a stack is the answer. Fair, level-by-level spreading is the queue case instead.'},
+     legend:['hot', 'ok', 'bad', 'done'], code:CODE_BR, build:buildBrackets}
+  ]
+};
+
+</script>
+<script>
+/* =========================================================================
+   100 Days of Python - shared demo engine
+   palette: teal/blue-green base, purple pointers, orange "current step"
+   ========================================================================= */
+const T = {
+  title:{zh:DAY_META.title.zh, en:DAY_META.title.en},
+  sub:{zh:DAY_META.sub.zh, en:DAY_META.sub.en},
+  play:{zh:'▶ 播放', en:'▶ Play'}, pause:{zh:'❚❚ 暫停', en:'❚❚ Pause'},
+  speed:{zh:'速度', en:'Speed'}, state:{zh:'演算法狀態', en:'Algorithm state'},
+  code:{zh:'程式碼', en:'Code'}, idea:{zh:'重點', en:'The idea'}
+};
+let LANG = 'zh';
+const tr = o => (o == null ? '' : (typeof o === 'string' ? o : (o[LANG] != null ? o[LANG] : o.en)));
+const $ = id => document.getElementById(id);
+
+function setLang(l){
+  LANG = l;
+  document.documentElement.lang = l === 'zh' ? 'zh-Hant' : 'en';
+  $('btn-zh').classList.toggle('on', l === 'zh');
+  $('btn-en').classList.toggle('on', l === 'en');
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.getAttribute('data-i18n');
+    if (T[k]) el.textContent = tr(T[k]);
+  });
+  buildTabs(); render();
+}
+
+/* --------------------------------------------------------------- palette */
+const STY = {
+  idle :{fill:'#07293a', stroke:'#0a6b74', text:'#dff2f5', w:.045, glow:0},
+  soft :{fill:'#052330', stroke:'#0a6b74', text:'#a8c8d0', w:.035, glow:0},
+  hot  :{fill:'#3a2109', stroke:'#ff9736', text:'#ffbe6b', w:.075, glow:.65},
+  act  :{fill:'#241542', stroke:'#9d6bff', text:'#c7a6ff', w:.070, glow:.55},
+  ok   :{fill:'#08414a', stroke:'#3fe0dd', text:'#d9ffff', w:.070, glow:.5},
+  done :{fill:'#062430', stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0},
+  bad  :{fill:'#3a0d0d', stroke:'#ff5c5c', text:'#ff9a9a', w:.070, glow:.4},
+  ghost:{fill:'none',    stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0, dash:'.12 .10'}
+};
+const COL = {teal:'#12b3b8', tealL:'#3fe0dd', purple:'#9d6bff', purpleL:'#c7a6ff',
+             orange:'#ff9736', orangeL:'#ffbe6b', red:'#ff5c5c', grey:'#8fa3ac',
+             pale:'#dff2f5', white:'#ffffff'};
+const LEGEND = {
+  hot:[COL.orange, {zh:'目前這一步', en:'current step'}],
+  act:[COL.purple, {zh:'指標 / 走訪位置', en:'pointer / cursor'}],
+  ok:[COL.tealL,  {zh:'完成 / 結果', en:'done / result'}],
+  bad:[COL.red,   {zh:'失敗 / 要避開的寫法', en:'failure / the wrong way'}],
+  done:['#2f5661', {zh:'已處理完', en:'already done'}],
+  soft:['#0a6b74', {zh:'其他元素', en:'other items'}],
+  idle:['#0a6b74', {zh:'尚未處理', en:'untouched'}]
+};
+const leg = (...keys) => keys.map(k => LEGEND[k]);
+
+/* ---------------------------------------------------------- frame buffer */
+function Frames(){
+  this.list = [];
+  this.push = (o) => this.list.push({
+    shapes:JSON.parse(JSON.stringify(o.shapes || [])),
+    panels:JSON.parse(JSON.stringify(o.panels || [])),
+    view:(o.view || null), line:(o.line == null ? 0 : o.line), msg:o.msg
+  });
+}
+/* shape helpers - engines call these, the renderer just draws */
+const S = {
+  r:(x, y, w, h, s, lab, o) => Object.assign({t:'r', x:x, y:y, w:w, h:h, s:s || 'idle', lab:lab}, o || {}),
+  c:(x, y, r, s, lab, o) => Object.assign({t:'c', x:x, y:y, r:r, s:s || 'idle', lab:lab}, o || {}),
+  e:(x1, y1, x2, y2, o) => Object.assign({t:'e', x1:x1, y1:y1, x2:x2, y2:y2}, o || {}),
+  t:(x, y, s, o) => Object.assign({t:'t', x:x, y:y, s:s}, o || {})
+};
+/* a labelled row of array cells; returns shapes */
+function cellRow(vals, x0, y, w, h, opt){
+  opt = opt || {};
+  const out = [], st = opt.states || {};
+  vals.forEach((v, i) => {
+    out.push(S.r(x0 + i * w, y, w - (opt.gap == null ? .06 : opt.gap), h, st[i] || 'idle',
+                 v == null ? '' : String(v), {fs:opt.fs || h * .52}));
+    if (opt.index !== false)
+      out.push(S.t(x0 + i * w + (w - .06) / 2, y + h + (opt.ilift || .34),
+                   opt.labels ? opt.labels[i] : String(i),
+                   {c:st[i] && st[i] !== 'idle' ? COL.orangeL : COL.grey, fs:opt.ifs || .30}));
+  });
+  if (opt.title) out.push(S.t(x0 - .22, y + h * .62, opt.title, {c:COL.tealL, fs:.32, anchor:'end'}));
+  return out;
+}
+/* binary-tree layout from a heap-style array (index 0 = root, 2i+1 / 2i+2) */
+function heapTreeShapes(arr, x0, y0, w, rowH, states, opt){
+  opt = opt || {};
+  const n = arr.length, out = [], R = opt.r || .34;
+  const depth = i => Math.floor(Math.log2(i + 1));
+  const maxD = n ? depth(n - 1) : 0;
+  const px = i => {
+    const d = depth(i), first = Math.pow(2, d) - 1, k = i - first;
+    const slots = Math.pow(2, d), span = w;
+    return x0 + span * (k + .5) / slots;
+  };
+  const py = i => y0 + depth(i) * rowH;
+  for (let i = 1; i < n; i++){
+    if (arr[i] == null) continue;
+    const p = Math.floor((i - 1) / 2);
+    out.push(S.e(px(p), py(p), px(i), py(i), {pad:R + .04,
+      s:(states && (states[i] === 'hot' || states[i] === 'act')) ? states[i] : 'idle'}));
+  }
+  for (let i = 0; i < n; i++){
+    if (arr[i] == null) continue;
+    out.push(S.c(px(i), py(i), R, (states && states[i]) || 'idle', String(arr[i]), {fs:R * .95}));
+    if (opt.showIndex)
+      out.push(S.t(px(i), py(i) + R + .34, String(i), {c:COL.grey, fs:.26}));
+  }
+  return out;
+}
+
+/* -------------------------------------------------------------- renderer */
+const svgNS = 'http://www.w3.org/2000/svg';
+const mk = (tag, a) => { const e = document.createElementNS(svgNS, tag);
+  for (const k in a) e.setAttribute(k, a[k]); return e; };
+const clear = svg => { while (svg.firstChild) svg.removeChild(svg.firstChild); };
+
+function defs(svg){
+  const d = mk('defs', {});
+  const f = mk('filter', {id:'glow', x:'-70%', y:'-70%', width:'240%', height:'240%'});
+  f.appendChild(mk('feGaussianBlur', {stdDeviation:'.055', result:'b'}));
+  const m = mk('feMerge', {});
+  m.appendChild(mk('feMergeNode', {in:'b'}));
+  m.appendChild(mk('feMergeNode', {in:'SourceGraphic'}));
+  f.appendChild(m); d.appendChild(f);
+  Object.keys(STY).forEach(k => {
+    const mk2 = mk('marker', {id:'ar-' + k, viewBox:'0 0 10 10', refX:'8.5', refY:'5',
+      markerWidth:'5.2', markerHeight:'5.2', orient:'auto-start-reverse'});
+    mk2.appendChild(mk('path', {d:'M 0 1 L 9 5 L 0 9 z', fill:STY[k].stroke}));
+    d.appendChild(mk2);
+  });
+  svg.appendChild(d);
+}
+
+function drawShape(svg, sh){
+  const st = STY[sh.s || 'idle'];
+  if (sh.t === 'e'){
+    let {x1, y1, x2, y2} = sh;
+    if (sh.pad){
+      const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+      x1 += dx / L * sh.pad; y1 += dy / L * sh.pad;
+      x2 -= dx / L * sh.pad; y2 -= dy / L * sh.pad;
+    }
+    const a = {x1:x1.toFixed(3), y1:y1.toFixed(3), x2:x2.toFixed(3), y2:y2.toFixed(3),
+      stroke:st.stroke, 'stroke-width':(sh.w || st.w || .05), 'stroke-linecap':'round',
+      opacity:(sh.o == null ? (sh.s && sh.s !== 'idle' ? 1 : .75) : sh.o)};
+    if (sh.dash || st.dash) a['stroke-dasharray'] = sh.dash || st.dash;
+    if (sh.arrow !== false) a['marker-end'] = 'url(#ar-' + (sh.s || 'idle') + ')';
+    svg.appendChild(mk('line', a));
+    if (sh.lab != null)
+      svg.appendChild(txt((x1 + x2) / 2 + (sh.lx || 0), (y1 + y2) / 2 + (sh.ly || -.16),
+        tr(sh.lab), st.stroke, sh.fs || .30, 'middle'));
+    return;
+  }
+  if (sh.t === 't'){
+    svg.appendChild(txt(sh.x, sh.y, tr(sh.s), sh.c || COL.pale, sh.fs || .32,
+      sh.anchor || 'middle', sh.o));
+    return;
+  }
+  let node;
+  if (sh.t === 'c'){
+    node = mk('circle', {cx:sh.x.toFixed(3), cy:sh.y.toFixed(3), r:sh.r.toFixed(3),
+      fill:st.fill, stroke:st.stroke, 'stroke-width':st.w});
+  } else {
+    node = mk('rect', {x:sh.x.toFixed(3), y:sh.y.toFixed(3), width:sh.w.toFixed(3),
+      height:sh.h.toFixed(3), rx:(sh.rx == null ? .09 : sh.rx), fill:st.fill,
+      stroke:st.stroke, 'stroke-width':st.w});
+  }
+  if (st.dash || sh.dash) node.setAttribute('stroke-dasharray', sh.dash || st.dash);
+  if (st.glow) node.setAttribute('filter', 'url(#glow)');
+  if (sh.o != null) node.setAttribute('opacity', sh.o);
+  svg.appendChild(node);
+  const cx = sh.t === 'c' ? sh.x : sh.x + sh.w / 2;
+  const cy = sh.t === 'c' ? sh.y : sh.y + sh.h / 2;
+  if (sh.lab != null && sh.lab !== '')
+    svg.appendChild(txt(cx + (sh.dx || 0), cy + (sh.fs || .40) * .35, tr(sh.lab), st.text,
+      sh.fs || .40, 'middle'));
+  if (sh.sub != null)
+    svg.appendChild(txt(cx, cy + (sh.t === 'c' ? sh.r : sh.h) + .34, tr(sh.sub),
+      sh.subc || COL.grey, sh.subfs || .28, 'middle'));
+  if (sh.top != null)
+    svg.appendChild(txt(cx, cy - (sh.t === 'c' ? sh.r : sh.h / 2) - .22, tr(sh.top),
+      sh.topc || COL.purpleL, sh.topfs || .28, 'middle'));
+}
+function txt(x, y, s, c, fs, anchor, o){
+  const t = mk('text', {x:(+x).toFixed(3), y:(+y).toFixed(3), 'text-anchor':anchor || 'middle',
+    fill:c, 'font-size':(+fs).toFixed(3)});
+  if (o != null) t.setAttribute('opacity', o);
+  t.textContent = s;
+  return t;
+}
+
+function renderStage(frame){
+  const svg = $('stage');
+  clear(svg); defs(svg);
+  const v = frame.view || curTab().view || [10, 6.4];
+  svg.setAttribute('viewBox', '0 0 ' + v[0] + ' ' + v[1]);
+  (frame.shapes || []).forEach(sh => drawShape(svg, sh));
+}
+
+function drawPanels(frame){
+  const box = $('panels'); box.innerHTML = '';
+  (frame.panels || []).forEach(p => {
+    const d = document.createElement('div'); d.className = 'panel';
+    const l = document.createElement('div'); l.className = 'lbl'; l.textContent = tr(p.lbl);
+    const c = document.createElement('div'); c.className = 'chips';
+    (p.chips.length ? p.chips : [{t:'—', cls:'empty'}]).forEach(ch => {
+      const s = document.createElement('span');
+      s.className = 'chip ' + (ch.cls || ''); s.textContent = ch.t; c.appendChild(s);
+    });
+    d.appendChild(l); d.appendChild(c); box.appendChild(d);
+  });
+}
+function drawCode(frame){
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  $('code').innerHTML = curTab().code.map((ln, i) => {
+    const h = esc(ln).replace(/(#.*)$/, '<span class="cm">$1</span>');
+    return '<span class="ln' + (i === frame.line ? ' on' : '') + '">' + (h || ' ') + '</span>';
+  }).join('');
+}
+function drawLegend(){
+  const keys = curTab().legend || ['hot', 'act', 'ok', 'idle'];
+  $('legend').innerHTML = keys.map(k => {
+    const [c, txt] = Array.isArray(k) ? k : LEGEND[k];
+    return '<span><i style="background:' + c + '"></i>' + tr(txt) + '</span>';
+  }).join('');
+}
+
+let tabIx = 0, varIx = 0, frames = [], cur = 0, timer = null;
+const TABS = DAY_META.tabs;
+const curTab = () => TABS[tabIx];
+
+function render(){
+  if (!frames.length) return;
+  cur = Math.max(0, Math.min(cur, frames.length - 1));
+  const f = frames[cur];
+  $('stage-title').textContent = tr(curTab().stage);
+  renderStage(f); drawPanels(f); drawCode(f); drawLegend();
+  $('narr').innerHTML = tr(f.msg);
+  $('idea').innerHTML = tr(curTab().idea);
+  $('stepno').textContent = (cur + 1) + ' / ' + frames.length;
+  $('prev').disabled = cur === 0;
+  $('next').disabled = cur === frames.length - 1;
+}
+function buildTabs(){
+  $('tabs').innerHTML = '';
+  TABS.forEach((t, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(t.label);
+    if (i === tabIx) b.classList.add('on');
+    b.onclick = () => { tabIx = i; varIx = 0; load(); };
+    $('tabs').appendChild(b);
+  });
+  const ex = $('extra'); ex.innerHTML = '';
+  const vs = curTab().variants;
+  if (vs) vs.forEach((v, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(v);
+    if (i === varIx) b.classList.add('on');
+    b.onclick = () => { varIx = i; load(); };
+    ex.appendChild(b);
+  });
+}
+function load(){
+  stop();
+  frames = curTab().build(varIx) || [];
+  cur = 0; buildTabs(); render();
+}
+function step(d){ stop(); cur += d; render(); }
+function reset(){ stop(); cur = 0; render(); }
+function stop(){ if (timer){ clearInterval(timer); timer = null; $('play').textContent = tr(T.play); } }
+function togglePlay(){
+  if (timer){ stop(); return; }
+  if (cur >= frames.length - 1) cur = 0;
+  $('play').textContent = tr(T.pause);
+  timer = setInterval(() => {
+    if (cur >= frames.length - 1){ stop(); return; }
+    cur++; render();
+  }, Number($('speed').value));
+}
+$('speed').addEventListener('input', () => { if (timer){ stop(); togglePlay(); } });
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight'){ step(1); e.preventDefault(); }
+  else if (e.key === 'ArrowLeft'){ step(-1); e.preventDefault(); }
+  else if (e.key === ' '){ togglePlay(); e.preventDefault(); }
+});
+setLang('zh');
+load();
+
+</script>
+</body>
+</html>

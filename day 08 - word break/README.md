@@ -3,6 +3,9 @@
 More details in:
 https://medium.com/100-days-of-python/day-08-problem-word-break-15d8256cd0f9
 
+Interactive walkthrough: [demo.html](demo.html) - a single self-contained page
+(no build step, works offline, 中文 / English toggle) that animates the 1-D DP, the memoised recursion (including a failing string) and LeetCode 140 step by step.
+
 ![img](https://github.com/KingRei/100DaysPython/blob/master/day%2008%20-%20word%20break/imgs/day08_2.png?raw=true)
 
 ## LeetCode 139

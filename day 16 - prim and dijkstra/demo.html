@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 16 - Prim and Dijkstra - one heap-greedy skeleton / Prim 與 Dijkstra：同一套 heap greedy 骨架</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='2' y='2' width='28' height='28' rx='7' fill='%23062434'/><circle cx='11' cy='12' r='4' fill='%2312b3b8'/><circle cx='21' cy='12' r='4' fill='%239d6bff'/><circle cx='16' cy='22' r='4' fill='%23ff9736'/></svg>">
+<style>
+:root{
+  --bg0:#04121c; --bg1:#062434; --card:rgba(6,36,52,.72);
+  --teal:#12b3b8; --teal-d:#0a6b74; --teal-l:#3fe0dd;
+  --purple:#9d6bff; --purple-d:#241542; --purple-l:#c7a6ff;
+  --orange:#ff9736; --orange-d:#3a2109; --orange-l:#ffbe6b;
+  --red:#ff5c5c; --grey:#8fa3ac; --pale:#dff2f5; --white:#ffffff;
+  --serif:"Latin Modern Roman","Liberation Serif",Georgia,"Times New Roman",serif;
+  --mono:"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:
+    radial-gradient(900px 520px at 12% -8%,rgba(157,107,255,.20) 0%,rgba(157,107,255,0) 62%),
+    radial-gradient(900px 520px at 88% -4%,rgba(255,151,54,.16) 0%,rgba(255,151,54,0) 60%),
+    radial-gradient(1200px 800px at 50% 30%,#083041 0%,var(--bg1) 45%,var(--bg0) 100%);
+  color:var(--pale); font-family:var(--serif); min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--teal-l)}
+.wrap{max-width:1180px;margin:0 auto;padding:26px 20px 60px}
+header{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-bottom:6px}
+h1{font-size:30px;margin:0;color:var(--white);letter-spacing:.4px;
+   text-shadow:0 0 16px rgba(63,224,221,.35)}
+.day{font-size:13px;letter-spacing:2.4px;text-transform:uppercase;color:var(--orange-l);
+     border:1px solid var(--orange);border-radius:999px;padding:4px 12px;
+     background:rgba(255,151,54,.10)}
+.sub{color:var(--grey);font-size:15px;margin:8px 0 20px;max-width:72ch;line-height:1.6}
+.spacer{flex:1}
+.lang{display:flex;border:1px solid var(--teal-d);border-radius:999px;overflow:hidden}
+.lang button{background:transparent;color:var(--teal-l);border:0;padding:5px 14px;
+  font-family:var(--serif);font-size:14px;cursor:pointer}
+.lang button.on{background:var(--teal);color:#022}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
+.tabs button{
+  background:rgba(6,40,58,.75);border:1px solid rgba(18,179,184,.45);color:var(--pale);
+  padding:9px 16px;border-radius:9px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  transition:.18s}
+.tabs button:hover{border-color:var(--teal-l);color:var(--white)}
+.tabs button.on{background:linear-gradient(135deg,var(--teal) 0%,var(--purple) 140%);
+  border-color:var(--teal-l);color:#03222a;box-shadow:0 0 18px rgba(18,179,184,.30)}
+.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:18px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid rgba(18,179,184,.28);border-radius:13px;
+      padding:14px 16px}
+.card h3{margin:0 0 10px;font-size:14px;letter-spacing:2px;text-transform:uppercase;
+         color:var(--teal-l);font-weight:normal}
+svg.stage{width:100%;height:auto;display:block;touch-action:none}
+svg.stage text{font-family:var(--serif);user-select:none}
+.narr{min-height:52px;margin-top:10px;padding:10px 12px;border-left:3px solid var(--orange);
+      background:rgba(255,151,54,.07);font-size:16px;line-height:1.55;color:var(--white)}
+.narr code{font-family:var(--mono);font-size:14px;color:var(--orange-l)}
+.narr b{color:var(--orange-l);font-weight:normal}
+.ctrl{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
+.ctrl button{background:rgba(6,40,58,.9);border:1px solid var(--teal-d);color:var(--teal-l);
+  border-radius:8px;padding:7px 13px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  min-width:44px;transition:.15s}
+.ctrl button:hover:not(:disabled){background:var(--teal);color:#03222a}
+.ctrl button:disabled{opacity:.35;cursor:default}
+.ctrl .play{min-width:92px;font-weight:bold;border-color:var(--orange);color:var(--orange-l)}
+.ctrl .play:hover{background:var(--orange);color:#2a1400}
+.ctrl input[type=range]{width:120px;accent-color:var(--purple)}
+.stepno{color:var(--grey);font-size:14px;font-family:var(--mono)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;min-height:30px}
+.chip{border:1px solid var(--teal-d);border-radius:6px;padding:3px 9px;font-family:var(--mono);
+      font-size:14px;color:var(--pale);background:rgba(18,179,184,.10)}
+.chip.hot{border-color:var(--orange);color:var(--orange-l);background:rgba(255,151,54,.14)}
+.chip.act{border-color:var(--purple);color:var(--purple-l);background:rgba(157,107,255,.16)}
+.chip.ok{border-color:var(--teal-l);color:var(--teal-l);background:rgba(63,224,221,.12)}
+.chip.dim{border-color:#2f5661;color:var(--grey);background:transparent}
+.chip.bad{border-color:var(--red);color:#ff9a9a;background:rgba(255,92,92,.14)}
+.chip.empty{border-style:dashed;color:var(--grey);border-color:#2f5661}
+.panel+.panel{margin-top:12px}
+.panel .lbl{font-size:13px;letter-spacing:1.6px;text-transform:uppercase;color:var(--grey);
+  margin-bottom:5px}
+pre.code{margin:0;font-family:var(--mono);font-size:13.5px;line-height:1.72;overflow-x:auto;
+  color:#a8c8d0}
+pre.code .ln{display:block;padding:0 8px;border-left:3px solid transparent;white-space:pre}
+pre.code .ln.on{background:rgba(255,151,54,.12);border-left-color:var(--orange);color:var(--white)}
+pre.code .cm{color:#5f7b85;font-style:italic}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:13.5px;color:var(--grey)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;
+  vertical-align:-1px;border:1px solid rgba(255,255,255,.22)}
+.note{font-size:15px;line-height:1.65;color:var(--pale)}
+.note b{color:var(--purple-l);font-weight:normal}
+.note code{font-family:var(--mono);font-size:13.5px;color:var(--teal-l)}
+.toggle-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.toggle-row button{border:1px solid rgba(18,179,184,.45);border-radius:8px;padding:6px 13px;
+  cursor:pointer;font-family:var(--serif);font-size:14px;
+  background:rgba(6,40,58,.75);color:var(--pale)}
+.toggle-row button.on{background:var(--purple);border-color:var(--purple-l);color:#150a2b}
+footer{margin-top:32px;padding-top:16px;border-top:1px solid rgba(18,179,184,.25);
+  color:var(--grey);font-size:14px;display:flex;gap:18px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <span class="day">Day 16</span>
+  <h1 data-i18n="title">Prim 與 Dijkstra：同一套 heap greedy 骨架</h1>
+  <span class="spacer"></span>
+  <div class="lang">
+    <button id="btn-zh" class="on" onclick="setLang('zh')">中文</button>
+    <button id="btn-en" onclick="setLang('en')">EN</button>
+  </div>
+</header>
+<p class="sub" data-i18n="sub">兩個看起來完全不同的演算法，程式碼只差一個 key：Prim 比「這條邊多貴」，Dijkstra 比「走到那裡總共多貴」。</p>
+
+<div class="tabs" id="tabs"></div>
+
+<div class="grid">
+  <div>
+    <div class="card">
+      <h3 id="stage-title"></h3>
+      <svg class="stage" id="stage" viewBox="0 0 10 6.4" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="legend" id="legend"></div>
+      <div class="narr" id="narr"></div>
+      <div class="ctrl">
+        <button onclick="reset()" title="reset">⟲</button>
+        <button id="prev" onclick="step(-1)">◀</button>
+        <button class="play" id="play" onclick="togglePlay()" data-i18n="play">▶ 播放</button>
+        <button id="next" onclick="step(1)">▶</button>
+        <span class="stepno" id="stepno">0 / 0</span>
+        <span class="spacer"></span>
+        <span style="font-size:13px;color:var(--grey)" data-i18n="speed">速度</span>
+        <input type="range" id="speed" min="180" max="1600" step="20" value="820">
+      </div>
+      <div class="toggle-row" id="extra"></div>
+    </div>
+  </div>
+  <div>
+    <div class="card" id="state-card">
+      <h3 data-i18n="state">演算法狀態</h3>
+      <div id="panels"></div>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="code">程式碼</h3>
+      <pre class="code" id="code"></pre>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="idea">重點</h3>
+      <div class="note" id="idea"></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <span>100 Days of Python — Day 16</span>
+  <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2016%20-%20prim%20and%20dijkstra" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://medium.com/100-days-of-python" target="_blank" rel="noopener">Medium</a>
+</footer>
+</div>
+<script>
+// DAY: 16
+// TITLE_ZH: Prim 與 Dijkstra：同一套 heap greedy 骨架
+// TITLE_EN: Prim and Dijkstra - one heap-greedy skeleton
+// SUB_ZH: 兩個看起來完全不同的演算法，程式碼只差一個 key：Prim 比「這條邊多貴」，Dijkstra 比「走到那裡總共多貴」。
+// SUB_EN: Two algorithms that look unrelated are one lambda apart - Prim compares the edge, Dijkstra compares the whole path.
+// FOLDER: day%2016%20-%20prim%20and%20dijkstra
+// MEDIUM: https://medium.com/100-days-of-python
+
+const NM = 'ABCDEFG';
+const P = [[1.1, 3.3], [3.4, 2.4], [7.0, 3.0], [2.4, 4.4], [5.4, 4.4], [2.5, 6.2], [7.6, 5.8]];
+const G = [[7, 0, 1], [5, 0, 3], [8, 1, 2], [9, 1, 3], [7, 1, 4], [5, 2, 4],
+           [15, 3, 4], [6, 3, 5], [8, 4, 5], [9, 4, 6], [11, 5, 6]];
+const RAD = .46, INF = Infinity;
+const ekey = (u, v) => Math.min(u, v) + '-' + Math.max(u, v);
+
+function adjOf(edges, n){
+  const a = []; for (let i = 0; i < n; i++) a.push([]);
+  edges.forEach(([w, u, v]) => { a[u].push([v, w]); a[v].push([u, w]); });
+  return a;
+}
+const ADJ = adjOf(G, 7);
+
+function gShapes(o){
+  o = o || {}; const out = [];
+  G.forEach(([w, u, v]) => {
+    const st = (o.est && o.est[ekey(u, v)]) || 'ghost';
+    const [x1, y1] = P[u], [x2, y2] = P[v];
+    const dx = x2 - x1, dy = y2 - y1, L = Math.sqrt(dx * dx + dy * dy), ux = dx / L, uy = dy / L;
+    out.push(S.e(x1 + ux * RAD, y1 + uy * RAD, x2 - ux * RAD, y2 - uy * RAD,
+      {s:st, w:(st === 'ok' || st === 'done') ? .12 : .05, noArrow:true}));
+    out.push(S.t((x1 + x2) / 2 + uy * .30, (y1 + y2) / 2 - ux * .30, String(w),
+      {c:st === 'ghost' ? '#8fa3ac' : (st === 'bad' ? '#ff5c5c' : '#ffbe6b'), fs:.28}));
+  });
+  for (let i = 0; i < NM.length; i++){
+    const lb = (o.best && o.best[i] != null && o.best[i] < INF) ? String(o.best[i]) : '';
+    out.push(S.c(P[i][0], P[i][1], RAD, (o.st && o.st[i]) || 'idle', NM[i],
+      lb === '' ? {fs:.32} : {fs:.32, sub:lb, subfs:.26}));
+  }
+  return out;
+}
+function heapPanel(pq, done){
+  const items = pq.slice().sort((a, b) => a[0] - b[0]);
+  return {lbl:{zh:'heap（最小的在前）', en:'heap (smallest first)'},
+    chips:items.length ? items.map(([d, u], i) => ({t:NM[u] + ':' + d + (done[u] ? ' x' : ''),
+      cls:done[u] ? 'bad' : (i === 0 ? 'hot' : '')}))
+      : [{t:LANG === 'zh' ? '空' : 'empty', cls:''}]};
+}
+function bestPanel(best, done, lbl){
+  return {lbl:lbl, chips:best.map((b, i) => ({t:NM[i] + ' ' + (b < INF ? b : '∞'),
+    cls:done[i] ? 'ok' : (b < INF ? '' : 'soft')}))};
+}
+
+const CODE = [
+'def heap_greedy(n, adj, src, key):',
+'    best   = [INF] * n',
+'    parent = [-1] * n',
+'    done   = [False] * n',
+'    best[src] = 0; pq = [(0, src)]',
+'',
+'    while pq:',
+'        d, u = heappop(pq)',
+'        if done[u]: continue          # 堆裡的舊副本',
+'        done[u] = True',
+'        for v, w in adj[u]:',
+'            nd = key(d, w)            # Prim: w   Dijkstra: d + w',
+'            if not done[v] and nd < best[v]:',
+'                best[v] = nd; parent[v] = u',
+'                heappush(pq, (nd, v))',
+'    return best, parent'];
+
+// ---- tab 1: the shared skeleton -------------------------------------------
+function buildSkeleton(v){
+  const F = new Frames(), n = 7, isPrim = (v === 0);
+  const key = isPrim ? ((d, w) => w) : ((d, w) => d + w);
+  const best = [], parent = [], done = [], est = {};
+  for (let i = 0; i < n; i++){ best.push(INF); parent.push(-1); done.push(false); }
+  best[0] = 0;
+  let pq = [[0, 0]], total = 0;
+  const st = () => { const s = {}; for (let i = 0; i < n; i++)
+      s[i] = done[i] ? 'ok' : (best[i] < INF ? 'soft' : 'idle'); return s; };
+  const snap = (extra, line, msg) => F.push({
+    shapes:gShapes({est:Object.assign({}, est, extra && extra.est),
+                    st:Object.assign(st(), extra && extra.st), best:best}),
+    panels:[heapPanel(pq, done), bestPanel(best, done,
+      isPrim ? {zh:'best = 接上這棵樹最便宜的一條邊', en:'best = cheapest edge into the tree'}
+             : {zh:'best = 從 A 走過來的最短距離', en:'best = shortest distance from A'})],
+    line:line, msg:msg});
+
+  snap({st:{0:'hot'}}, 4, isPrim
+    ? {zh:'<b>Prim</b>：從 A 開始，讓一棵樹<b>長大</b>。每一步問「把哪個還沒進來的點拉進來最便宜」，' +
+          '比的是<b>那一條邊的重量</b>。heap 裡放的就是每個外點目前<b>最便宜的入場券</b>。',
+       en:'<b>Prim</b>: start at A and <b>grow one tree</b>. Each step asks which outside vertex is cheapest to pull in, comparing <b>the weight of that single edge</b>. The heap holds each outsider\'s current <b>cheapest ticket in</b>.'}
+    : {zh:'<b>Dijkstra</b>：一模一樣的迴圈、一模一樣的 heap，只有 <code>key</code> 換成 <code>d + w</code>。' +
+          '現在 heap 裡放的不是入場券，而是<b>從 A 一路走過來的總距離</b>。',
+       en:'<b>Dijkstra</b>: identical loop, identical heap, only <code>key</code> becomes <code>d + w</code>. Now the heap holds not a ticket price but the <b>total distance walked from A</b>.'});
+
+  let guard = 0;
+  while (pq.length && guard++ < 60){
+    pq.sort((a, b) => a[0] - b[0]);
+    const top = pq.shift(), d = top[0], u = top[1];
+    if (done[u]){
+      snap({st:{[u]:'bad'}}, 8,
+        {zh:'彈出 <b>' + NM[u] + ':' + d + '</b>，但 ' + NM[u] + ' 早就處理完了。' +
+            '我們<b>從來沒有真的去 heap 裡改舊資料</b>（那要 O(n) 找），而是直接再 push 一份新的，' +
+            '舊的留在裡面變成垃圾——這叫 <b>lazy deletion</b>，一行 <code>if done[u]: continue</code> 就清掉。',
+         en:'Pop <b>' + NM[u] + ':' + d + '</b> - but ' + NM[u] + ' is already settled. We never edit an entry inside the heap (finding it would cost O(n)); we push a fresh copy and let the stale one rot. That is <b>lazy deletion</b>, cleaned up by the single line <code>if done[u]: continue</code>.'});
+      continue;
+    }
+    done[u] = true;
+    if (parent[u] >= 0){ est[ekey(parent[u], u)] = 'ok'; total += isPrim ? d : (d - best[parent[u]]); }
+    snap({st:{[u]:'hot'}}, 9, u === 0
+      ? {zh:'A 先進來，距離 0。<b>heap 的最小值就是下一個該定案的點</b>——這是整個演算法唯一的推理。',
+         en:'A settles first at 0. <b>The minimum of the heap is the next vertex that can be finalised</b> - that single claim is the whole algorithm.'}
+      : (isPrim
+        ? {zh:'<b>' + NM[u] + '</b> 是目前最便宜的入場券（' + d + '，從 ' + NM[parent[u]] + ' 接進來）。' +
+              '為什麼可以直接定案？因為任何連到樹外的路，<b>第一條跨出樹的邊都不會比它便宜</b>——' +
+              '這就是昨天 Kruskal 用的 cut property，只是這裡的 cut 固定是「樹 ｜ 其他」。' +
+              '樹的總重量現在是 <b>' + total + '</b>。',
+           en:'<b>' + NM[u] + '</b> has the cheapest ticket (' + d + ', entering from ' + NM[parent[u]] + '). Why can it be finalised on the spot? Any route out of the tree must cross the boundary somewhere, and <b>no crossing edge is cheaper than this one</b> - the same cut property Kruskal used yesterday, with the cut fixed as "tree | rest". The tree now weighs <b>' + total + '</b>.'}
+        : {zh:'<b>' + NM[u] + '</b> 定案在 <b>' + d + '</b>。為什麼不用怕之後冒出更短的路？' +
+              '任何別的路都得先經過一個<b>還在 heap 裡的點</b>，而那個點的距離 ≥ ' + d + '，' +
+              '再加上非負的邊只會更長。<b>「邊不能是負的」這個前提，就藏在這句話裡。</b>',
+           en:'<b>' + NM[u] + '</b> is fixed at <b>' + d + '</b>. Why can no shorter route appear later? Any alternative must pass through a vertex still in the heap, whose distance is already >= ' + d + ', and adding non-negative edges only makes it longer. <b>The requirement that weights are non-negative lives entirely inside that sentence.</b>'}));
+    const improved = [], hotE = {};
+    ADJ[u].forEach(pair => {
+      const v2 = pair[0], w = pair[1], nd = key(d, w);
+      if (!done[v2] && nd < best[v2]){
+        best[v2] = nd; parent[v2] = u; pq.push([nd, v2]);
+        improved.push(NM[v2] + '=' + nd); hotE[ekey(u, v2)] = 'hot';
+      }
+    });
+    if (improved.length)
+      snap({st:{[u]:'ok'}, est:hotE}, 12,
+        {zh:'放鬆 ' + NM[u] + ' 的鄰居，更新了 <b>' + improved.join('、') + '</b>。' +
+            (isPrim ? '記住：Prim 存的是<b>邊的重量</b>，不累加，所以 ' + NM[u] +
+                      ' 的鄰居可能比 ' + NM[u] + ' 自己的數字還小。'
+                    : '記住：Dijkstra 存的是 <b>' + d + ' + 邊重</b>，會一路累加下去。') +
+            '被改到的點<b>再 push 一份</b>進 heap，舊的那份不動。',
+         en:'Relaxing ' + NM[u] + '\'s neighbours updates <b>' + improved.join(', ') + '</b>. ' +
+            (isPrim ? 'Remember that Prim stores <b>the edge weight itself</b>, with no accumulation, so a neighbour can carry a smaller number than ' + NM[u] + ' did.'
+                    : 'Remember that Dijkstra stores <b>' + d + ' + edge</b>, accumulating all the way.') +
+            ' Each improved vertex gets <b>a fresh copy pushed</b>; the old entry is left alone.'});
+  }
+  const treeE = {}; for (let i = 1; i < 7; i++) if (parent[i] >= 0) treeE[ekey(parent[i], i)] = 'ok';
+  F.push({shapes:gShapes({est:treeE, st:st(), best:best}),
+    panels:[heapPanel(pq, done), bestPanel(best, done, {zh:'結果', en:'result'})],
+    line:15,
+    msg:isPrim
+      ? {zh:'7 個點全部進來，總權重 <b>' + total + '</b>——和昨天 Kruskal 算出來的<b>完全一樣</b>，' +
+            '雖然收邊的順序不同。複雜度 <b>O(E log V)</b>：每條邊最多 push 一次。',
+         en:'All seven vertices are in and the tree weighs <b>' + total + '</b> - <b>exactly</b> what Kruskal produced yesterday, even though the edges were taken in a different order. Complexity <b>O(E log V)</b>: every edge is pushed at most once.'}
+      : {zh:'每個點的最短距離都定案了：' + best.map((b, i) => NM[i] + '=' + b).join('、') + '。' +
+            '同樣是 <b>O(E log V)</b>，同樣的一份程式碼。<b>差別只有那個 lambda。</b>',
+         en:'Every shortest distance is final: ' + best.map((b, i) => NM[i] + '=' + b).join(', ') +
+            '. Same <b>O(E log V)</b>, same source file. <b>The only difference was that lambda.</b>'}});
+  return F.list;
+}
+
+// ---- tab 2: the two trees are not the same --------------------------------
+const MST_E = [[0, 1], [0, 3], [1, 4], [2, 4], [3, 5], [4, 6]];
+const SPT_E = [[0, 1], [0, 3], [1, 2], [1, 4], [3, 5], [5, 6]];
+const mapOf = (list, s) => { const m = {}; list.forEach(([u, v]) => m[ekey(u, v)] = s); return m; };
+function buildDiff(){
+  const F = new Frames();
+  const mst = mapOf(MST_E, 'ok'), spt = mapOf(SPT_E, 'ok');
+  const allOk = {}; for (let i = 0; i < 7; i++) allOk[i] = 'ok';
+  F.push({shapes:gShapes({est:mst, st:allOk}), panels:[
+    {lbl:{zh:'Prim 的樹', en:'Prim tree'}, chips:[{t:'AB AD BE CE DF EG', cls:''},
+      {t:(LANG === 'zh' ? '總重 ' : 'total ') + '39', cls:'ok'}]}], line:15,
+    msg:{zh:'Prim 得到的是<b>最小生成樹</b>：六條邊加起來 <b>39</b>，沒有更輕的生成樹了。',
+         en:'Prim gives the <b>minimum spanning tree</b>: six edges totalling <b>39</b>, and no spanning tree is lighter.'}});
+  F.push({shapes:gShapes({est:spt, st:allOk}), panels:[
+    {lbl:{zh:'Dijkstra 的樹', en:'Dijkstra tree'}, chips:[{t:'AB AD BC BE DF FG', cls:''},
+      {t:(LANG === 'zh' ? '總重 ' : 'total ') + '44', cls:'hot'}]}], line:15,
+    msg:{zh:'Dijkstra 的 <code>parent</code> 也構成一棵生成樹，但總重是 <b>44</b>，比 39 重。' +
+            '<b>它從來沒有要最小化總重</b>——它最小化的是「A 到每個點」那六個數字。',
+         en:'Dijkstra\'s <code>parent</code> array also forms a spanning tree, but it weighs <b>44</b>. <b>It never tried to minimise the total</b>; it minimised the six numbers "distance from A".'}});
+  const pathM = mapOf([[0, 1], [1, 4], [4, 6]], 'hot');
+  F.push({shapes:gShapes({est:Object.assign({}, mst, pathM),
+    st:{0:'act', 1:'hot', 4:'hot', 6:'act'}}), panels:[
+    {lbl:{zh:'在 MST 上走 A → G', en:'A to G inside the MST'},
+      chips:[{t:'A-B 7', cls:''}, {t:'B-E 7', cls:''}, {t:'E-G 9', cls:''}, {t:'= 23', cls:'bad'}]}],
+    line:15,
+    msg:{zh:'在最小生成樹上從 A 走到 G：<b>A–B–E–G = 23</b>。',
+         en:'Walking A to G inside the minimum spanning tree: <b>A-B-E-G = 23</b>.'}});
+  const pathS = mapOf([[0, 3], [3, 5], [5, 6]], 'hot');
+  F.push({shapes:gShapes({est:Object.assign({}, spt, pathS),
+    st:{0:'act', 3:'hot', 5:'hot', 6:'act'}}), panels:[
+    {lbl:{zh:'真正的最短路 A → G', en:'the true shortest path'},
+      chips:[{t:'A-D 5', cls:''}, {t:'D-F 6', cls:''}, {t:'F-G 11', cls:''}, {t:'= 22', cls:'ok'}]}],
+    line:15,
+    msg:{zh:'但真正的最短路是 <b>A–D–F–G = 22</b>，而 <b>FG = 11 這條邊根本不在 MST 裡</b>。' +
+            '只差 1，卻證明了一件重要的事。',
+         en:'The real shortest path is <b>A-D-F-G = 22</b>, and <b>the edge FG = 11 is not in the MST at all</b>. A gap of one, but it proves something important.'}});
+  F.push({shapes:gShapes({est:Object.assign({}, mapOf(MST_E, 'done'), mapOf([[5, 6]], 'ok')),
+    st:allOk}), panels:[
+    {lbl:{zh:'兩個目標', en:'two objectives'},
+      chips:[{t:'min total = 39', cls:'ok'}, {t:'min dist from A = 44', cls:'hot'}]}], line:15,
+    msg:{zh:'<b>總重量最小，不等於每條路最短。</b>MST 為了省下 FG=11 而讓 G 繞遠路；' +
+            'Dijkstra 願意多花 5 的總重，換 A→G 少走 1。' +
+            '所以「鋪最少的線」和「讓每個人最快連到伺服器」是<b>兩個不同的問題</b>，' +
+            '而在程式碼裡，它們的差別只有 <code>key</code> 那一行。',
+         en:'<b>Minimising the total is not the same as minimising every path.</b> The MST avoids FG = 11 and sends G the long way round; Dijkstra happily spends 5 more overall to save 1 on A-G. "Lay the least cable" and "give everyone the fastest route to the server" are <b>different problems</b> - and in code the difference is one line: <code>key</code>.'}});
+  return F.list;
+}
+
+// ---- tab 3: a negative edge breaks Dijkstra --------------------------------
+const NNM = ['S', 'A', 'B'];
+const NP = [[1.4, 3.4], [5.4, 5.4], [5.4, 1.6]];
+const NE = [[0, 1, 5], [0, 2, 2], [1, 2, -10]];
+function nShapes(o){
+  o = o || {}; const out = [], R = .5;
+  NE.forEach(([u, v, w]) => {
+    const st = (o.est && o.est[u + '-' + v]) || 'ghost';
+    const [x1, y1] = NP[u], [x2, y2] = NP[v];
+    const dx = x2 - x1, dy = y2 - y1, L = Math.sqrt(dx * dx + dy * dy), ux = dx / L, uy = dy / L;
+    out.push(S.e(x1 + ux * R, y1 + uy * R, x2 - ux * R, y2 - uy * R,
+      {s:st, w:st === 'ghost' ? .05 : .11}));
+    out.push(S.t((x1 + x2) / 2 + uy * .34, (y1 + y2) / 2 - ux * .34, String(w),
+      {c:w < 0 ? '#ff5c5c' : (st === 'ghost' ? '#8fa3ac' : '#ffbe6b'), fs:.30}));
+  });
+  for (let i = 0; i < 3; i++){
+    const b = o.best && o.best[i];
+    out.push(S.c(NP[i][0], NP[i][1], R, (o.st && o.st[i]) || 'idle', NNM[i],
+      b == null ? {fs:.34} : {fs:.34, sub:String(b), subfs:.28}));
+  }
+  return out;
+}
+const CODE_NEG = [
+'# Dijkstra 的前提：邊都是非負的',
+'#   pop 出來的最小值 d 之所以可以定案，',
+'#   是因為「之後的路只會更長」。',
+'',
+'best = [0, INF, INF]         # S A B',
+'pop S(0)  -> best = [0, 5, 2]',
+'pop B(2)  -> done[B] = True         # 定案！',
+'pop A(5)  -> A->B 給出 5 + (-10) = -5',
+'             但 done[B] 已經是 True，這行不會執行',
+'',
+'# 修法：Bellman-Ford，不定案，掃 V-1 輪',
+'for _ in range(n - 1):',
+'    for u, v, w in edges:',
+'        dist[v] = min(dist[v], dist[u] + w)'];
+
+function buildNeg(){
+  const F = new Frames();
+  F.push({shapes:nShapes({st:{0:'act'}, best:[0, '∞', '∞']}), panels:[], line:4,
+    msg:{zh:'那個「非負」的前提如果拿掉會怎樣？三個點就夠看出 Dijkstra 出錯。' +
+            'S→A 是 5，S→B 是 2，而 <b>A→B 是 −10</b>。',
+         en:'What happens if the non-negative assumption is dropped? Three vertices are enough to break Dijkstra: S to A costs 5, S to B costs 2, and <b>A to B costs -10</b>.'}});
+  F.push({shapes:nShapes({st:{0:'ok', 1:'soft', 2:'soft'},
+    est:{'0-1':'hot', '0-2':'hot'}, best:[0, 5, 2]}), panels:[
+    {lbl:{zh:'heap', en:'heap'}, chips:[{t:'B:2', cls:'hot'}, {t:'A:5', cls:''}]}], line:5,
+    msg:{zh:'S 定案，放鬆兩條邊：<b>A = 5，B = 2</b>。到這裡一切正常。',
+         en:'S settles and both edges relax: <b>A = 5, B = 2</b>. So far so good.'}});
+  F.push({shapes:nShapes({st:{0:'ok', 1:'soft', 2:'ok'},
+    est:{'0-1':'done', '0-2':'ok'}, best:[0, 5, 2]}), panels:[
+    {lbl:{zh:'heap', en:'heap'}, chips:[{t:'A:5', cls:'hot'}]}], line:6,
+    msg:{zh:'heap 最小的是 <b>B:2</b>，於是 <b>B 定案在 2</b>，<code>done[B] = True</code>。' +
+            '演算法在這一刻<b>永遠關上了 B 的門</b>。',
+         en:'The heap minimum is <b>B:2</b>, so <b>B is finalised at 2</b> and <code>done[B] = True</code>. At this instant the algorithm has <b>closed the door on B forever</b>.'}});
+  F.push({shapes:nShapes({st:{0:'ok', 1:'ok', 2:'bad'},
+    est:{'0-1':'ok', '0-2':'ok', '1-2':'bad'}, best:[0, 5, 2]}), panels:[
+    {lbl:{zh:'應該要更新', en:'should have updated'},
+      chips:[{t:'5 + (-10) = -5', cls:'bad'},
+             {t:LANG === 'zh' ? '被 done[B] 擋掉' : 'blocked by done[B]', cls:'bad'}]}],
+    line:8,
+    msg:{zh:'接著 A 定案在 5，走 A→B 得到 <b>5 + (−10) = −5</b>，遠比 2 好。' +
+            '但 <code>if not done[v]</code> 直接把它擋掉了。<b>答案錯了，而且演算法不會察覺。</b>',
+         en:'Then A settles at 5 and the edge A to B yields <b>5 + (-10) = -5</b>, far better than 2. But <code>if not done[v]</code> throws it away. <b>The answer is wrong, and the algorithm has no way to notice.</b>'}});
+  F.push({shapes:nShapes({st:{0:'ok', 1:'ok', 2:'ok'},
+    est:{'0-1':'ok', '1-2':'ok', '0-2':'done'}, best:[0, 5, -5]}), panels:[
+    {lbl:{zh:'正解', en:'the truth'},
+      chips:[{t:'S 0', cls:'ok'}, {t:'A 5', cls:'ok'}, {t:'B -5', cls:'ok'}]}],
+    line:11,
+    msg:{zh:'正確答案是 <b>B = −5</b>。修法是<b>不要定案</b>：Bellman-Ford 掃 V−1 輪、' +
+            '每輪把所有邊都放鬆一次，用 <b>O(VE)</b> 換取對負邊的容忍。' +
+            '<b>注意 Prim 完全不受影響</b>——它的 key 是 <code>w</code>，不累加，' +
+            '負邊只是「更便宜的入場券」而已。',
+         en:'The truth is <b>B = -5</b>. The fix is to <b>stop finalising</b>: Bellman-Ford runs V-1 rounds and relaxes every edge in each round, paying <b>O(VE)</b> for tolerance of negative weights. <b>Note that Prim is untouched</b> - its key is <code>w</code> with no accumulation, so a negative edge is merely a cheaper ticket in.'}});
+  return F.list;
+}
+
+// ---- tab 4: LC 743 ---------------------------------------------------------
+const LNM = ['1', '2', '3', '4'];
+const LP = [[2.0, 2.2], [2.0, 5.4], [5.6, 5.4], [7.8, 2.6]];
+const LE = [[1, 0, 1], [1, 2, 1], [2, 3, 1]];      // 2->1, 2->3, 3->4 (0-indexed)
+function lShapes(o){
+  o = o || {}; const out = [], R = .5;
+  LE.forEach(([u, v, w]) => {
+    const st = (o.est && o.est[u + '-' + v]) || 'ghost';
+    const [x1, y1] = LP[u], [x2, y2] = LP[v];
+    const dx = x2 - x1, dy = y2 - y1, L = Math.sqrt(dx * dx + dy * dy), ux = dx / L, uy = dy / L;
+    out.push(S.e(x1 + ux * R, y1 + uy * R, x2 - ux * R, y2 - uy * R,
+      {s:st, w:st === 'ghost' ? .05 : .11}));
+    out.push(S.t((x1 + x2) / 2 + uy * .32, (y1 + y2) / 2 - ux * .32, String(w),
+      {c:st === 'ghost' ? '#8fa3ac' : '#ffbe6b', fs:.30}));
+  });
+  for (let i = 0; i < 4; i++){
+    const b = o.best && o.best[i];
+    out.push(S.c(LP[i][0], LP[i][1], R, (o.st && o.st[i]) || 'idle', LNM[i],
+      b == null ? {fs:.34} : {fs:.34, sub:String(b), subfs:.28}));
+  }
+  return out;
+}
+const CODE_LC = [
+'def networkDelayTime(self, times, n, k):',
+'    adj = [[] for _ in range(n + 1)]',
+'    for u, v, w in times:',
+'        adj[u].append((v, w))         # 單向！別兩邊都加',
+'',
+'    dist = heap_greedy(n + 1, adj, k,',
+'                       key=lambda d, w: d + w)[0]',
+'',
+'    ans = max(dist[1:])               # 最後一個收到訊號的人',
+'    return ans if ans < INF else -1   # 有人收不到 -> -1'];
+
+function buildLC(){
+  const F = new Frames();
+  F.push({shapes:lShapes({st:{1:'act'}}), panels:[], line:0,
+    msg:{zh:'<b>LeetCode 743 網路延遲時間</b>：訊號從節點 k 出發，沿<b>有向邊</b>傳播，' +
+            '問所有節點都收到要多久。',
+         en:'<b>LeetCode 743, Network Delay Time</b>: a signal starts at node k and travels along <b>directed</b> edges. How long until every node has received it?'}});
+  F.push({shapes:lShapes({st:{1:'act'}}), panels:[], line:3,
+    msg:{zh:'第一個坑在建圖：<code>times</code> 是有向邊，只能 <code>adj[u].append((v, w))</code>。' +
+            '前面整頁都在寫無向圖，很容易順手兩邊都加，答案就會偏小——而且測資不一定抓得到。',
+         en:'The first trap is building the graph: <code>times</code> holds directed edges, so only <code>adj[u].append((v, w))</code>. After a page of undirected graphs it is easy to add both directions out of habit, which makes the answer too small - and the sample tests may not catch it.'}});
+  F.push({shapes:lShapes({st:{1:'ok', 0:'soft', 2:'soft'}, est:{'1-0':'hot', '1-2':'hot'},
+    best:['1', 0, '1', null]}), panels:[
+    {lbl:{zh:'dist', en:'dist'}, chips:[{t:'1 = 1', cls:''}, {t:'2 = 0', cls:'ok'},
+      {t:'3 = 1', cls:''}, {t:'4 = ∞', cls:'soft'}]}], line:5,
+    msg:{zh:'從 k = 2 跑同一支 <code>heap_greedy</code>，key 用 <code>d + w</code>。' +
+            '2 定案在 0，放鬆出 1 和 3。<b>「訊號傳播時間」就是最短路</b>：' +
+            '訊號同時走每一條路，最先抵達的那條當然是最短的那條。',
+         en:'Run the very same <code>heap_greedy</code> from k = 2 with key <code>d + w</code>. Node 2 settles at 0 and relaxes 1 and 3. <b>Propagation time is exactly a shortest path</b>: the signal travels every route at once, so the first arrival is the shortest one.'}});
+  F.push({shapes:lShapes({st:{1:'ok', 0:'ok', 2:'ok', 3:'soft'},
+    est:{'1-0':'ok', '1-2':'ok', '2-3':'hot'}, best:['1', 0, '1', '2']}), panels:[
+    {lbl:{zh:'dist', en:'dist'}, chips:[{t:'1 = 1', cls:'ok'}, {t:'2 = 0', cls:'ok'},
+      {t:'3 = 1', cls:'ok'}, {t:'4 = 2', cls:''}]}], line:5,
+    msg:{zh:'3 定案在 1，再放鬆到 4 得到 2。四個點都有距離了。',
+         en:'Node 3 settles at 1 and relaxes 4 to 2. Every node now has a distance.'}});
+  F.push({shapes:lShapes({st:{0:'ok', 1:'ok', 2:'ok', 3:'ok'},
+    est:{'1-0':'ok', '1-2':'ok', '2-3':'ok'}, best:['1', 0, '1', '2']}), panels:[
+    {lbl:{zh:'答案', en:'answer'}, chips:[{t:'max(1, 0, 1, 2) = 2', cls:'ok'}]}], line:8,
+    msg:{zh:'答案不是某一條最短路，而是<b>所有最短路裡最大的那個</b> = <b>2</b>。' +
+            '訊號傳遍全網的時間，取決於<b>最慢收到的那個人</b>。',
+         en:'The answer is not one shortest path but <b>the largest of them all</b> = <b>2</b>. The time to cover the network is set by <b>whoever hears it last</b>.'}});
+  F.push({shapes:lShapes({st:{0:'ok', 1:'ok', 2:'ok', 3:'bad'},
+    est:{'1-0':'ok', '1-2':'ok', '2-3':'bad'}, best:['1', 0, '1', '∞']}), panels:[
+    {lbl:{zh:'不可達', en:'unreachable'},
+      chips:[{t:'dist[4] = INF', cls:'bad'}, {t:'return -1', cls:'bad'}]}], line:9,
+    msg:{zh:'最後一個坑：拿掉 3→4 這條邊，4 永遠收不到，<code>dist[4]</code> 還是 <b>INF</b>，' +
+            '這時要回傳 <b>−1</b>。<b>忘了檢查 INF 是這題最常見的 WA</b>；' +
+            '它其實就是昨天的「圖不連通」，只是換成有向版。',
+         en:'One last trap: remove the edge 3 to 4 and node 4 never hears anything, leaving <code>dist[4]</code> at <b>INF</b>, in which case the answer is <b>-1</b>. <b>Forgetting that check is the classic wrong answer here</b> - and it is yesterday\'s disconnected graph, in directed form.'}});
+  return F.list;
+}
+
+const DAY_META = {
+  title:{zh:'Prim 與 Dijkstra：同一套 heap greedy 骨架',
+         en:'Prim and Dijkstra - one heap-greedy skeleton'},
+  sub:{zh:'兩個看起來完全不同的演算法，程式碼只差一個 key：Prim 比「這條邊多貴」，Dijkstra 比「走到那裡總共多貴」。',
+       en:'Two algorithms that look unrelated are one lambda apart: Prim compares the edge, Dijkstra compares the whole path.'},
+  tabs:[
+    {id:'skel', label:{zh:'同一個骨架', en:'the shared skeleton'},
+     stage:{zh:'一個 heap、一個迴圈、兩種 key', en:'One heap, one loop, two keys'},
+     view:[10, 7.6],
+     variants:[{zh:'key = w（Prim）', en:'key = w (Prim)'},
+               {zh:'key = d + w（Dijkstra）', en:'key = d + w (Dijkstra)'}],
+     idea:{zh:'兩者都是「<b>反覆彈出 heap 裡最小的未定案點，然後放鬆它的鄰居</b>」。' +
+              'Prim 存<b>一條邊</b>的重量，Dijkstra 存<b>整條路</b>的長度——' +
+              '換掉 <code>key</code>，同一份程式碼就換了一個問題。' +
+              'heap 裡的舊資料不刪，靠 <code>if done[u]: continue</code> 略過（lazy deletion）。',
+           en:'Both are "<b>repeatedly pop the smallest unsettled vertex, then relax its neighbours</b>". Prim stores the weight of <b>one edge</b>, Dijkstra the length of <b>the whole path</b> - swap <code>key</code> and the same source file solves a different problem. Stale heap entries are never removed; <code>if done[u]: continue</code> skips them (lazy deletion).'},
+     legend:['hot', 'ok', 'soft', 'idle'], code:CODE, build:buildSkeleton},
+    {id:'diff', label:{zh:'兩棵樹不一樣', en:'the two trees differ'},
+     stage:{zh:'最小生成樹 ≠ 最短路徑樹', en:'A spanning tree is not a shortest-path tree'},
+     view:[10, 7.6],
+     idea:{zh:'Prim 的 <code>parent</code> 給出<b>總重最小</b>的樹（39），' +
+              'Dijkstra 的 <code>parent</code> 給出<b>每條路最短</b>的樹（44）。' +
+              '在同一張圖上，A→G 在 MST 上要走 23，真正的最短路只要 22。' +
+              '<b>兩個目標會互相衝突，不可能同時最佳。</b>',
+           en:'Prim\'s <code>parent</code> array gives the tree of <b>minimum total weight</b> (39); Dijkstra\'s gives the tree of <b>shortest individual paths</b> (44). On this graph A to G costs 23 inside the MST but only 22 in reality. <b>The two objectives genuinely conflict.</b>'},
+     legend:['hot', 'ok', 'done', 'act'], code:CODE, build:buildDiff},
+    {id:'neg', label:{zh:'負邊會讓 Dijkstra 出錯', en:'a negative edge breaks it'},
+     stage:{zh:'定案太早，就再也改不回來', en:'Finalise too early and there is no way back'},
+     view:[9, 7.0],
+     idea:{zh:'Dijkstra 的每一步都建立在「<b>之後的路只會更長</b>」上，' +
+              '而這句話只有在邊非負時才成立。' +
+              '一條 −10 的邊就能讓它給出 2 而不是 −5，' +
+              '而且<b>它自己不會發現</b>——沒有例外、沒有無窮迴圈，只有一個錯的答案。',
+           en:'Every step of Dijkstra rests on "<b>any later route can only be longer</b>", which is true only when weights are non-negative. A single edge of -10 makes it answer 2 instead of -5, and <b>it never notices</b>: no exception, no infinite loop, just a wrong number.'},
+     legend:['ok', 'bad', 'hot', 'soft'], code:CODE_NEG, build:buildNeg},
+    {id:'lc', label:{zh:'LC 743 網路延遲', en:'LC 743 network delay'},
+     stage:{zh:'訊號傳播就是最短路', en:'Signal propagation is a shortest path'},
+     view:[9.6, 7.0],
+     idea:{zh:'把 <code>heap_greedy</code> 原封不動搬過來，只要注意三件事：' +
+              '邊是<b>有向</b>的、答案是 <b>max(dist)</b> 不是 min、' +
+              '有人收不到時要回傳 <b>−1</b>。',
+           en:'Reuse <code>heap_greedy</code> untouched, and watch three things: the edges are <b>directed</b>, the answer is <b>max(dist)</b> rather than min, and an unreachable node means returning <b>-1</b>.'},
+     legend:['ok', 'bad', 'hot', 'soft'], code:CODE_LC, build:buildLC}
+  ]
+};
+
+</script>
+<script>
+/* =========================================================================
+   100 Days of Python - shared demo engine
+   palette: teal/blue-green base, purple pointers, orange "current step"
+   ========================================================================= */
+const T = {
+  title:{zh:DAY_META.title.zh, en:DAY_META.title.en},
+  sub:{zh:DAY_META.sub.zh, en:DAY_META.sub.en},
+  play:{zh:'▶ 播放', en:'▶ Play'}, pause:{zh:'❚❚ 暫停', en:'❚❚ Pause'},
+  speed:{zh:'速度', en:'Speed'}, state:{zh:'演算法狀態', en:'Algorithm state'},
+  code:{zh:'程式碼', en:'Code'}, idea:{zh:'重點', en:'The idea'}
+};
+let LANG = 'zh';
+const tr = o => (o == null ? '' : (typeof o === 'string' ? o : (o[LANG] != null ? o[LANG] : o.en)));
+const $ = id => document.getElementById(id);
+
+function setLang(l){
+  LANG = l;
+  document.documentElement.lang = l === 'zh' ? 'zh-Hant' : 'en';
+  $('btn-zh').classList.toggle('on', l === 'zh');
+  $('btn-en').classList.toggle('on', l === 'en');
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.getAttribute('data-i18n');
+    if (T[k]) el.textContent = tr(T[k]);
+  });
+  buildTabs(); render();
+}
+
+/* --------------------------------------------------------------- palette */
+const STY = {
+  idle :{fill:'#07293a', stroke:'#0a6b74', text:'#dff2f5', w:.045, glow:0},
+  soft :{fill:'#052330', stroke:'#0a6b74', text:'#a8c8d0', w:.035, glow:0},
+  hot  :{fill:'#3a2109', stroke:'#ff9736', text:'#ffbe6b', w:.075, glow:.65},
+  act  :{fill:'#241542', stroke:'#9d6bff', text:'#c7a6ff', w:.070, glow:.55},
+  ok   :{fill:'#08414a', stroke:'#3fe0dd', text:'#d9ffff', w:.070, glow:.5},
+  done :{fill:'#062430', stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0},
+  bad  :{fill:'#3a0d0d', stroke:'#ff5c5c', text:'#ff9a9a', w:.070, glow:.4},
+  ghost:{fill:'none',    stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0, dash:'.12 .10'}
+};
+const COL = {teal:'#12b3b8', tealL:'#3fe0dd', purple:'#9d6bff', purpleL:'#c7a6ff',
+             orange:'#ff9736', orangeL:'#ffbe6b', red:'#ff5c5c', grey:'#8fa3ac',
+             pale:'#dff2f5', white:'#ffffff'};
+const LEGEND = {
+  hot:[COL.orange, {zh:'目前這一步', en:'current step'}],
+  act:[COL.purple, {zh:'指標 / 走訪位置', en:'pointer / cursor'}],
+  ok:[COL.tealL,  {zh:'完成 / 結果', en:'done / result'}],
+  bad:[COL.red,   {zh:'失敗 / 要避開的寫法', en:'failure / the wrong way'}],
+  done:['#2f5661', {zh:'已處理完', en:'already done'}],
+  soft:['#0a6b74', {zh:'其他元素', en:'other items'}],
+  idle:['#0a6b74', {zh:'尚未處理', en:'untouched'}],
+  ghost:['#123f4d', {zh:'尚未處理', en:'not yet reached'}]
+};
+const leg = (...keys) => keys.map(k => LEGEND[k]);
+
+/* ---------------------------------------------------------- frame buffer */
+function Frames(){
+  this.list = [];
+  this.push = (o) => this.list.push({
+    shapes:JSON.parse(JSON.stringify(o.shapes || [])),
+    panels:JSON.parse(JSON.stringify(o.panels || [])),
+    view:(o.view || null), line:(o.line == null ? 0 : o.line), msg:o.msg
+  });
+}
+/* shape helpers - engines call these, the renderer just draws */
+const S = {
+  r:(x, y, w, h, s, lab, o) => Object.assign({t:'r', x:x, y:y, w:w, h:h, s:s || 'idle', lab:lab}, o || {}),
+  c:(x, y, r, s, lab, o) => Object.assign({t:'c', x:x, y:y, r:r, s:s || 'idle', lab:lab}, o || {}),
+  e:(x1, y1, x2, y2, o) => Object.assign({t:'e', x1:x1, y1:y1, x2:x2, y2:y2}, o || {}),
+  t:(x, y, s, o) => Object.assign({t:'t', x:x, y:y, s:s}, o || {})
+};
+/* a labelled row of array cells; returns shapes */
+function cellRow(vals, x0, y, w, h, opt){
+  opt = opt || {};
+  const out = [], st = opt.states || {};
+  vals.forEach((v, i) => {
+    out.push(S.r(x0 + i * w, y, w - (opt.gap == null ? .06 : opt.gap), h, st[i] || 'idle',
+                 v == null ? '' : String(v), {fs:opt.fs || h * .52}));
+    if (opt.index !== false)
+      out.push(S.t(x0 + i * w + (w - .06) / 2, y + h + (opt.ilift || .34),
+                   opt.labels ? opt.labels[i] : String(i),
+                   {c:st[i] && st[i] !== 'idle' ? COL.orangeL : COL.grey, fs:opt.ifs || .30}));
+  });
+  if (opt.title) out.push(S.t(x0 - .22, y + h * .62, opt.title, {c:COL.tealL, fs:.32, anchor:'end'}));
+  return out;
+}
+/* binary-tree layout from a heap-style array (index 0 = root, 2i+1 / 2i+2) */
+function heapTreeShapes(arr, x0, y0, w, rowH, states, opt){
+  opt = opt || {};
+  const n = arr.length, out = [], R = opt.r || .34;
+  const depth = i => Math.floor(Math.log2(i + 1));
+  const maxD = n ? depth(n - 1) : 0;
+  const px = i => {
+    const d = depth(i), first = Math.pow(2, d) - 1, k = i - first;
+    const slots = Math.pow(2, d), span = w;
+    return x0 + span * (k + .5) / slots;
+  };
+  const py = i => y0 + depth(i) * rowH;
+  for (let i = 1; i < n; i++){
+    if (arr[i] == null) continue;
+    const p = Math.floor((i - 1) / 2);
+    out.push(S.e(px(p), py(p), px(i), py(i), {pad:R + .04,
+      s:(states && (states[i] === 'hot' || states[i] === 'act')) ? states[i] : 'idle'}));
+  }
+  for (let i = 0; i < n; i++){
+    if (arr[i] == null) continue;
+    out.push(S.c(px(i), py(i), R, (states && states[i]) || 'idle', String(arr[i]), {fs:R * .95}));
+    if (opt.showIndex)
+      out.push(S.t(px(i), py(i) + R + .34, String(i), {c:COL.grey, fs:.26}));
+  }
+  return out;
+}
+
+/* -------------------------------------------------------------- renderer */
+const svgNS = 'http://www.w3.org/2000/svg';
+const mk = (tag, a) => { const e = document.createElementNS(svgNS, tag);
+  for (const k in a) e.setAttribute(k, a[k]); return e; };
+const clear = svg => { while (svg.firstChild) svg.removeChild(svg.firstChild); };
+
+function defs(svg){
+  const d = mk('defs', {});
+  const f = mk('filter', {id:'glow', x:'-70%', y:'-70%', width:'240%', height:'240%'});
+  f.appendChild(mk('feGaussianBlur', {stdDeviation:'.055', result:'b'}));
+  const m = mk('feMerge', {});
+  m.appendChild(mk('feMergeNode', {in:'b'}));
+  m.appendChild(mk('feMergeNode', {in:'SourceGraphic'}));
+  f.appendChild(m); d.appendChild(f);
+  Object.keys(STY).forEach(k => {
+    const mk2 = mk('marker', {id:'ar-' + k, viewBox:'0 0 10 10', refX:'8.5', refY:'5',
+      markerWidth:'5.2', markerHeight:'5.2', orient:'auto-start-reverse'});
+    mk2.appendChild(mk('path', {d:'M 0 1 L 9 5 L 0 9 z', fill:STY[k].stroke}));
+    d.appendChild(mk2);
+  });
+  svg.appendChild(d);
+}
+
+function drawShape(svg, sh){
+  const st = STY[sh.s || 'idle'];
+  if (sh.t === 'e'){
+    let {x1, y1, x2, y2} = sh;
+    if (sh.pad){
+      const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+      x1 += dx / L * sh.pad; y1 += dy / L * sh.pad;
+      x2 -= dx / L * sh.pad; y2 -= dy / L * sh.pad;
+    }
+    const a = {x1:x1.toFixed(3), y1:y1.toFixed(3), x2:x2.toFixed(3), y2:y2.toFixed(3),
+      stroke:st.stroke, 'stroke-width':(sh.w || st.w || .05), 'stroke-linecap':'round',
+      opacity:(sh.o == null ? (sh.s && sh.s !== 'idle' ? 1 : .75) : sh.o)};
+    if (sh.dash || st.dash) a['stroke-dasharray'] = sh.dash || st.dash;
+    if (sh.arrow !== false) a['marker-end'] = 'url(#ar-' + (sh.s || 'idle') + ')';
+    svg.appendChild(mk('line', a));
+    if (sh.lab != null)
+      svg.appendChild(txt((x1 + x2) / 2 + (sh.lx || 0), (y1 + y2) / 2 + (sh.ly || -.16),
+        tr(sh.lab), st.stroke, sh.fs || .30, 'middle'));
+    return;
+  }
+  if (sh.t === 't'){
+    svg.appendChild(txt(sh.x, sh.y, tr(sh.s), sh.c || COL.pale, sh.fs || .32,
+      sh.anchor || 'middle', sh.o));
+    return;
+  }
+  let node;
+  if (sh.t === 'c'){
+    node = mk('circle', {cx:sh.x.toFixed(3), cy:sh.y.toFixed(3), r:sh.r.toFixed(3),
+      fill:st.fill, stroke:st.stroke, 'stroke-width':st.w});
+  } else {
+    node = mk('rect', {x:sh.x.toFixed(3), y:sh.y.toFixed(3), width:sh.w.toFixed(3),
+      height:sh.h.toFixed(3), rx:(sh.rx == null ? .09 : sh.rx), fill:st.fill,
+      stroke:st.stroke, 'stroke-width':st.w});
+  }
+  if (st.dash || sh.dash) node.setAttribute('stroke-dasharray', sh.dash || st.dash);
+  if (st.glow) node.setAttribute('filter', 'url(#glow)');
+  if (sh.o != null) node.setAttribute('opacity', sh.o);
+  svg.appendChild(node);
+  const cx = sh.t === 'c' ? sh.x : sh.x + sh.w / 2;
+  const cy = sh.t === 'c' ? sh.y : sh.y + sh.h / 2;
+  if (sh.lab != null && sh.lab !== '')
+    svg.appendChild(txt(cx + (sh.dx || 0), cy + (sh.fs || .40) * .35, tr(sh.lab), st.text,
+      sh.fs || .40, 'middle'));
+  if (sh.sub != null)
+    svg.appendChild(txt(cx, cy + (sh.t === 'c' ? sh.r : sh.h) + .34, tr(sh.sub),
+      sh.subc || COL.grey, sh.subfs || .28, 'middle'));
+  if (sh.top != null)
+    svg.appendChild(txt(cx, cy - (sh.t === 'c' ? sh.r : sh.h / 2) - .22, tr(sh.top),
+      sh.topc || COL.purpleL, sh.topfs || .28, 'middle'));
+}
+function txt(x, y, s, c, fs, anchor, o){
+  const t = mk('text', {x:(+x).toFixed(3), y:(+y).toFixed(3), 'text-anchor':anchor || 'middle',
+    fill:c, 'font-size':(+fs).toFixed(3)});
+  if (o != null) t.setAttribute('opacity', o);
+  t.textContent = s;
+  return t;
+}
+
+function renderStage(frame){
+  const svg = $('stage');
+  clear(svg); defs(svg);
+  const v = frame.view || curTab().view || [10, 6.4];
+  svg.setAttribute('viewBox', '0 0 ' + v[0] + ' ' + v[1]);
+  (frame.shapes || []).forEach(sh => drawShape(svg, sh));
+}
+
+function drawPanels(frame){
+  const box = $('panels'); box.innerHTML = '';
+  (frame.panels || []).forEach(p => {
+    const d = document.createElement('div'); d.className = 'panel';
+    const l = document.createElement('div'); l.className = 'lbl'; l.textContent = tr(p.lbl);
+    const c = document.createElement('div'); c.className = 'chips';
+    (p.chips.length ? p.chips : [{t:'—', cls:'empty'}]).forEach(ch => {
+      const s = document.createElement('span');
+      s.className = 'chip ' + (ch.cls || ''); s.textContent = ch.t; c.appendChild(s);
+    });
+    d.appendChild(l); d.appendChild(c); box.appendChild(d);
+  });
+}
+function drawCode(frame){
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  $('code').innerHTML = curTab().code.map((ln, i) => {
+    const h = esc(ln).replace(/(#.*)$/, '<span class="cm">$1</span>');
+    return '<span class="ln' + (i === frame.line ? ' on' : '') + '">' + (h || ' ') + '</span>';
+  }).join('');
+}
+function drawLegend(){
+  const keys = curTab().legend || ['hot', 'act', 'ok', 'idle'];
+  $('legend').innerHTML = keys.map(k => {
+    const [c, txt] = Array.isArray(k) ? k : LEGEND[k];
+    return '<span><i style="background:' + c + '"></i>' + tr(txt) + '</span>';
+  }).join('');
+}
+
+let tabIx = 0, varIx = 0, frames = [], cur = 0, timer = null;
+const TABS = DAY_META.tabs;
+const curTab = () => TABS[tabIx];
+
+function render(){
+  if (!frames.length) return;
+  cur = Math.max(0, Math.min(cur, frames.length - 1));
+  const f = frames[cur];
+  $('stage-title').textContent = tr(curTab().stage);
+  renderStage(f); drawPanels(f); drawCode(f); drawLegend();
+  $('narr').innerHTML = tr(f.msg);
+  $('idea').innerHTML = tr(curTab().idea);
+  $('stepno').textContent = (cur + 1) + ' / ' + frames.length;
+  $('prev').disabled = cur === 0;
+  $('next').disabled = cur === frames.length - 1;
+}
+function buildTabs(){
+  $('tabs').innerHTML = '';
+  TABS.forEach((t, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(t.label);
+    if (i === tabIx) b.classList.add('on');
+    b.onclick = () => { tabIx = i; varIx = 0; load(); };
+    $('tabs').appendChild(b);
+  });
+  const ex = $('extra'); ex.innerHTML = '';
+  const vs = curTab().variants;
+  if (vs) vs.forEach((v, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(v);
+    if (i === varIx) b.classList.add('on');
+    b.onclick = () => { varIx = i; load(); };
+    ex.appendChild(b);
+  });
+}
+function load(){
+  stop();
+  frames = curTab().build(varIx) || [];
+  cur = 0; buildTabs(); render();
+}
+function step(d){ stop(); cur += d; render(); }
+function reset(){ stop(); cur = 0; render(); }
+function stop(){ if (timer){ clearInterval(timer); timer = null; $('play').textContent = tr(T.play); } }
+function togglePlay(){
+  if (timer){ stop(); return; }
+  if (cur >= frames.length - 1) cur = 0;
+  $('play').textContent = tr(T.pause);
+  timer = setInterval(() => {
+    if (cur >= frames.length - 1){ stop(); return; }
+    cur++; render();
+  }, Number($('speed').value));
+}
+$('speed').addEventListener('input', () => { if (timer){ stop(); togglePlay(); } });
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight'){ step(1); e.preventDefault(); }
+  else if (e.key === 'ArrowLeft'){ step(-1); e.preventDefault(); }
+  else if (e.key === ' '){ togglePlay(); e.preventDefault(); }
+});
+setLang('zh');
+load();
+
+</script>
+</body>
+</html>

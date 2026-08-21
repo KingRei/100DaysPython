@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 01 - Linked List / 鏈結串列</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='2' y='2' width='28' height='28' rx='7' fill='%23062434'/><circle cx='11' cy='12' r='4' fill='%2312b3b8'/><circle cx='21' cy='12' r='4' fill='%239d6bff'/><circle cx='16' cy='22' r='4' fill='%23ff9736'/></svg>">
+<style>
+:root{
+  --bg0:#04121c; --bg1:#062434; --card:rgba(6,36,52,.72);
+  --teal:#12b3b8; --teal-d:#0a6b74; --teal-l:#3fe0dd;
+  --purple:#9d6bff; --purple-d:#241542; --purple-l:#c7a6ff;
+  --orange:#ff9736; --orange-d:#3a2109; --orange-l:#ffbe6b;
+  --red:#ff5c5c; --grey:#8fa3ac; --pale:#dff2f5; --white:#ffffff;
+  --serif:"Latin Modern Roman","Liberation Serif",Georgia,"Times New Roman",serif;
+  --mono:"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:
+    radial-gradient(900px 520px at 12% -8%,rgba(157,107,255,.20) 0%,rgba(157,107,255,0) 62%),
+    radial-gradient(900px 520px at 88% -4%,rgba(255,151,54,.16) 0%,rgba(255,151,54,0) 60%),
+    radial-gradient(1200px 800px at 50% 30%,#083041 0%,var(--bg1) 45%,var(--bg0) 100%);
+  color:var(--pale); font-family:var(--serif); min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--teal-l)}
+.wrap{max-width:1180px;margin:0 auto;padding:26px 20px 60px}
+header{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-bottom:6px}
+h1{font-size:30px;margin:0;color:var(--white);letter-spacing:.4px;
+   text-shadow:0 0 16px rgba(63,224,221,.35)}
+.day{font-size:13px;letter-spacing:2.4px;text-transform:uppercase;color:var(--orange-l);
+     border:1px solid var(--orange);border-radius:999px;padding:4px 12px;
+     background:rgba(255,151,54,.10)}
+.sub{color:var(--grey);font-size:15px;margin:8px 0 20px;max-width:72ch;line-height:1.6}
+.spacer{flex:1}
+.lang{display:flex;border:1px solid var(--teal-d);border-radius:999px;overflow:hidden}
+.lang button{background:transparent;color:var(--teal-l);border:0;padding:5px 14px;
+  font-family:var(--serif);font-size:14px;cursor:pointer}
+.lang button.on{background:var(--teal);color:#022}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
+.tabs button{
+  background:rgba(6,40,58,.75);border:1px solid rgba(18,179,184,.45);color:var(--pale);
+  padding:9px 16px;border-radius:9px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  transition:.18s}
+.tabs button:hover{border-color:var(--teal-l);color:var(--white)}
+.tabs button.on{background:linear-gradient(135deg,var(--teal) 0%,var(--purple) 140%);
+  border-color:var(--teal-l);color:#03222a;box-shadow:0 0 18px rgba(18,179,184,.30)}
+.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:18px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid rgba(18,179,184,.28);border-radius:13px;
+      padding:14px 16px}
+.card h3{margin:0 0 10px;font-size:14px;letter-spacing:2px;text-transform:uppercase;
+         color:var(--teal-l);font-weight:normal}
+svg.stage{width:100%;height:auto;display:block;touch-action:none}
+svg.stage text{font-family:var(--serif);user-select:none}
+.narr{min-height:52px;margin-top:10px;padding:10px 12px;border-left:3px solid var(--orange);
+      background:rgba(255,151,54,.07);font-size:16px;line-height:1.55;color:var(--white)}
+.narr code{font-family:var(--mono);font-size:14px;color:var(--orange-l)}
+.narr b{color:var(--orange-l);font-weight:normal}
+.ctrl{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
+.ctrl button{background:rgba(6,40,58,.9);border:1px solid var(--teal-d);color:var(--teal-l);
+  border-radius:8px;padding:7px 13px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  min-width:44px;transition:.15s}
+.ctrl button:hover:not(:disabled){background:var(--teal);color:#03222a}
+.ctrl button:disabled{opacity:.35;cursor:default}
+.ctrl .play{min-width:92px;font-weight:bold;border-color:var(--orange);color:var(--orange-l)}
+.ctrl .play:hover{background:var(--orange);color:#2a1400}
+.ctrl input[type=range]{width:120px;accent-color:var(--purple)}
+.stepno{color:var(--grey);font-size:14px;font-family:var(--mono)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;min-height:30px}
+.chip{border:1px solid var(--teal-d);border-radius:6px;padding:3px 9px;font-family:var(--mono);
+      font-size:14px;color:var(--pale);background:rgba(18,179,184,.10)}
+.chip.hot{border-color:var(--orange);color:var(--orange-l);background:rgba(255,151,54,.14)}
+.chip.act{border-color:var(--purple);color:var(--purple-l);background:rgba(157,107,255,.16)}
+.chip.ok{border-color:var(--teal-l);color:var(--teal-l);background:rgba(63,224,221,.12)}
+.chip.dim{border-color:#2f5661;color:var(--grey);background:transparent}
+.chip.bad{border-color:var(--red);color:#ff9a9a;background:rgba(255,92,92,.14)}
+.chip.empty{border-style:dashed;color:var(--grey);border-color:#2f5661}
+.panel+.panel{margin-top:12px}
+.panel .lbl{font-size:13px;letter-spacing:1.6px;text-transform:uppercase;color:var(--grey);
+  margin-bottom:5px}
+pre.code{margin:0;font-family:var(--mono);font-size:13.5px;line-height:1.72;overflow-x:auto;
+  color:#a8c8d0}
+pre.code .ln{display:block;padding:0 8px;border-left:3px solid transparent;white-space:pre}
+pre.code .ln.on{background:rgba(255,151,54,.12);border-left-color:var(--orange);color:var(--white)}
+pre.code .cm{color:#5f7b85;font-style:italic}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:13.5px;color:var(--grey)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;
+  vertical-align:-1px;border:1px solid rgba(255,255,255,.22)}
+.note{font-size:15px;line-height:1.65;color:var(--pale)}
+.note b{color:var(--purple-l);font-weight:normal}
+.note code{font-family:var(--mono);font-size:13.5px;color:var(--teal-l)}
+.toggle-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.toggle-row button{border:1px solid rgba(18,179,184,.45);border-radius:8px;padding:6px 13px;
+  cursor:pointer;font-family:var(--serif);font-size:14px;
+  background:rgba(6,40,58,.75);color:var(--pale)}
+.toggle-row button.on{background:var(--purple);border-color:var(--purple-l);color:#150a2b}
+footer{margin-top:32px;padding-top:16px;border-top:1px solid rgba(18,179,184,.25);
+  color:var(--grey);font-size:14px;display:flex;gap:18px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <span class="day">Day 01</span>
+  <h1 data-i18n="title">鏈結串列</h1>
+  <span class="spacer"></span>
+  <div class="lang">
+    <button id="btn-zh" class="on" onclick="setLang('zh')">中文</button>
+    <button id="btn-en" onclick="setLang('en')">EN</button>
+  </div>
+</header>
+<p class="sub" data-i18n="sub">一次一個 next 指標：加入、搜尋、刪除，還有雙向串列為什麼能 O(1) 拔掉中間的節點。</p>
+
+<div class="tabs" id="tabs"></div>
+
+<div class="grid">
+  <div>
+    <div class="card">
+      <h3 id="stage-title"></h3>
+      <svg class="stage" id="stage" viewBox="0 0 10 6.4" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="legend" id="legend"></div>
+      <div class="narr" id="narr"></div>
+      <div class="ctrl">
+        <button onclick="reset()" title="reset">⟲</button>
+        <button id="prev" onclick="step(-1)">◀</button>
+        <button class="play" id="play" onclick="togglePlay()" data-i18n="play">▶ 播放</button>
+        <button id="next" onclick="step(1)">▶</button>
+        <span class="stepno" id="stepno">0 / 0</span>
+        <span class="spacer"></span>
+        <span style="font-size:13px;color:var(--grey)" data-i18n="speed">速度</span>
+        <input type="range" id="speed" min="180" max="1600" step="20" value="820">
+      </div>
+      <div class="toggle-row" id="extra"></div>
+    </div>
+  </div>
+  <div>
+    <div class="card" id="state-card">
+      <h3 data-i18n="state">演算法狀態</h3>
+      <div id="panels"></div>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="code">程式碼</h3>
+      <pre class="code" id="code"></pre>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="idea">重點</h3>
+      <div class="note" id="idea"></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <span>100 Days of Python — Day 01</span>
+  <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2001%20-%20linked%20list" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://medium.com/100-days-of-python/day-01-linked-list-cf91b8937fc6" target="_blank" rel="noopener">Medium</a>
+</footer>
+</div>
+<script>
+// DAY: 01
+// TITLE_ZH: 鏈結串列
+// TITLE_EN: Linked List
+// SUB_ZH: 一次一個 next 指標：加入、搜尋、刪除，還有雙向串列為什麼能 O(1) 拔掉中間的節點。
+// SUB_EN: One next pointer at a time.
+// FOLDER: day%2001%20-%20linked%20list
+// MEDIUM: https://medium.com/100-days-of-python/day-01-linked-list-cf91b8937fc6
+
+const NW = 1.12, NH = .92, GAP = 1.78, Y = 2.9;
+const nodeX = i => 1.25 + i * GAP;
+
+function listShapes(arr, o){
+  o = o || {};
+  const y = o.y == null ? Y : o.y, st = o.states || {}, out = [];
+  const midy = y + NH / 2;
+  arr.forEach((d, i) => {
+    const s = st[i] || 'idle';
+    out.push(S.r(nodeX(i), y, NW, NH, s, d, {fs:.46, dx:-NW * .18}));
+    out.push(S.e(nodeX(i) + NW * .64, y, nodeX(i) + NW * .64, y + NH,
+                 {arrow:false, s:'soft', w:.028, o:.8}));
+    out.push(S.c(nodeX(i) + NW * .82, midy, .09, s === 'idle' ? 'soft' : s, ''));
+    const from = nodeX(i) + NW * .82;
+    if (i + 1 < arr.length)
+      out.push(S.e(from, midy, nodeX(i + 1), midy, {s:o.linkStates && o.linkStates[i] || 'idle', w:.05}));
+    else
+      out.push(S.e(from, midy, nodeX(i) + NW + .70, midy, {s:'ghost', w:.045}),
+               S.t(nodeX(i) + NW + 1.15, midy + .12, 'None', {c:'#8fa3ac', fs:.32}));
+    if (o.doubly && i > 0)
+      out.push(S.e(nodeX(i) - .02, y + NH + .30, nodeX(i - 1) + NW + .02, y + NH + .30,
+                   {s:o.prevStates && o.prevStates[i] || 'soft', w:.042}));
+  });
+  if (o.doubly && arr.length)
+    out.push(S.t(nodeX(arr.length - 1) + NW + .70, y + NH + .42, 'prev', {c:'#8fa3ac', fs:.26}));
+  const hx = arr.length ? nodeX(0) + NW / 2 : 1.9;
+  out.push(S.t(hx, y - 1.02, 'head', {c:'#c7a6ff', fs:.36}));
+  if (arr.length)
+    out.push(S.e(hx, y - .86, hx, y - .10, {s:'act', w:.05}));
+  else
+    out.push(S.t(hx, y - .50, 'None', {c:'#8fa3ac', fs:.32}));
+  return out;
+}
+const chain = arr => arr.length ? arr.join(' -> ') + ' -> None' : 'None';
+const panelOf = arr => [{lbl:{zh:'目前串列', en:'current list'},
+  chips:arr.map(d => ({t:d, cls:'ok'}))}];
+
+const CODE_ADD = [
+'def add(self, data):            # 插到頭部 / push front',
+'    node = Node(data)',
+'    if self.head == None:',
+'        self.head = node',
+'    else:',
+'        node.next = self.head',
+'        self.head = node'];
+const CODE_SEARCH = [
+'def search(self, k):',
+'    p = self.head',
+'    while p != None:',
+'        if p.data == k:',
+'            return p',
+'        p = p.next',
+'    return None'];
+const CODE_REMOVE = [
+'def remove(self):               # 拔掉頭部 / pop front',
+'    if self.head != None:',
+'        tmp = self.head',
+'        self.head = tmp.next'];
+const CODE_DLL = [
+'def remove(self, p):            # 雙向串列：拔掉任何一個 p',
+'    if p == self.head:',
+'        self.head = p.next',
+'    else:',
+'        tmp = p.prev',
+'        tmp.next = p.next',
+'        if tmp.next != None:',
+'            tmp.next.prev = tmp'];
+
+function buildAdd(){
+  const F = new Frames(), arr = [];
+  F.push({shapes:listShapes(arr), panels:panelOf(arr), line:0,
+    msg:{zh:'空串列：<b>head</b> 指向 <b>None</b>。整條串列只靠這一個入口活著。',
+         en:'Empty list: <b>head</b> points at <b>None</b>. That single entry point is the whole list.'}});
+  ['a', 'b', 'c'].forEach(d => {
+    const floatY = .85;
+    const newNode = [S.r(nodeX(0), floatY, NW, NH, 'hot', d, {fs:.46, dx:-NW * .18}),
+      S.c(nodeX(0) + NW * .82, floatY + NH / 2, .09, 'hot', ''),
+      S.t(nodeX(0) + NW / 2, floatY - .30, 'node', {c:'#ffbe6b', fs:.30})];
+    F.push({shapes:listShapes(arr).concat(newNode), panels:panelOf(arr), line:1,
+      msg:{zh:'先做一個新節點 <b>' + d + '</b>。它的 <b>next</b> 還是空的，跟串列還沒有任何關係。',
+           en:'Make a fresh node <b>' + d + '</b>. Its <b>next</b> is empty - it is not part of the list yet.'}});
+    if (!arr.length){
+      F.push({shapes:listShapes(arr).concat(newNode,
+        [S.e(nodeX(0) + NW / 2, floatY + NH + .10, nodeX(0) + NW / 2, Y - .10, {s:'hot', w:.05})]),
+        panels:panelOf(arr), line:3,
+        msg:{zh:'串列本來是空的，所以 <b>head = node</b> 就結束了。',
+             en:'The list was empty, so <b>head = node</b> is all it takes.'}});
+    } else {
+      F.push({shapes:listShapes(arr).concat(newNode,
+        [S.e(nodeX(0) + NW * .82, floatY + NH / 2, nodeX(0) + NW * .35, Y - .06, {s:'hot', w:.05})]),
+        panels:panelOf(arr), line:5,
+        msg:{zh:'<b>順序很重要</b>：先讓新節點的 next 指到舊的 head（<b>' + arr[0] + '</b>），' +
+                '再去動 head。反過來寫，舊串列就找不到了。',
+             en:'<b>Order matters</b>: first point the new node at the old head (<b>' + arr[0] +
+                '</b>), only then move head. Do it the other way round and the old list is lost.'}});
+    }
+    arr.unshift(d);
+    F.push({shapes:listShapes(arr, {states:{0:'ok'}}), panels:panelOf(arr),
+      line:arr.length === 1 ? 3 : 6,
+      msg:{zh:'<b>head</b> 改指向 <b>' + d + '</b>。不管串列多長，插入頭部都是固定 <b>O(1)</b>。',
+           en:'<b>head</b> now points at <b>' + d + '</b>. Push-front is <b>O(1)</b> no matter how long the list is.'}});
+  });
+  F.push({shapes:listShapes(arr, {states:{0:'ok', 1:'ok', 2:'ok'}}), panels:panelOf(arr), line:0,
+    msg:{zh:'結果是 <b>' + chain(arr) + '</b>——加入順序 a、b、c，串列卻是倒過來的，因為每次都插在頭部。',
+         en:'Result: <b>' + chain(arr) + '</b> - added a, b, c but the list reads backwards, because every add goes to the front.'}});
+  return F.list;
+}
+
+function buildSearch(v){
+  const arr = ['c', 'b', 'a'], key = v === 0 ? 'a' : 'z', F = new Frames();
+  F.push({shapes:listShapes(arr), panels:panelOf(arr), line:0,
+    msg:{zh:'要找 <b>' + key + '</b>。串列沒有索引，唯一的辦法是從 head 一個一個走。',
+         en:'Looking for <b>' + key + '</b>. A list has no index - the only way in is to walk from head.'}});
+  let hops = 0;
+  for (let i = 0; i < arr.length; i++){
+    hops++;
+    const st = {}; for (let j = 0; j < i; j++) st[j] = 'done'; st[i] = 'act';
+    const pMark = [S.t(nodeX(i) + NW / 2, Y + NH + .55, 'p', {c:'#c7a6ff', fs:.34})];
+    F.push({shapes:listShapes(arr, {states:st}).concat(pMark), panels:panelOf(arr), line:3,
+      msg:{zh:'第 ' + hops + ' 步：<b>p.data == ' + arr[i] + '</b>，' +
+              (arr[i] === key ? '跟 <b>' + key + '</b> 相同——找到了。' : '不是 <b>' + key + '</b>，繼續往下。'),
+           en:'Hop ' + hops + ': <b>p.data == ' + arr[i] + '</b>' +
+              (arr[i] === key ? ' - that is <b>' + key + '</b>, found it.' : ', not <b>' + key + '</b>, keep going.')}});
+    if (arr[i] === key){
+      st[i] = 'ok';
+      F.push({shapes:listShapes(arr, {states:st}).concat(pMark), panels:panelOf(arr), line:4,
+        msg:{zh:'回傳這個節點。走了 <b>' + hops + '</b> 步——最壞情況就是整條串列 <b>O(n)</b>。',
+             en:'Return that node. It took <b>' + hops + '</b> hops - worst case is the whole list, <b>O(n)</b>.'}});
+      return F.list;
+    }
+    F.push({shapes:listShapes(arr, {states:st, linkStates:{[i]:'act'}}).concat(pMark),
+      panels:panelOf(arr), line:5,
+      msg:{zh:'<b>p = p.next</b>：沿著指標往右跳一格。',
+           en:'<b>p = p.next</b>: follow the pointer one hop to the right.'}});
+  }
+  const st = {}; arr.forEach((_, i) => st[i] = 'done');
+  F.push({shapes:listShapes(arr, {states:st}), panels:panelOf(arr), line:6,
+    msg:{zh:'走到 <b>None</b> 還沒找到，回傳 None。整條串列都掃過了，這就是 <b>O(n)</b> 的代價。',
+         en:'We hit <b>None</b> without a match, so return None. The whole list was scanned - that is the <b>O(n)</b> price.'}});
+  return F.list;
+}
+
+function buildRemove(){
+  const arr = ['c', 'b', 'a'], F = new Frames();
+  F.push({shapes:listShapes(arr), panels:panelOf(arr), line:0,
+    msg:{zh:'從 <b>' + chain(arr) + '</b> 開始，連拔兩次頭部。',
+         en:'Starting from <b>' + chain(arr) + '</b>, pop the head twice.'}});
+  for (let k = 0; k < 2; k++){
+    const gone = arr[0];
+    F.push({shapes:listShapes(arr, {states:{0:'hot'}}).concat(
+      [S.t(nodeX(0) + NW / 2, Y + NH + .55, 'tmp', {c:'#ffbe6b', fs:.34})]),
+      panels:panelOf(arr), line:2,
+      msg:{zh:'<b>tmp = self.head</b>，先把要拔掉的節點 <b>' + gone + '</b> 記起來。',
+           en:'<b>tmp = self.head</b> - remember the node we are about to drop, <b>' + gone + '</b>.'}});
+    F.push({shapes:listShapes(arr, {states:{0:'bad', 1:'ok'}, linkStates:{0:'act'}}),
+      panels:panelOf(arr), line:3,
+      msg:{zh:'<b>head = tmp.next</b>：head 直接跳過 <b>' + gone + '</b>。沒有人指著它了，' +
+              'Python 的垃圾回收會處理掉。',
+           en:'<b>head = tmp.next</b>: head jumps over <b>' + gone + '</b>. Nothing references it any more, so Python collects it.'}});
+    arr.shift();
+    F.push({shapes:listShapes(arr, {states:{0:'ok'}}), panels:panelOf(arr), line:3,
+      msg:{zh:'現在是 <b>' + chain(arr) + '</b>。沒有搬動任何資料，只改了一個指標——<b>O(1)</b>。',
+           en:'Now <b>' + chain(arr) + '</b>. No data moved, one pointer changed - <b>O(1)</b>.'}});
+  }
+  F.push({shapes:listShapes(arr, {states:{0:'ok'}}), panels:panelOf(arr), line:1,
+    msg:{zh:'陣列拔掉第一個元素要把後面全部往前搬（O(n)），串列只要動 head。這就是它存在的理由。',
+         en:'Removing the first element of an array shifts everything left (O(n)); a linked list just moves head. That is the whole point.'}});
+  return F.list;
+}
+
+function buildDLL(){
+  const arr = ['c', 'b', 'a'], F = new Frames(), o = {doubly:true};
+  F.push({shapes:listShapes(arr, o), panels:panelOf(arr), line:0,
+    msg:{zh:'雙向串列每個節點多一個 <b>prev</b>（下方那排箭頭）。多花一點記憶體，換到往回走的能力。',
+         en:'A doubly linked list adds a <b>prev</b> pointer (the lower row of arrows): a little more memory, bought back as the ability to walk backwards.'}});
+  const i = 1;
+  F.push({shapes:listShapes(arr, {doubly:true, states:{1:'act'}}).concat(
+    [S.t(nodeX(1) + NW / 2, Y - .50, 'p', {c:'#c7a6ff', fs:.34})]),
+    panels:panelOf(arr), line:1,
+    msg:{zh:'要拔掉中間的 <b>b</b>。先問：它是不是 head？不是，走 else。',
+         en:'We want to drop <b>b</b> in the middle. Is it the head? No, so take the else branch.'}});
+  F.push({shapes:listShapes(arr, {doubly:true, states:{0:'hot', 1:'act'}, prevStates:{1:'hot'}}).concat(
+    [S.t(nodeX(0) + NW / 2, Y - .50, 'tmp = p.prev', {c:'#ffbe6b', fs:.30})]),
+    panels:panelOf(arr), line:4,
+    msg:{zh:'<b>tmp = p.prev</b>——這就是關鍵：單向串列必須從頭走一遍才知道前一個是誰，' +
+            '雙向串列一步就拿到。',
+         en:'<b>tmp = p.prev</b> - this is the payoff: a singly linked list must walk from the head to find the predecessor; here it is one step.'}});
+  F.push({shapes:listShapes(arr, {doubly:true, states:{0:'hot', 1:'bad', 2:'ok'}}).concat(
+    [S.e(nodeX(0) + NW * .82, Y + NH / 2, nodeX(2), Y - .35, {s:'hot', w:.05}),
+     S.e(nodeX(2), Y - .35, nodeX(2), Y + NH / 2 - .05, {s:'hot', w:.05, arrow:false})]),
+    panels:panelOf(arr), line:5,
+    msg:{zh:'<b>tmp.next = p.next</b>：讓 <b>a</b> 直接跨過 <b>b</b> 指到 <b>c</b>。',
+         en:'<b>tmp.next = p.next</b>: let <b>a</b> reach over <b>b</b> straight to <b>c</b>.'}});
+  F.push({shapes:listShapes(arr, {doubly:true, states:{0:'hot', 1:'bad', 2:'ok'}, prevStates:{2:'hot'}}),
+    panels:panelOf(arr), line:7,
+    msg:{zh:'別忘了另一邊：<b>tmp.next.prev = tmp</b>。雙向串列每次刪除都要修兩條指標，' +
+            '少修一條就會在往回走的時候炸掉。',
+         en:'Do not forget the other side: <b>tmp.next.prev = tmp</b>. Every deletion fixes two pointers; skip one and the backward walk breaks.'}});
+  arr.splice(1, 1);
+  F.push({shapes:listShapes(arr, {doubly:true, states:{0:'ok', 1:'ok'}}), panels:panelOf(arr), line:0,
+    msg:{zh:'結果 <b>' + chain(arr) + '</b>。只要手上有節點，刪除就是 <b>O(1)</b>——' +
+            '這正是 LRU 快取要用「雜湊表 + 雙向串列」的原因。',
+         en:'Result <b>' + chain(arr) + '</b>. Given the node itself, deletion is <b>O(1)</b> - exactly why an LRU cache pairs a hash map with a doubly linked list.'}});
+  return F.list;
+}
+
+const DAY_META = {
+  title:{zh:'鏈結串列', en:'Linked List'},
+  sub:{zh:'一次一個 next 指標：加入、搜尋、刪除，還有雙向串列為什麼能 O(1) 拔掉中間的節點。',
+       en:'One next pointer at a time: add, search, remove, and why a doubly linked list can unlink a middle node in O(1).'},
+  tabs:[
+    {id:'add', label:{zh:'加入 add()', en:'add()'},
+     stage:{zh:'把新節點插到頭部', en:'Pushing a node onto the front'},
+     idea:{zh:'鏈結串列不是一塊連續記憶體，而是一串「資料 + 下一個的地址」。' +
+              '<b>插入頭部只改兩個指標，跟長度無關</b>；代價是想拿第 k 個元素得從頭走 k 步。',
+           en:'A linked list is not one contiguous block; it is a chain of "data + address of the next one". ' +
+              '<b>Push-front touches two pointers regardless of length</b>; the price is that reaching element k costs k hops.'},
+     legend:['hot', 'act', 'ok', 'idle'], code:CODE_ADD, build:buildAdd},
+    {id:'search', label:{zh:'搜尋 search()', en:'search()'},
+     stage:{zh:'從 head 一路走', en:'Walking from head'},
+     variants:[{zh:'找得到 (a)', en:'hit (a)'}, {zh:'找不到 (z)', en:'miss (z)'}],
+     idea:{zh:'串列<b>沒有索引</b>：查一個值只能從 head 沿著 next 走，平均掃一半、最壞掃全部，' +
+              '都是 <b>O(n)</b>。想要 O(1) 查找就得換工具（雜湊表）。',
+           en:'A list has <b>no index</b>: looking up a value means walking from head along next - half the list on average, all of it at worst, so <b>O(n)</b>. O(1) lookup needs a different tool (a hash table).'},
+     legend:['act', 'ok', 'done', 'idle'], code:CODE_SEARCH, build:buildSearch},
+    {id:'remove', label:{zh:'刪除 remove()', en:'remove()'},
+     stage:{zh:'拔掉頭部', en:'Popping the head'},
+     idea:{zh:'刪除的成本全在「找到前一個節點」。頭部的前一個就是 head 本身，所以 <b>O(1)</b>；' +
+              '要刪中間的節點，單向串列就得先走過去。',
+           en:'The cost of deletion is all in finding the predecessor. For the head there is none, so it is <b>O(1)</b>; deleting a middle node in a singly linked list means walking there first.'},
+     legend:['hot', 'bad', 'ok', 'idle'], code:CODE_REMOVE, build:buildRemove},
+    {id:'dll', label:{zh:'雙向串列', en:'doubly linked'},
+     stage:{zh:'拔掉中間的節點', en:'Unlinking a middle node'},
+     idea:{zh:'多存一個 <b>prev</b>，就能在拿到節點的當下直接把它拆掉，不用重新搜尋。' +
+              '記憶體換時間的經典交易，之後做快取淘汰、圖的鄰接串列都會再看到。',
+           en:'Storing one extra <b>prev</b> pointer lets you unlink a node the moment you hold it, with no second search. A classic memory-for-time trade you will meet again in cache eviction and adjacency lists.'},
+     legend:['hot', 'act', 'bad', 'ok'], code:CODE_DLL, build:buildDLL}
+  ]
+};
+
+</script>
+<script>
+/* =========================================================================
+   100 Days of Python - shared demo engine
+   palette: teal/blue-green base, purple pointers, orange "current step"
+   ========================================================================= */
+const T = {
+  title:{zh:DAY_META.title.zh, en:DAY_META.title.en},
+  sub:{zh:DAY_META.sub.zh, en:DAY_META.sub.en},
+  play:{zh:'▶ 播放', en:'▶ Play'}, pause:{zh:'❚❚ 暫停', en:'❚❚ Pause'},
+  speed:{zh:'速度', en:'Speed'}, state:{zh:'演算法狀態', en:'Algorithm state'},
+  code:{zh:'程式碼', en:'Code'}, idea:{zh:'重點', en:'The idea'}
+};
+let LANG = 'zh';
+const tr = o => (o == null ? '' : (typeof o === 'string' ? o : (o[LANG] != null ? o[LANG] : o.en)));
+const $ = id => document.getElementById(id);
+
+function setLang(l){
+  LANG = l;
+  document.documentElement.lang = l === 'zh' ? 'zh-Hant' : 'en';
+  $('btn-zh').classList.toggle('on', l === 'zh');
+  $('btn-en').classList.toggle('on', l === 'en');
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.getAttribute('data-i18n');
+    if (T[k]) el.textContent = tr(T[k]);
+  });
+  buildTabs(); render();
+}
+
+/* --------------------------------------------------------------- palette */
+const STY = {
+  idle :{fill:'#07293a', stroke:'#0a6b74', text:'#dff2f5', w:.045, glow:0},
+  soft :{fill:'#052330', stroke:'#0a6b74', text:'#a8c8d0', w:.035, glow:0},
+  hot  :{fill:'#3a2109', stroke:'#ff9736', text:'#ffbe6b', w:.075, glow:.65},
+  act  :{fill:'#241542', stroke:'#9d6bff', text:'#c7a6ff', w:.070, glow:.55},
+  ok   :{fill:'#08414a', stroke:'#3fe0dd', text:'#d9ffff', w:.070, glow:.5},
+  done :{fill:'#062430', stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0},
+  bad  :{fill:'#3a0d0d', stroke:'#ff5c5c', text:'#ff9a9a', w:.070, glow:.4},
+  ghost:{fill:'none',    stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0, dash:'.12 .10'}
+};
+const COL = {teal:'#12b3b8', tealL:'#3fe0dd', purple:'#9d6bff', purpleL:'#c7a6ff',
+             orange:'#ff9736', orangeL:'#ffbe6b', red:'#ff5c5c', grey:'#8fa3ac',
+             pale:'#dff2f5', white:'#ffffff'};
+const LEGEND = {
+  hot:[COL.orange, {zh:'目前這一步', en:'current step'}],
+  act:[COL.purple, {zh:'指標 / 走訪位置', en:'pointer / cursor'}],
+  ok:[COL.tealL,  {zh:'完成 / 結果', en:'done / result'}],
+  bad:[COL.red,   {zh:'失敗 / 要避開的寫法', en:'failure / the wrong way'}],
+  done:['#2f5661', {zh:'已處理完', en:'already done'}],
+  soft:['#0a6b74', {zh:'其他元素', en:'other items'}],
+  idle:['#0a6b74', {zh:'尚未處理', en:'untouched'}]
+};
+const leg = (...keys) => keys.map(k => LEGEND[k]);
+
+/* ---------------------------------------------------------- frame buffer */
+function Frames(){
+  this.list = [];
+  this.push = (o) => this.list.push({
+    shapes:JSON.parse(JSON.stringify(o.shapes || [])),
+    panels:JSON.parse(JSON.stringify(o.panels || [])),
+    view:(o.view || null), line:(o.line == null ? 0 : o.line), msg:o.msg
+  });
+}
+/* shape helpers - engines call these, the renderer just draws */
+const S = {
+  r:(x, y, w, h, s, lab, o) => Object.assign({t:'r', x:x, y:y, w:w, h:h, s:s || 'idle', lab:lab}, o || {}),
+  c:(x, y, r, s, lab, o) => Object.assign({t:'c', x:x, y:y, r:r, s:s || 'idle', lab:lab}, o || {}),
+  e:(x1, y1, x2, y2, o) => Object.assign({t:'e', x1:x1, y1:y1, x2:x2, y2:y2}, o || {}),
+  t:(x, y, s, o) => Object.assign({t:'t', x:x, y:y, s:s}, o || {})
+};
+/* a labelled row of array cells; returns shapes */
+function cellRow(vals, x0, y, w, h, opt){
+  opt = opt || {};
+  const out = [], st = opt.states || {};
+  vals.forEach((v, i) => {
+    out.push(S.r(x0 + i * w, y, w - (opt.gap == null ? .06 : opt.gap), h, st[i] || 'idle',
+                 v == null ? '' : String(v), {fs:opt.fs || h * .52}));
+    if (opt.index !== false)
+      out.push(S.t(x0 + i * w + (w - .06) / 2, y + h + (opt.ilift || .34),
+                   opt.labels ? opt.labels[i] : String(i),
+                   {c:st[i] && st[i] !== 'idle' ? COL.orangeL : COL.grey, fs:opt.ifs || .30}));
+  });
+  if (opt.title) out.push(S.t(x0 - .22, y + h * .62, opt.title, {c:COL.tealL, fs:.32, anchor:'end'}));
+  return out;
+}
+/* binary-tree layout from a heap-style array (index 0 = root, 2i+1 / 2i+2) */
+function heapTreeShapes(arr, x0, y0, w, rowH, states, opt){
+  opt = opt || {};
+  const n = arr.length, out = [], R = opt.r || .34;
+  const depth = i => Math.floor(Math.log2(i + 1));
+  const maxD = n ? depth(n - 1) : 0;
+  const px = i => {
+    const d = depth(i), first = Math.pow(2, d) - 1, k = i - first;
+    const slots = Math.pow(2, d), span = w;
+    return x0 + span * (k + .5) / slots;
+  };
+  const py = i => y0 + depth(i) * rowH;
+  for (let i = 1; i < n; i++){
+    if (arr[i] == null) continue;
+    const p = Math.floor((i - 1) / 2);
+    out.push(S.e(px(p), py(p), px(i), py(i), {pad:R + .04,
+      s:(states && (states[i] === 'hot' || states[i] === 'act')) ? states[i] : 'idle'}));
+  }
+  for (let i = 0; i < n; i++){
+    if (arr[i] == null) continue;
+    out.push(S.c(px(i), py(i), R, (states && states[i]) || 'idle', String(arr[i]), {fs:R * .95}));
+    if (opt.showIndex)
+      out.push(S.t(px(i), py(i) + R + .34, String(i), {c:COL.grey, fs:.26}));
+  }
+  return out;
+}
+
+/* -------------------------------------------------------------- renderer */
+const svgNS = 'http://www.w3.org/2000/svg';
+const mk = (tag, a) => { const e = document.createElementNS(svgNS, tag);
+  for (const k in a) e.setAttribute(k, a[k]); return e; };
+const clear = svg => { while (svg.firstChild) svg.removeChild(svg.firstChild); };
+
+function defs(svg){
+  const d = mk('defs', {});
+  const f = mk('filter', {id:'glow', x:'-70%', y:'-70%', width:'240%', height:'240%'});
+  f.appendChild(mk('feGaussianBlur', {stdDeviation:'.055', result:'b'}));
+  const m = mk('feMerge', {});
+  m.appendChild(mk('feMergeNode', {in:'b'}));
+  m.appendChild(mk('feMergeNode', {in:'SourceGraphic'}));
+  f.appendChild(m); d.appendChild(f);
+  Object.keys(STY).forEach(k => {
+    const mk2 = mk('marker', {id:'ar-' + k, viewBox:'0 0 10 10', refX:'8.5', refY:'5',
+      markerWidth:'5.2', markerHeight:'5.2', orient:'auto-start-reverse'});
+    mk2.appendChild(mk('path', {d:'M 0 1 L 9 5 L 0 9 z', fill:STY[k].stroke}));
+    d.appendChild(mk2);
+  });
+  svg.appendChild(d);
+}
+
+function drawShape(svg, sh){
+  const st = STY[sh.s || 'idle'];
+  if (sh.t === 'e'){
+    let {x1, y1, x2, y2} = sh;
+    if (sh.pad){
+      const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+      x1 += dx / L * sh.pad; y1 += dy / L * sh.pad;
+      x2 -= dx / L * sh.pad; y2 -= dy / L * sh.pad;
+    }
+    const a = {x1:x1.toFixed(3), y1:y1.toFixed(3), x2:x2.toFixed(3), y2:y2.toFixed(3),
+      stroke:st.stroke, 'stroke-width':(sh.w || st.w || .05), 'stroke-linecap':'round',
+      opacity:(sh.o == null ? (sh.s && sh.s !== 'idle' ? 1 : .75) : sh.o)};
+    if (sh.dash || st.dash) a['stroke-dasharray'] = sh.dash || st.dash;
+    if (sh.arrow !== false) a['marker-end'] = 'url(#ar-' + (sh.s || 'idle') + ')';
+    svg.appendChild(mk('line', a));
+    if (sh.lab != null)
+      svg.appendChild(txt((x1 + x2) / 2 + (sh.lx || 0), (y1 + y2) / 2 + (sh.ly || -.16),
+        tr(sh.lab), st.stroke, sh.fs || .30, 'middle'));
+    return;
+  }
+  if (sh.t === 't'){
+    svg.appendChild(txt(sh.x, sh.y, tr(sh.s), sh.c || COL.pale, sh.fs || .32,
+      sh.anchor || 'middle', sh.o));
+    return;
+  }
+  let node;
+  if (sh.t === 'c'){
+    node = mk('circle', {cx:sh.x.toFixed(3), cy:sh.y.toFixed(3), r:sh.r.toFixed(3),
+      fill:st.fill, stroke:st.stroke, 'stroke-width':st.w});
+  } else {
+    node = mk('rect', {x:sh.x.toFixed(3), y:sh.y.toFixed(3), width:sh.w.toFixed(3),
+      height:sh.h.toFixed(3), rx:(sh.rx == null ? .09 : sh.rx), fill:st.fill,
+      stroke:st.stroke, 'stroke-width':st.w});
+  }
+  if (st.dash || sh.dash) node.setAttribute('stroke-dasharray', sh.dash || st.dash);
+  if (st.glow) node.setAttribute('filter', 'url(#glow)');
+  if (sh.o != null) node.setAttribute('opacity', sh.o);
+  svg.appendChild(node);
+  const cx = sh.t === 'c' ? sh.x : sh.x + sh.w / 2;
+  const cy = sh.t === 'c' ? sh.y : sh.y + sh.h / 2;
+  if (sh.lab != null && sh.lab !== '')
+    svg.appendChild(txt(cx + (sh.dx || 0), cy + (sh.fs || .40) * .35, tr(sh.lab), st.text,
+      sh.fs || .40, 'middle'));
+  if (sh.sub != null)
+    svg.appendChild(txt(cx, cy + (sh.t === 'c' ? sh.r : sh.h) + .34, tr(sh.sub),
+      sh.subc || COL.grey, sh.subfs || .28, 'middle'));
+  if (sh.top != null)
+    svg.appendChild(txt(cx, cy - (sh.t === 'c' ? sh.r : sh.h / 2) - .22, tr(sh.top),
+      sh.topc || COL.purpleL, sh.topfs || .28, 'middle'));
+}
+function txt(x, y, s, c, fs, anchor, o){
+  const t = mk('text', {x:(+x).toFixed(3), y:(+y).toFixed(3), 'text-anchor':anchor || 'middle',
+    fill:c, 'font-size':(+fs).toFixed(3)});
+  if (o != null) t.setAttribute('opacity', o);
+  t.textContent = s;
+  return t;
+}
+
+function renderStage(frame){
+  const svg = $('stage');
+  clear(svg); defs(svg);
+  const v = frame.view || curTab().view || [10, 6.4];
+  svg.setAttribute('viewBox', '0 0 ' + v[0] + ' ' + v[1]);
+  (frame.shapes || []).forEach(sh => drawShape(svg, sh));
+}
+
+function drawPanels(frame){
+  const box = $('panels'); box.innerHTML = '';
+  (frame.panels || []).forEach(p => {
+    const d = document.createElement('div'); d.className = 'panel';
+    const l = document.createElement('div'); l.className = 'lbl'; l.textContent = tr(p.lbl);
+    const c = document.createElement('div'); c.className = 'chips';
+    (p.chips.length ? p.chips : [{t:'—', cls:'empty'}]).forEach(ch => {
+      const s = document.createElement('span');
+      s.className = 'chip ' + (ch.cls || ''); s.textContent = ch.t; c.appendChild(s);
+    });
+    d.appendChild(l); d.appendChild(c); box.appendChild(d);
+  });
+}
+function drawCode(frame){
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  $('code').innerHTML = curTab().code.map((ln, i) => {
+    const h = esc(ln).replace(/(#.*)$/, '<span class="cm">$1</span>');
+    return '<span class="ln' + (i === frame.line ? ' on' : '') + '">' + (h || ' ') + '</span>';
+  }).join('');
+}
+function drawLegend(){
+  const keys = curTab().legend || ['hot', 'act', 'ok', 'idle'];
+  $('legend').innerHTML = keys.map(k => {
+    const [c, txt] = Array.isArray(k) ? k : LEGEND[k];
+    return '<span><i style="background:' + c + '"></i>' + tr(txt) + '</span>';
+  }).join('');
+}
+
+let tabIx = 0, varIx = 0, frames = [], cur = 0, timer = null;
+const TABS = DAY_META.tabs;
+const curTab = () => TABS[tabIx];
+
+function render(){
+  if (!frames.length) return;
+  cur = Math.max(0, Math.min(cur, frames.length - 1));
+  const f = frames[cur];
+  $('stage-title').textContent = tr(curTab().stage);
+  renderStage(f); drawPanels(f); drawCode(f); drawLegend();
+  $('narr').innerHTML = tr(f.msg);
+  $('idea').innerHTML = tr(curTab().idea);
+  $('stepno').textContent = (cur + 1) + ' / ' + frames.length;
+  $('prev').disabled = cur === 0;
+  $('next').disabled = cur === frames.length - 1;
+}
+function buildTabs(){
+  $('tabs').innerHTML = '';
+  TABS.forEach((t, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(t.label);
+    if (i === tabIx) b.classList.add('on');
+    b.onclick = () => { tabIx = i; varIx = 0; load(); };
+    $('tabs').appendChild(b);
+  });
+  const ex = $('extra'); ex.innerHTML = '';
+  const vs = curTab().variants;
+  if (vs) vs.forEach((v, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(v);
+    if (i === varIx) b.classList.add('on');
+    b.onclick = () => { varIx = i; load(); };
+    ex.appendChild(b);
+  });
+}
+function load(){
+  stop();
+  frames = curTab().build(varIx) || [];
+  cur = 0; buildTabs(); render();
+}
+function step(d){ stop(); cur += d; render(); }
+function reset(){ stop(); cur = 0; render(); }
+function stop(){ if (timer){ clearInterval(timer); timer = null; $('play').textContent = tr(T.play); } }
+function togglePlay(){
+  if (timer){ stop(); return; }
+  if (cur >= frames.length - 1) cur = 0;
+  $('play').textContent = tr(T.pause);
+  timer = setInterval(() => {
+    if (cur >= frames.length - 1){ stop(); return; }
+    cur++; render();
+  }, Number($('speed').value));
+}
+$('speed').addEventListener('input', () => { if (timer){ stop(); togglePlay(); } });
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight'){ step(1); e.preventDefault(); }
+  else if (e.key === 'ArrowLeft'){ step(-1); e.preventDefault(); }
+  else if (e.key === ' '){ togglePlay(); e.preventDefault(); }
+});
+setLang('zh');
+load();
+
+</script>
+</body>
+</html>

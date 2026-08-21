@@ -3,6 +3,9 @@
 More details in:
 https://medium.com/100-days-of-python/day-07-python-list-tuple-dict-and-set-78a164a5e207
 
+Interactive walkthrough: [demo.html](demo.html) - a single self-contained page
+(no build step, works offline, 中文 / English toggle) that animates list contiguity, tuple immutability, dict buckets and set operations step by step.
+
 ![Container](http://excess.org/media/image/2012/11/literal2.png)
 (form: [Excess.org](http://excess.org/article/2012/11/python-container-literals/) )
 

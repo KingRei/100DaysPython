@@ -3,6 +3,9 @@
 More details in:
 https://medium.com/100-days-of-python/day-02-stack-queue-1ab49a7b021d
 
+Interactive walkthrough: [demo.html](demo.html) - a single self-contained page
+(no build step, works offline, 中文 / English toggle) that animates push/pop, deque vs list.pop(0), and LeetCode 20 bracket matching step by step.
+
 ## Stack
 ![Stack](https://upload.wikimedia.org/wikipedia/commons/b/b4/Lifo_stack.png)
 

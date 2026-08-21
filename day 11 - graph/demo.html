@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 11 - Graph - turning relationships into a data structure / 圖：把「關係」變成資料結構</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='2' y='2' width='28' height='28' rx='7' fill='%23062434'/><circle cx='11' cy='12' r='4' fill='%2312b3b8'/><circle cx='21' cy='12' r='4' fill='%239d6bff'/><circle cx='16' cy='22' r='4' fill='%23ff9736'/></svg>">
+<style>
+:root{
+  --bg0:#04121c; --bg1:#062434; --card:rgba(6,36,52,.72);
+  --teal:#12b3b8; --teal-d:#0a6b74; --teal-l:#3fe0dd;
+  --purple:#9d6bff; --purple-d:#241542; --purple-l:#c7a6ff;
+  --orange:#ff9736; --orange-d:#3a2109; --orange-l:#ffbe6b;
+  --red:#ff5c5c; --grey:#8fa3ac; --pale:#dff2f5; --white:#ffffff;
+  --serif:"Latin Modern Roman","Liberation Serif",Georgia,"Times New Roman",serif;
+  --mono:"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:
+    radial-gradient(900px 520px at 12% -8%,rgba(157,107,255,.20) 0%,rgba(157,107,255,0) 62%),
+    radial-gradient(900px 520px at 88% -4%,rgba(255,151,54,.16) 0%,rgba(255,151,54,0) 60%),
+    radial-gradient(1200px 800px at 50% 30%,#083041 0%,var(--bg1) 45%,var(--bg0) 100%);
+  color:var(--pale); font-family:var(--serif); min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--teal-l)}
+.wrap{max-width:1180px;margin:0 auto;padding:26px 20px 60px}
+header{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-bottom:6px}
+h1{font-size:30px;margin:0;color:var(--white);letter-spacing:.4px;
+   text-shadow:0 0 16px rgba(63,224,221,.35)}
+.day{font-size:13px;letter-spacing:2.4px;text-transform:uppercase;color:var(--orange-l);
+     border:1px solid var(--orange);border-radius:999px;padding:4px 12px;
+     background:rgba(255,151,54,.10)}
+.sub{color:var(--grey);font-size:15px;margin:8px 0 20px;max-width:72ch;line-height:1.6}
+.spacer{flex:1}
+.lang{display:flex;border:1px solid var(--teal-d);border-radius:999px;overflow:hidden}
+.lang button{background:transparent;color:var(--teal-l);border:0;padding:5px 14px;
+  font-family:var(--serif);font-size:14px;cursor:pointer}
+.lang button.on{background:var(--teal);color:#022}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
+.tabs button{
+  background:rgba(6,40,58,.75);border:1px solid rgba(18,179,184,.45);color:var(--pale);
+  padding:9px 16px;border-radius:9px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  transition:.18s}
+.tabs button:hover{border-color:var(--teal-l);color:var(--white)}
+.tabs button.on{background:linear-gradient(135deg,var(--teal) 0%,var(--purple) 140%);
+  border-color:var(--teal-l);color:#03222a;box-shadow:0 0 18px rgba(18,179,184,.30)}
+.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:18px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid rgba(18,179,184,.28);border-radius:13px;
+      padding:14px 16px}
+.card h3{margin:0 0 10px;font-size:14px;letter-spacing:2px;text-transform:uppercase;
+         color:var(--teal-l);font-weight:normal}
+svg.stage{width:100%;height:auto;display:block;touch-action:none}
+svg.stage text{font-family:var(--serif);user-select:none}
+.narr{min-height:52px;margin-top:10px;padding:10px 12px;border-left:3px solid var(--orange);
+      background:rgba(255,151,54,.07);font-size:16px;line-height:1.55;color:var(--white)}
+.narr code{font-family:var(--mono);font-size:14px;color:var(--orange-l)}
+.narr b{color:var(--orange-l);font-weight:normal}
+.ctrl{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
+.ctrl button{background:rgba(6,40,58,.9);border:1px solid var(--teal-d);color:var(--teal-l);
+  border-radius:8px;padding:7px 13px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  min-width:44px;transition:.15s}
+.ctrl button:hover:not(:disabled){background:var(--teal);color:#03222a}
+.ctrl button:disabled{opacity:.35;cursor:default}
+.ctrl .play{min-width:92px;font-weight:bold;border-color:var(--orange);color:var(--orange-l)}
+.ctrl .play:hover{background:var(--orange);color:#2a1400}
+.ctrl input[type=range]{width:120px;accent-color:var(--purple)}
+.stepno{color:var(--grey);font-size:14px;font-family:var(--mono)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;min-height:30px}
+.chip{border:1px solid var(--teal-d);border-radius:6px;padding:3px 9px;font-family:var(--mono);
+      font-size:14px;color:var(--pale);background:rgba(18,179,184,.10)}
+.chip.hot{border-color:var(--orange);color:var(--orange-l);background:rgba(255,151,54,.14)}
+.chip.act{border-color:var(--purple);color:var(--purple-l);background:rgba(157,107,255,.16)}
+.chip.ok{border-color:var(--teal-l);color:var(--teal-l);background:rgba(63,224,221,.12)}
+.chip.dim{border-color:#2f5661;color:var(--grey);background:transparent}
+.chip.bad{border-color:var(--red);color:#ff9a9a;background:rgba(255,92,92,.14)}
+.chip.empty{border-style:dashed;color:var(--grey);border-color:#2f5661}
+.panel+.panel{margin-top:12px}
+.panel .lbl{font-size:13px;letter-spacing:1.6px;text-transform:uppercase;color:var(--grey);
+  margin-bottom:5px}
+pre.code{margin:0;font-family:var(--mono);font-size:13.5px;line-height:1.72;overflow-x:auto;
+  color:#a8c8d0}
+pre.code .ln{display:block;padding:0 8px;border-left:3px solid transparent;white-space:pre}
+pre.code .ln.on{background:rgba(255,151,54,.12);border-left-color:var(--orange);color:var(--white)}
+pre.code .cm{color:#5f7b85;font-style:italic}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:13.5px;color:var(--grey)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;
+  vertical-align:-1px;border:1px solid rgba(255,255,255,.22)}
+.note{font-size:15px;line-height:1.65;color:var(--pale)}
+.note b{color:var(--purple-l);font-weight:normal}
+.note code{font-family:var(--mono);font-size:13.5px;color:var(--teal-l)}
+.toggle-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.toggle-row button{border:1px solid rgba(18,179,184,.45);border-radius:8px;padding:6px 13px;
+  cursor:pointer;font-family:var(--serif);font-size:14px;
+  background:rgba(6,40,58,.75);color:var(--pale)}
+.toggle-row button.on{background:var(--purple);border-color:var(--purple-l);color:#150a2b}
+footer{margin-top:32px;padding-top:16px;border-top:1px solid rgba(18,179,184,.25);
+  color:var(--grey);font-size:14px;display:flex;gap:18px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <span class="day">Day 11</span>
+  <h1 data-i18n="title">圖：把「關係」變成資料結構</h1>
+  <span class="spacer"></span>
+  <div class="lang">
+    <button id="btn-zh" class="on" onclick="setLang('zh')">中文</button>
+    <button id="btn-en" onclick="setLang('en')">EN</button>
+  </div>
+</header>
+<p class="sub" data-i18n="sub">點是角色、邊是他們一起出現的次數。用相鄰串列存起來，就能問「誰最重要」。</p>
+
+<div class="tabs" id="tabs"></div>
+
+<div class="grid">
+  <div>
+    <div class="card">
+      <h3 id="stage-title"></h3>
+      <svg class="stage" id="stage" viewBox="0 0 10 6.4" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="legend" id="legend"></div>
+      <div class="narr" id="narr"></div>
+      <div class="ctrl">
+        <button onclick="reset()" title="reset">⟲</button>
+        <button id="prev" onclick="step(-1)">◀</button>
+        <button class="play" id="play" onclick="togglePlay()" data-i18n="play">▶ 播放</button>
+        <button id="next" onclick="step(1)">▶</button>
+        <span class="stepno" id="stepno">0 / 0</span>
+        <span class="spacer"></span>
+        <span style="font-size:13px;color:var(--grey)" data-i18n="speed">速度</span>
+        <input type="range" id="speed" min="180" max="1600" step="20" value="820">
+      </div>
+      <div class="toggle-row" id="extra"></div>
+    </div>
+  </div>
+  <div>
+    <div class="card" id="state-card">
+      <h3 data-i18n="state">演算法狀態</h3>
+      <div id="panels"></div>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="code">程式碼</h3>
+      <pre class="code" id="code"></pre>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="idea">重點</h3>
+      <div class="note" id="idea"></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <span>100 Days of Python — Day 11</span>
+  <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2011%20-%20graph" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://medium.com/100-days-of-python/day-11-data-structure-graph-a4229c3dabaf" target="_blank" rel="noopener">Medium</a>
+</footer>
+</div>
+<script>
+// DAY: 11
+// TITLE_ZH: 圖：把「關係」變成資料結構
+// TITLE_EN: Graph - turning relationships into a data structure
+// SUB_ZH: 點是角色、邊是他們一起出現的次數。用相鄰串列存起來，就能問「誰最重要」。
+// SUB_EN: Vertices are characters, edges are how often they co-occur.
+// FOLDER: day%2011%20-%20graph
+// MEDIUM: https://medium.com/100-days-of-python/day-11-data-structure-graph-a4229c3dabaf
+
+const NAMES = ['Arya', 'Jon', 'Robb', 'Bran', 'Sansa'];
+const POS = {Arya:[2.0, 4.1], Jon:[3.5, 1.5], Robb:[5.2, 4.3], Bran:[6.9, 1.5], Sansa:[8.3, 4.1]};
+const EDGES = [['Arya', 'Jon', 11], ['Arya', 'Robb', 15], ['Jon', 'Robb', 17],
+               ['Robb', 'Bran', 24], ['Robb', 'Sansa', 47], ['Bran', 'Sansa', 8]];
+const RAD = .58;
+
+function graphShapes(o){
+  o = o || {}; const out = [], vs = o.verts || NAMES, es = o.edges || [];
+  es.forEach(([a, b, w]) => {
+    const [x1, y1] = POS[a], [x2, y2] = POS[b];
+    const st = (o.est && o.est[a + '-' + b]) || 'soft';
+    const dx = x2 - x1, dy = y2 - y1, L = Math.sqrt(dx * dx + dy * dy);
+    const ux = dx / L, uy = dy / L;
+    out.push(S.e(x1 + ux * RAD, y1 + uy * RAD, x2 - ux * RAD, y2 - uy * RAD,
+      {s:st, w:.05 + Math.min(w, 50) / 50 * .10, noArrow:!o.directed}));
+    if (o.weights !== false)
+      out.push(S.t((x1 + x2) / 2 + uy * .34, (y1 + y2) / 2 - ux * .34, String(w),
+        {c:st === 'soft' ? '#8fa3ac' : '#ffbe6b', fs:.28}));
+  });
+  vs.forEach(n => {
+    const [x, y] = POS[n];
+    out.push(S.c(x, y, RAD, (o.st && o.st[n]) || 'idle', n, {fs:.30}));
+  });
+  return out;
+}
+function adjPanel(adj, hi){
+  return {lbl:{zh:'_vertDict（相鄰串列）', en:'_vertDict (adjacency list)'},
+    chips:NAMES.filter(n => adj[n]).map(n => ({
+      t:n + ' -> {' + Object.keys(adj[n]).map(k => k + ':' + adj[n][k]).join(', ') + '}',
+      cls:hi === n ? 'hot' : ''}))};
+}
+
+const CODE_BUILD = [
+'class Vertex:',
+'    def __init__(self, node):',
+'        self._id = node',
+'        self._adjacent = {}      # 鄰居 -> 權重',
+'',
+'class Graph:',
+'    def __init__(self):',
+'        self._vertDict = {}      # 名字 -> Vertex',
+'',
+'    def add_vertex(self, node):',
+'        if node in self._vertDict: return self._vertDict[node]',
+'        self._vertDict[node] = Vertex(node); return self._vertDict[node]',
+'',
+'    def add_edge(self, frm, to, w=0):',
+'        self.add_vertex(frm); self.add_vertex(to)',
+'        self._vertDict[frm].set_neighbor_weight(self._vertDict[to], w)'];
+const CODE_REP = [
+'# 相鄰串列 adjacency list：每個點記自己的鄰居',
+'adj = {v: {} for v in V}          # 空間 O(V + E)',
+'w = adj[u].get(v)                 # 查一條邊：O(deg(u))',
+'for nb in adj[u]:                 # 走訪鄰居：O(deg(u))  <- 大部分演算法要的',
+'',
+'# 相鄰矩陣 adjacency matrix：V x V 的表',
+'M = [[0] * len(V) for _ in V]     # 空間 O(V^2)',
+'w = M[i][j]                       # 查一條邊：O(1)',
+'for j in range(len(V)):           # 走訪鄰居：O(V)，就算只有兩個鄰居'];
+const CODE_CENT = [
+'degree_centrality = {}',
+'weighted_degree_centrality = {}',
+'for v in GoT:',
+'    degree_centrality[v.get_id()] = v.get_degree_centrality()',
+'    weighted_degree_centrality[v.get_id()] = v.get_weighted_degree_centrality()',
+'',
+'# get_degree_centrality  -> len(self._adjacent)',
+'# get_weighted_degree_centrality -> sum(self._adjacent.values())',
+'print(sorted(degree_centrality.items(), key=lambda d: d[1], reverse=True)[:5])'];
+
+function buildBuild(){
+  const F = new Frames(), adj = {}, done = [];
+  F.push({shapes:[S.t(5, 3, {zh:'一張空的圖', en:'an empty graph'}, {c:'#8fa3ac', fs:.42})],
+    panels:[{lbl:'_vertDict', chips:[{t:'{}', cls:''}]}], line:6,
+    msg:{zh:'圖只有兩樣東西：<b>點（vertex）</b>和<b>邊（edge）</b>。' +
+            '前面幾天的結構都在描述「順序」或「包含」，圖描述的是<b>任意兩個東西之間的關係</b>——' +
+            '這也是為什麼它能同時表示地圖、社交網路、相依性和狀態機。',
+         en:'A graph is just <b>vertices</b> and <b>edges</b>. Earlier structures described order or containment; a graph describes <b>an arbitrary relationship between any two things</b> - which is why the same structure models maps, social networks, dependencies and state machines.'}});
+  EDGES.forEach(([a, b, w], k) => {
+    if (!adj[a]) adj[a] = {};
+    if (!adj[b]) adj[b] = {};
+    const newV = [a, b].filter(n => done.indexOf(n) < 0);
+    newV.forEach(n => done.push(n));
+    F.push({shapes:graphShapes({verts:done, edges:EDGES.slice(0, k),
+      st:Object.fromEntries(newV.map(n => [n, 'act']))}), panels:[adjPanel(adj)], line:9,
+      msg:newV.length ? {zh:'<b>add_edge</b> 會先確保兩端的點存在：新增 ' +
+                             newV.map(n => '<b>' + n + '</b>').join('、') +
+                             '。點存在 dict 裡，所以「用名字找點」是 O(1)。',
+                         en:'<b>add_edge</b> first makes sure both endpoints exist: adding ' +
+                            newV.map(n => '<b>' + n + '</b>').join(', ') +
+                            '. Vertices live in a dict, so looking one up by name is O(1).'}
+                      : {zh:'<b>' + a + '</b> 和 <b>' + b + '</b> 都已經在圖裡了，不用重建。',
+                         en:'Both <b>' + a + '</b> and <b>' + b + '</b> already exist, so nothing is recreated.'}});
+    adj[a][b] = w;
+    F.push({shapes:graphShapes({verts:done, edges:EDGES.slice(0, k + 1),
+      est:{[a + '-' + b]:'ok'}, st:{[a]:'hot', [b]:'act'}}), panels:[adjPanel(adj, a)], line:14,
+      msg:{zh:'把邊記在 <b>' + a + '._adjacent</b> 裡：<code>' + b + ' -> ' + w + '</code>。' +
+              '權重就是他們在《冰與火之歌》裡一起出現的次數。' +
+              '<b>邊記在點身上</b>，所以圖多大都不影響「拿到某個點的鄰居」有多快。',
+           en:'The edge is stored inside <b>' + a + '._adjacent</b> as <code>' + b + ' -> ' + w +
+              '</code>; the weight is how often they co-occur in the books. <b>Edges live on the vertex</b>, so the size of the graph never affects how fast you can list one vertex\'s neighbours.'}});
+  });
+  F.push({shapes:graphShapes({edges:EDGES}), panels:[adjPanel(adj),
+    {lbl:{zh:'規模', en:'size'}, chips:[{t:'V = 5', cls:''}, {t:'E = 6', cls:''}]}], line:14,
+    msg:{zh:'注意 <b>add_edge 只寫了一個方向</b>：' + EDGES[0][0] + ' 的鄰居有 ' + EDGES[0][1] +
+            '，但反過來沒有。要無向圖就得兩邊都寫一次——' +
+            '這個小細節等一下算中心性時會咬人。',
+         en:'Note that <b>add_edge only writes one direction</b>: ' + EDGES[0][1] +
+           ' appears among ' + EDGES[0][0] +
+           '\'s neighbours but not the other way round. An undirected graph needs both writes - a detail that bites us in the centrality tab.'}});
+  return F.list;
+}
+
+function buildRep(v){
+  const F = new Frames();
+  const adj = {}; EDGES.forEach(([a, b, w]) => { (adj[a] = adj[a] || {})[b] = w; (adj[b] = adj[b] || {})[a] = w; });
+  if (v === 0){
+    F.push({shapes:graphShapes({edges:EDGES}), panels:[adjPanel(adj)], line:1,
+      msg:{zh:'<b>相鄰串列</b>：每個點只記自己的鄰居。空間是 <b>O(V + E)</b>，' +
+              '圖愈稀疏愈省——真實世界的圖幾乎都很稀疏。',
+           en:'<b>Adjacency list</b>: each vertex records only its own neighbours. Space is <b>O(V + E)</b>, and the sparser the graph the better - and real-world graphs are almost always sparse.'}});
+    F.push({shapes:graphShapes({edges:EDGES, st:{Robb:'hot', Arya:'act', Jon:'act', Bran:'act', Sansa:'act'},
+      est:{'Arya-Robb':'ok', 'Jon-Robb':'ok', 'Robb-Bran':'ok', 'Robb-Sansa':'ok'}}),
+      panels:[adjPanel(adj, 'Robb')], line:3,
+      msg:{zh:'「<b>Robb 的鄰居有誰？</b>」直接把他的 dict 讀出來，' +
+              '成本是 <b>O(deg(u))</b>——只跟他自己的朋友數有關，跟整張圖多大無關。' +
+              '走訪鄰居正是圖演算法最常做的事，所以這個代價才是重點。',
+           en:'"<b>Who are Robb\'s neighbours?</b>" is a single dict read, costing <b>O(deg(u))</b> - proportional to his own friend count, not to the size of the graph. Iterating neighbours is what graph algorithms do all day, which is why this cost is the one that matters.'}});
+    F.push({shapes:graphShapes({edges:EDGES, st:{Arya:'hot', Sansa:'bad'}}), panels:[adjPanel(adj)], line:2,
+      msg:{zh:'但「<b>Arya 和 Sansa 之間有邊嗎？</b>」得掃過 Arya 的鄰居才知道，' +
+              '最壞情況 O(deg(u))。如果你的演算法一直在問這種問題，就該換一種表示法。',
+           en:'But "<b>is there an edge between Arya and Sansa?</b>" means scanning Arya\'s neighbours - O(deg(u)) in the worst case. If your algorithm keeps asking that question, you want the other representation.'}});
+    return F.list;
+  }
+  const N = NAMES.length, cw = .95, x0 = 3.2, y0 = 1.6;
+  const cell = (hi) => {
+    const out = [];
+    NAMES.forEach((n, j) => out.push(S.t(x0 + j * cw + cw / 2, y0 - .28, n, {c:'#c7a6ff', fs:.24})));
+    NAMES.forEach((n, i) => {
+      out.push(S.t(x0 - .18, y0 + i * cw + cw / 2 + .08, n, {c:'#c7a6ff', fs:.24, anchor:'end'}));
+      NAMES.forEach((m, j) => {
+        const w = adj[n] && adj[n][m] ? adj[n][m] : 0;
+        const k = i + ',' + j;
+        out.push(S.r(x0 + j * cw, y0 + i * cw, cw - .06, cw - .06,
+          (hi && hi[k]) || (w ? 'idle' : 'ghost'), w ? String(w) : '0', {fs:.28}));
+      });
+    });
+    return out;
+  };
+  F.push({shapes:cell(), panels:[], line:5,
+    msg:{zh:'<b>相鄰矩陣</b>：一張 V x V 的表，第 i 列第 j 行放 i→j 的權重。' +
+            '這裡 25 格只有 12 格有值——<b>其餘 13 格是為了「沒有這條邊」而付的錢</b>。',
+         en:'<b>Adjacency matrix</b>: a V x V table where row i, column j holds the weight of i to j. Only 12 of these 25 cells carry data - <b>the other 13 are the price of recording absence</b>.'}});
+  F.push({shapes:cell({'0,4':'ok'}), panels:[], line:6,
+    msg:{zh:'好處很實在：「Arya 和 Sansa 之間有邊嗎？」= <code>M[0][4]</code>，' +
+            '<b>O(1)</b>，而且是一次連續記憶體讀取。',
+         en:'The upside is real: "is there an edge between Arya and Sansa?" is <code>M[0][4]</code> - <b>O(1)</b>, and a single contiguous memory read.'}});
+  F.push({shapes:cell(Object.fromEntries(NAMES.map((_, j) => ['2,' + j, 'hot']))), panels:[], line:7,
+    msg:{zh:'壞處也很實在：要列出 Robb 的鄰居得掃過<b>整整一列 O(V)</b>，' +
+            '空間是 <b>O(V²)</b>。107 個角色只有 352 條邊，用矩陣就是 11449 格裝 352 個數字。' +
+            '<b>稀疏圖用串列、稠密圖或需要大量「有沒有邊」查詢才用矩陣。</b>',
+         en:'So is the downside: listing Robb\'s neighbours scans <b>a whole row, O(V)</b>, and space is <b>O(V^2)</b>. With 107 characters and 352 edges, a matrix means 11,449 cells holding 352 numbers. <b>Lists for sparse graphs; matrices for dense ones or when you constantly ask "is there an edge?"</b>'}});
+  return F.list;
+}
+
+const TOP_D = [['Tyrion', 24], ['Robb', 23], ['Sansa', 23], ['Jon', 21], ['Tywin', 19]];
+const TOP_W = [['Jon', 397], ['Sansa', 354], ['Robb', 286], ['Bran', 283], ['Tyrion', 264]];
+function bars(rows, title){
+  const out = [S.t(5, .9, title, {c:'#ffbe6b', fs:.36})], max = rows[0][1];
+  rows.forEach(([n, v], i) => {
+    const y = 1.6 + i * .95;
+    out.push(S.t(2.2, y + .42, n, {c:'#dff2f5', fs:.32, anchor:'end'}));
+    out.push(S.r(2.4, y, Math.max(.3, v / max * 5.6), .68, i === 0 ? 'act' : 'idle', '', {}));
+    out.push(S.t(2.4 + Math.max(.3, v / max * 5.6) + .25, y + .44, String(v), {c:'#3fe0dd', fs:.30, anchor:'start'}));
+  });
+  return out;
+}
+function buildCent(v){
+  const F = new Frames();
+  const adj = {}; EDGES.forEach(([a, b, w]) => { (adj[a] = adj[a] || {})[b] = w; (adj[b] = adj[b] || {})[a] = w; });
+  F.push({shapes:graphShapes({edges:EDGES, st:{Robb:'hot'}}), panels:[adjPanel(adj, 'Robb')], line:6,
+    msg:{zh:'有了圖就能問問題。最簡單的一種是<b>度中心性（degree centrality）</b>：' +
+            '一個點連了幾條邊，就是 <code>len(self._adjacent)</code>——' +
+            '結構已經替你算好了，不需要任何額外走訪。',
+         en:'Once the graph exists we can ask questions. The simplest is <b>degree centrality</b>: how many edges a vertex has, i.e. <code>len(self._adjacent)</code>. The structure already knows - no traversal needed.'}});
+  if (v === 0){
+    F.push({shapes:bars(TOP_D, {zh:'度中心性 top 5（107 個角色，352 條邊）',
+      en:'degree centrality top 5 (107 vertices, 352 edges)'}), panels:[], line:3,
+      msg:{zh:'把整份 <b>stormofswords.csv</b> 讀進來（107 個角色、352 條邊），' +
+              'Tyrion 以 24 個鄰居居冠。<b>他認識的人最多</b>。',
+           en:'Loading the whole <b>stormofswords.csv</b> (107 characters, 352 edges), Tyrion leads with 24 neighbours: <b>he knows the most people</b>.'}});
+    F.push({shapes:bars(TOP_W, {zh:'加權度中心性 top 5', en:'weighted degree centrality top 5'}),
+      panels:[], line:4,
+      msg:{zh:'換成 <b>加權</b>版本（<code>sum(self._adjacent.values())</code>，也就是同場次數總和），' +
+              '第一名變成 <b>Jon</b>。同一張圖、同一個「中心性」概念，' +
+              '<b>只因為權重要不要算進去，答案就不一樣</b>。',
+           en:'Switch to the <b>weighted</b> version (<code>sum(self._adjacent.values())</code>, total co-occurrences) and <b>Jon</b> takes the top spot. Same graph, same notion of centrality - <b>counting weights or not changes the answer</b>.'}});
+    F.push({shapes:bars(TOP_D, {zh:'認識的人多 vs 相處的時間長', en:'many contacts vs deep contacts'}),
+      panels:[], line:8,
+      msg:{zh:'兩份榜單講的是不同的事：度數高＝<b>接觸面廣</b>（適合傳播、找八卦來源），' +
+              '加權度數高＝<b>關係深</b>。選哪一個要看你想回答什麼問題，' +
+              '而不是哪個數字比較好看。',
+           en:'The two rankings mean different things: high degree is <b>reach</b> (good for diffusion), high weighted degree is <b>depth of ties</b>. Which one you want depends on the question you are asking, not on which number looks nicer.'}});
+  } else {
+    F.push({shapes:graphShapes({edges:EDGES, directed:true, st:{Robb:'hot'},
+      est:{'Robb-Bran':'ok', 'Robb-Sansa':'ok'}}), panels:[adjPanel(adj, 'Robb')], line:6,
+      msg:{zh:'但要小心一個陷阱：<code>add_edge(frm, to, w)</code> <b>只寫進 frm 的鄰居表</b>。' +
+              'CSV 每列只讀一次，所以這其實是一張<b>有向圖</b>。',
+           en:'One trap, though: <code>add_edge(frm, to, w)</code> <b>only writes into frm\'s neighbour dict</b>. Each CSV row is read once, so what we actually built is a <b>directed</b> graph.'}});
+    F.push({shapes:bars([['Tyrion', 36], ['Jon', 26], ['Sansa', 26], ['Robb', 25], ['Jaime', 24]],
+      {zh:'兩邊都寫（無向）時的度中心性', en:'degree centrality if both directions are stored'}),
+      panels:[], line:3,
+      msg:{zh:'如果補上反方向（<code>add_edge(b, a, w)</code>），數字就變成這樣——' +
+              'Tyrion 從 24 變 36，名次也動了。' +
+              '<b>「誰最重要」的答案，取決於你怎麼把資料塞進結構裡。</b>',
+           en:'Add the reverse direction (<code>add_edge(b, a, w)</code>) and the numbers change: Tyrion goes from 24 to 36 and the order shifts. <b>The answer to "who matters most" depends on how you loaded the data.</b>'}});
+    F.push({shapes:graphShapes({edges:EDGES}), panels:[], line:8,
+      msg:{zh:'所以建圖時先問自己：<b>這個關係是對稱的嗎？</b>' +
+              '一起出現、成為朋友 → 無向；追蹤、依賴、單行道、指向 → 有向。' +
+              '搞錯了，後面所有的走訪、排序、最短路徑都會跟著錯。',
+           en:'So when building a graph, ask first: <b>is this relationship symmetric?</b> Co-occurrence and friendship are undirected; following, dependency, one-way streets and references are directed. Get it wrong and every traversal, ordering and shortest path built on top inherits the mistake.'}});
+  }
+  return F.list;
+}
+
+const DAY_META = {
+  title:{zh:'圖：把「關係」變成資料結構', en:'Graph - turning relationships into a data structure'},
+  sub:{zh:'點是角色、邊是他們一起出現的次數。用相鄰串列存起來，就能問「誰最重要」。',
+       en:'Vertices are characters, edges are how often they co-occur. Store it as an adjacency list and you can ask who matters most.'},
+  tabs:[
+    {id:'build', label:{zh:'建圖', en:'build the graph'},
+     stage:{zh:'add_vertex 與 add_edge', en:'add_vertex and add_edge'}, view:[10, 6.0],
+     idea:{zh:'圖 = 點 + 邊。每個點自己保管一本<b>鄰居名冊</b>（dict：鄰居 → 權重），' +
+              '整張圖再用一本 dict 保管所有點。兩層 dict，就這樣。',
+           en:'A graph is vertices plus edges. Each vertex keeps its own <b>neighbour book</b> (a dict of neighbour to weight) and the graph keeps a dict of all vertices. Two dicts - that is the whole structure.'},
+     legend:['hot', 'act', 'ok', 'idle'], code:CODE_BUILD, build:buildBuild},
+    {id:'rep', label:{zh:'串列 vs 矩陣', en:'list vs matrix'},
+     stage:{zh:'同一張圖，兩種存法', en:'One graph, two representations'}, view:[10, 6.6],
+     variants:[{zh:'相鄰串列', en:'adjacency list'}, {zh:'相鄰矩陣', en:'adjacency matrix'}],
+     idea:{zh:'串列空間 O(V+E)、列鄰居 O(deg)、查一條邊 O(deg)；' +
+              '矩陣空間 O(V²)、列鄰居 O(V)、查一條邊 O(1)。' +
+              '<b>大部分圖演算法都在「列鄰居」，所以稀疏圖用串列。</b>',
+           en:'A list costs O(V+E) space, O(deg) to list neighbours, O(deg) to test one edge. A matrix costs O(V^2) space, O(V) to list neighbours, O(1) to test one edge. <b>Most graph algorithms spend their time listing neighbours, so sparse graphs use lists.</b>'},
+     legend:['hot', 'act', 'ok', 'idle'], code:CODE_REP, build:buildRep},
+    {id:'cent', label:{zh:'度中心性', en:'degree centrality'},
+     stage:{zh:'誰是這個網路的中心？', en:'Who sits at the centre?'}, view:[10, 6.6],
+     variants:[{zh:'加權 vs 不加權', en:'weighted vs unweighted'}, {zh:'有向的陷阱', en:'the directed trap'}],
+     idea:{zh:'度中心性是最便宜的重要性指標：<b>不用走訪，結構本身就是答案</b>。' +
+              '但它只看一步之遙——真正的「重要」還可以定義成' +
+              '「多少最短路徑經過我」或「重要的人都指向我」，' +
+              '那需要最短路徑與特徵向量的工具。',
+           en:'Degree centrality is the cheapest importance measure: <b>no traversal at all, the structure is the answer</b>. But it only looks one hop out. Importance can also mean "how many shortest paths run through me" or "important people point at me" - those need shortest-path and eigenvector machinery.'},
+     legend:['hot', 'act', 'ok', 'idle'], code:CODE_CENT, build:buildCent}
+  ]
+};
+
+</script>
+<script>
+/* =========================================================================
+   100 Days of Python - shared demo engine
+   palette: teal/blue-green base, purple pointers, orange "current step"
+   ========================================================================= */
+const T = {
+  title:{zh:DAY_META.title.zh, en:DAY_META.title.en},
+  sub:{zh:DAY_META.sub.zh, en:DAY_META.sub.en},
+  play:{zh:'▶ 播放', en:'▶ Play'}, pause:{zh:'❚❚ 暫停', en:'❚❚ Pause'},
+  speed:{zh:'速度', en:'Speed'}, state:{zh:'演算法狀態', en:'Algorithm state'},
+  code:{zh:'程式碼', en:'Code'}, idea:{zh:'重點', en:'The idea'}
+};
+let LANG = 'zh';
+const tr = o => (o == null ? '' : (typeof o === 'string' ? o : (o[LANG] != null ? o[LANG] : o.en)));
+const $ = id => document.getElementById(id);
+
+function setLang(l){
+  LANG = l;
+  document.documentElement.lang = l === 'zh' ? 'zh-Hant' : 'en';
+  $('btn-zh').classList.toggle('on', l === 'zh');
+  $('btn-en').classList.toggle('on', l === 'en');
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.getAttribute('data-i18n');
+    if (T[k]) el.textContent = tr(T[k]);
+  });
+  buildTabs(); render();
+}
+
+/* --------------------------------------------------------------- palette */
+const STY = {
+  idle :{fill:'#07293a', stroke:'#0a6b74', text:'#dff2f5', w:.045, glow:0},
+  soft :{fill:'#052330', stroke:'#0a6b74', text:'#a8c8d0', w:.035, glow:0},
+  hot  :{fill:'#3a2109', stroke:'#ff9736', text:'#ffbe6b', w:.075, glow:.65},
+  act  :{fill:'#241542', stroke:'#9d6bff', text:'#c7a6ff', w:.070, glow:.55},
+  ok   :{fill:'#08414a', stroke:'#3fe0dd', text:'#d9ffff', w:.070, glow:.5},
+  done :{fill:'#062430', stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0},
+  bad  :{fill:'#3a0d0d', stroke:'#ff5c5c', text:'#ff9a9a', w:.070, glow:.4},
+  ghost:{fill:'none',    stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0, dash:'.12 .10'}
+};
+const COL = {teal:'#12b3b8', tealL:'#3fe0dd', purple:'#9d6bff', purpleL:'#c7a6ff',
+             orange:'#ff9736', orangeL:'#ffbe6b', red:'#ff5c5c', grey:'#8fa3ac',
+             pale:'#dff2f5', white:'#ffffff'};
+const LEGEND = {
+  hot:[COL.orange, {zh:'目前這一步', en:'current step'}],
+  act:[COL.purple, {zh:'指標 / 走訪位置', en:'pointer / cursor'}],
+  ok:[COL.tealL,  {zh:'完成 / 結果', en:'done / result'}],
+  bad:[COL.red,   {zh:'失敗 / 要避開的寫法', en:'failure / the wrong way'}],
+  done:['#2f5661', {zh:'已處理完', en:'already done'}],
+  soft:['#0a6b74', {zh:'其他元素', en:'other items'}],
+  idle:['#0a6b74', {zh:'尚未處理', en:'untouched'}]
+};
+const leg = (...keys) => keys.map(k => LEGEND[k]);
+
+/* ---------------------------------------------------------- frame buffer */
+function Frames(){
+  this.list = [];
+  this.push = (o) => this.list.push({
+    shapes:JSON.parse(JSON.stringify(o.shapes || [])),
+    panels:JSON.parse(JSON.stringify(o.panels || [])),
+    view:(o.view || null), line:(o.line == null ? 0 : o.line), msg:o.msg
+  });
+}
+/* shape helpers - engines call these, the renderer just draws */
+const S = {
+  r:(x, y, w, h, s, lab, o) => Object.assign({t:'r', x:x, y:y, w:w, h:h, s:s || 'idle', lab:lab}, o || {}),
+  c:(x, y, r, s, lab, o) => Object.assign({t:'c', x:x, y:y, r:r, s:s || 'idle', lab:lab}, o || {}),
+  e:(x1, y1, x2, y2, o) => Object.assign({t:'e', x1:x1, y1:y1, x2:x2, y2:y2}, o || {}),
+  t:(x, y, s, o) => Object.assign({t:'t', x:x, y:y, s:s}, o || {})
+};
+/* a labelled row of array cells; returns shapes */
+function cellRow(vals, x0, y, w, h, opt){
+  opt = opt || {};
+  const out = [], st = opt.states || {};
+  vals.forEach((v, i) => {
+    out.push(S.r(x0 + i * w, y, w - (opt.gap == null ? .06 : opt.gap), h, st[i] || 'idle',
+                 v == null ? '' : String(v), {fs:opt.fs || h * .52}));
+    if (opt.index !== false)
+      out.push(S.t(x0 + i * w + (w - .06) / 2, y + h + (opt.ilift || .34),
+                   opt.labels ? opt.labels[i] : String(i),
+                   {c:st[i] && st[i] !== 'idle' ? COL.orangeL : COL.grey, fs:opt.ifs || .30}));
+  });
+  if (opt.title) out.push(S.t(x0 - .22, y + h * .62, opt.title, {c:COL.tealL, fs:.32, anchor:'end'}));
+  return out;
+}
+/* binary-tree layout from a heap-style array (index 0 = root, 2i+1 / 2i+2) */
+function heapTreeShapes(arr, x0, y0, w, rowH, states, opt){
+  opt = opt || {};
+  const n = arr.length, out = [], R = opt.r || .34;
+  const depth = i => Math.floor(Math.log2(i + 1));
+  const maxD = n ? depth(n - 1) : 0;
+  const px = i => {
+    const d = depth(i), first = Math.pow(2, d) - 1, k = i - first;
+    const slots = Math.pow(2, d), span = w;
+    return x0 + span * (k + .5) / slots;
+  };
+  const py = i => y0 + depth(i) * rowH;
+  for (let i = 1; i < n; i++){
+    if (arr[i] == null) continue;
+    const p = Math.floor((i - 1) / 2);
+    out.push(S.e(px(p), py(p), px(i), py(i), {pad:R + .04,
+      s:(states && (states[i] === 'hot' || states[i] === 'act')) ? states[i] : 'idle'}));
+  }
+  for (let i = 0; i < n; i++){
+    if (arr[i] == null) continue;
+    out.push(S.c(px(i), py(i), R, (states && states[i]) || 'idle', String(arr[i]), {fs:R * .95}));
+    if (opt.showIndex)
+      out.push(S.t(px(i), py(i) + R + .34, String(i), {c:COL.grey, fs:.26}));
+  }
+  return out;
+}
+
+/* -------------------------------------------------------------- renderer */
+const svgNS = 'http://www.w3.org/2000/svg';
+const mk = (tag, a) => { const e = document.createElementNS(svgNS, tag);
+  for (const k in a) e.setAttribute(k, a[k]); return e; };
+const clear = svg => { while (svg.firstChild) svg.removeChild(svg.firstChild); };
+
+function defs(svg){
+  const d = mk('defs', {});
+  const f = mk('filter', {id:'glow', x:'-70%', y:'-70%', width:'240%', height:'240%'});
+  f.appendChild(mk('feGaussianBlur', {stdDeviation:'.055', result:'b'}));
+  const m = mk('feMerge', {});
+  m.appendChild(mk('feMergeNode', {in:'b'}));
+  m.appendChild(mk('feMergeNode', {in:'SourceGraphic'}));
+  f.appendChild(m); d.appendChild(f);
+  Object.keys(STY).forEach(k => {
+    const mk2 = mk('marker', {id:'ar-' + k, viewBox:'0 0 10 10', refX:'8.5', refY:'5',
+      markerWidth:'5.2', markerHeight:'5.2', orient:'auto-start-reverse'});
+    mk2.appendChild(mk('path', {d:'M 0 1 L 9 5 L 0 9 z', fill:STY[k].stroke}));
+    d.appendChild(mk2);
+  });
+  svg.appendChild(d);
+}
+
+function drawShape(svg, sh){
+  const st = STY[sh.s || 'idle'];
+  if (sh.t === 'e'){
+    let {x1, y1, x2, y2} = sh;
+    if (sh.pad){
+      const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+      x1 += dx / L * sh.pad; y1 += dy / L * sh.pad;
+      x2 -= dx / L * sh.pad; y2 -= dy / L * sh.pad;
+    }
+    const a = {x1:x1.toFixed(3), y1:y1.toFixed(3), x2:x2.toFixed(3), y2:y2.toFixed(3),
+      stroke:st.stroke, 'stroke-width':(sh.w || st.w || .05), 'stroke-linecap':'round',
+      opacity:(sh.o == null ? (sh.s && sh.s !== 'idle' ? 1 : .75) : sh.o)};
+    if (sh.dash || st.dash) a['stroke-dasharray'] = sh.dash || st.dash;
+    if (sh.arrow !== false) a['marker-end'] = 'url(#ar-' + (sh.s || 'idle') + ')';
+    svg.appendChild(mk('line', a));
+    if (sh.lab != null)
+      svg.appendChild(txt((x1 + x2) / 2 + (sh.lx || 0), (y1 + y2) / 2 + (sh.ly || -.16),
+        tr(sh.lab), st.stroke, sh.fs || .30, 'middle'));
+    return;
+  }
+  if (sh.t === 't'){
+    svg.appendChild(txt(sh.x, sh.y, tr(sh.s), sh.c || COL.pale, sh.fs || .32,
+      sh.anchor || 'middle', sh.o));
+    return;
+  }
+  let node;
+  if (sh.t === 'c'){
+    node = mk('circle', {cx:sh.x.toFixed(3), cy:sh.y.toFixed(3), r:sh.r.toFixed(3),
+      fill:st.fill, stroke:st.stroke, 'stroke-width':st.w});
+  } else {
+    node = mk('rect', {x:sh.x.toFixed(3), y:sh.y.toFixed(3), width:sh.w.toFixed(3),
+      height:sh.h.toFixed(3), rx:(sh.rx == null ? .09 : sh.rx), fill:st.fill,
+      stroke:st.stroke, 'stroke-width':st.w});
+  }
+  if (st.dash || sh.dash) node.setAttribute('stroke-dasharray', sh.dash || st.dash);
+  if (st.glow) node.setAttribute('filter', 'url(#glow)');
+  if (sh.o != null) node.setAttribute('opacity', sh.o);
+  svg.appendChild(node);
+  const cx = sh.t === 'c' ? sh.x : sh.x + sh.w / 2;
+  const cy = sh.t === 'c' ? sh.y : sh.y + sh.h / 2;
+  if (sh.lab != null && sh.lab !== '')
+    svg.appendChild(txt(cx + (sh.dx || 0), cy + (sh.fs || .40) * .35, tr(sh.lab), st.text,
+      sh.fs || .40, 'middle'));
+  if (sh.sub != null)
+    svg.appendChild(txt(cx, cy + (sh.t === 'c' ? sh.r : sh.h) + .34, tr(sh.sub),
+      sh.subc || COL.grey, sh.subfs || .28, 'middle'));
+  if (sh.top != null)
+    svg.appendChild(txt(cx, cy - (sh.t === 'c' ? sh.r : sh.h / 2) - .22, tr(sh.top),
+      sh.topc || COL.purpleL, sh.topfs || .28, 'middle'));
+}
+function txt(x, y, s, c, fs, anchor, o){
+  const t = mk('text', {x:(+x).toFixed(3), y:(+y).toFixed(3), 'text-anchor':anchor || 'middle',
+    fill:c, 'font-size':(+fs).toFixed(3)});
+  if (o != null) t.setAttribute('opacity', o);
+  t.textContent = s;
+  return t;
+}
+
+function renderStage(frame){
+  const svg = $('stage');
+  clear(svg); defs(svg);
+  const v = frame.view || curTab().view || [10, 6.4];
+  svg.setAttribute('viewBox', '0 0 ' + v[0] + ' ' + v[1]);
+  (frame.shapes || []).forEach(sh => drawShape(svg, sh));
+}
+
+function drawPanels(frame){
+  const box = $('panels'); box.innerHTML = '';
+  (frame.panels || []).forEach(p => {
+    const d = document.createElement('div'); d.className = 'panel';
+    const l = document.createElement('div'); l.className = 'lbl'; l.textContent = tr(p.lbl);
+    const c = document.createElement('div'); c.className = 'chips';
+    (p.chips.length ? p.chips : [{t:'—', cls:'empty'}]).forEach(ch => {
+      const s = document.createElement('span');
+      s.className = 'chip ' + (ch.cls || ''); s.textContent = ch.t; c.appendChild(s);
+    });
+    d.appendChild(l); d.appendChild(c); box.appendChild(d);
+  });
+}
+function drawCode(frame){
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  $('code').innerHTML = curTab().code.map((ln, i) => {
+    const h = esc(ln).replace(/(#.*)$/, '<span class="cm">$1</span>');
+    return '<span class="ln' + (i === frame.line ? ' on' : '') + '">' + (h || ' ') + '</span>';
+  }).join('');
+}
+function drawLegend(){
+  const keys = curTab().legend || ['hot', 'act', 'ok', 'idle'];
+  $('legend').innerHTML = keys.map(k => {
+    const [c, txt] = Array.isArray(k) ? k : LEGEND[k];
+    return '<span><i style="background:' + c + '"></i>' + tr(txt) + '</span>';
+  }).join('');
+}
+
+let tabIx = 0, varIx = 0, frames = [], cur = 0, timer = null;
+const TABS = DAY_META.tabs;
+const curTab = () => TABS[tabIx];
+
+function render(){
+  if (!frames.length) return;
+  cur = Math.max(0, Math.min(cur, frames.length - 1));
+  const f = frames[cur];
+  $('stage-title').textContent = tr(curTab().stage);
+  renderStage(f); drawPanels(f); drawCode(f); drawLegend();
+  $('narr').innerHTML = tr(f.msg);
+  $('idea').innerHTML = tr(curTab().idea);
+  $('stepno').textContent = (cur + 1) + ' / ' + frames.length;
+  $('prev').disabled = cur === 0;
+  $('next').disabled = cur === frames.length - 1;
+}
+function buildTabs(){
+  $('tabs').innerHTML = '';
+  TABS.forEach((t, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(t.label);
+    if (i === tabIx) b.classList.add('on');
+    b.onclick = () => { tabIx = i; varIx = 0; load(); };
+    $('tabs').appendChild(b);
+  });
+  const ex = $('extra'); ex.innerHTML = '';
+  const vs = curTab().variants;
+  if (vs) vs.forEach((v, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(v);
+    if (i === varIx) b.classList.add('on');
+    b.onclick = () => { varIx = i; load(); };
+    ex.appendChild(b);
+  });
+}
+function load(){
+  stop();
+  frames = curTab().build(varIx) || [];
+  cur = 0; buildTabs(); render();
+}
+function step(d){ stop(); cur += d; render(); }
+function reset(){ stop(); cur = 0; render(); }
+function stop(){ if (timer){ clearInterval(timer); timer = null; $('play').textContent = tr(T.play); } }
+function togglePlay(){
+  if (timer){ stop(); return; }
+  if (cur >= frames.length - 1) cur = 0;
+  $('play').textContent = tr(T.pause);
+  timer = setInterval(() => {
+    if (cur >= frames.length - 1){ stop(); return; }
+    cur++; render();
+  }, Number($('speed').value));
+}
+$('speed').addEventListener('input', () => { if (timer){ stop(); togglePlay(); } });
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight'){ step(1); e.preventDefault(); }
+  else if (e.key === 'ArrowLeft'){ step(-1); e.preventDefault(); }
+  else if (e.key === ' '){ togglePlay(); e.preventDefault(); }
+});
+setLang('zh');
+load();
+
+</script>
+</body>
+</html>
