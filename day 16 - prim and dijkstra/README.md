@@ -58,7 +58,8 @@ therefore hold up to *E* entries, which is what makes the bound `O(E log V)` rat
 
 Prim inherits Kruskal's cut property: at every step the frontier splits the graph into
 "the tree" and "everything else", and the cheapest edge crossing that cut belongs to some
-minimum spanning tree. Dijkstra needs a different argument: any competing route to `u` must
+minimum spanning tree. Every edge Prim buys is therefore final - it is already part of
+the minimum spanning tree, not a provisional choice. Dijkstra needs a different argument: any competing route to `u` must
 leave through a vertex still sitting in the heap, whose tentative distance is already at
 least `d`, and non-negative edges can only make it longer. That argument is the entire
 reason **Dijkstra requires non-negative weights** - and Prim, which never accumulates, does

@@ -46,10 +46,12 @@ for n, (x, y) in POS.items():
     node(ax, x, y, n)
 text(ax, 1.6, 5.95, 'settled: A D F', color=TEAL_L, size=15)
 text(ax, 5.55, 6.45, 'the frontier is a cut, and Prim buys the cheapest edge across it', color=AMBER, size=16)
-legend(ax, 8.55, 3.55, [(AMBER, 'already in the tree'),
+legend(ax, 8.55, 3.55, [(AMBER, 'bought - already in the MST'),
                         (TEAL, 'crosses the frontier'),
                         (GREY_L, 'both ends outside')])
 text(ax, 9.75, 1.95, 'next purchase: AB (7)', color=TEAL_L, size=15)
+text(ax, 7.6, 0.32, 'every edge Prim buys is already part of the MST',
+     color=TEAL, size=14)
 save(fig, 'day16_1.png')
 
 # ---------------------------------------------------------------- figure 2

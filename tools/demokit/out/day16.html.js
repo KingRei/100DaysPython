@@ -115,8 +115,9 @@ function buildSkeleton(v){
         ? {zh:'<b>' + NM[u] + '</b> 是目前最便宜的入場券（' + d + '，從 ' + NM[parent[u]] + ' 接進來）。' +
               '為什麼可以直接定案？因為任何連到樹外的路，<b>第一條跨出樹的邊都不會比它便宜</b>——' +
               '這就是昨天 Kruskal 用的 cut property，只是這裡的 cut 固定是「樹 ｜ 其他」。' +
+              '所以 <b>' + NM[parent[u]] + NM[u] + ' 這條邊確定屬於最終的 MST</b>，不會再被換掉；' +
               '樹的總重量現在是 <b>' + total + '</b>。',
-           en:'<b>' + NM[u] + '</b> has the cheapest ticket (' + d + ', entering from ' + NM[parent[u]] + '). Why can it be finalised on the spot? Any route out of the tree must cross the boundary somewhere, and <b>no crossing edge is cheaper than this one</b> - the same cut property Kruskal used yesterday, with the cut fixed as "tree | rest". The tree now weighs <b>' + total + '</b>.'}
+           en:'<b>' + NM[u] + '</b> has the cheapest ticket (' + d + ', entering from ' + NM[parent[u]] + '). Why can it be finalised on the spot? Any route out of the tree must cross the boundary somewhere, and <b>no crossing edge is cheaper than this one</b> - the same cut property Kruskal used yesterday, with the cut fixed as "tree | rest". So <b>' + NM[parent[u]] + NM[u] + ' is now certain to be in the final MST</b> and will never be swapped out. The tree weighs <b>' + total + '</b>.'}
         : {zh:'<b>' + NM[u] + '</b> 定案在 <b>' + d + '</b>。為什麼不用怕之後冒出更短的路？' +
               '任何別的路都得先經過一個<b>還在 heap 裡的點</b>，而那個點的距離 ≥ ' + d + '，' +
               '再加上非負的邊只會更長。<b>「邊不能是負的」這個前提，就藏在這句話裡。</b>',
@@ -372,7 +373,9 @@ const DAY_META = {
               '換掉 <code>key</code>，同一份程式碼就換了一個問題。' +
               'heap 裡的舊資料不刪，靠 <code>if done[u]: continue</code> 略過（lazy deletion）。',
            en:'Both are "<b>repeatedly pop the smallest unsettled vertex, then relax its neighbours</b>". Prim stores the weight of <b>one edge</b>, Dijkstra the length of <b>the whole path</b> - swap <code>key</code> and the same source file solves a different problem. Stale heap entries are never removed; <code>if done[u]: continue</code> skips them (lazy deletion).'},
-     legend:['hot', 'ok', 'soft', 'idle'], code:CODE, build:buildSkeleton},
+     legend:['hot', ['#3fe0dd', {zh:'已定案，並收進樹裡（Prim：這條邊確定屬於 MST）',
+                                en:'settled and added to the tree (Prim: this edge is in the MST)'}],
+             'soft', 'idle'], code:CODE, build:buildSkeleton},
     {id:'diff', label:{zh:'兩棵樹不一樣', en:'the two trees differ'},
      stage:{zh:'最小生成樹 ≠ 最短路徑樹', en:'A spanning tree is not a shortest-path tree'},
      view:[10, 7.6],

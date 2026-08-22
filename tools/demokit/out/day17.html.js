@@ -1,0 +1,779 @@
+// DAY: 17
+// TITLE_ZH: 負權與全點對：Bellman-Ford / SPFA / Floyd-Warshall
+// TITLE_EN: Negative weights and all pairs - Bellman-Ford, SPFA, Floyd-Warshall
+// SUB_ZH: Dijkstra 的「定案就不再改」只有在邊非負時才成立。放棄定案、把每條邊放鬆 V−1 次，就是 Bellman-Ford。
+// SUB_EN: Dijkstra's "settle once, never revisit" only holds for non-negative edges. Settle nothing, relax every edge V-1 times, and you have Bellman-Ford.
+// FOLDER: day%2017%20-%20bellman%20ford%20and%20floyd%20warshall
+// MEDIUM: https://medium.com/100-days-of-python
+
+const NM = 'ABCDE';
+const P = [[1.1, 3.4], [4.3, 1.5], [7.7, 1.5], [4.3, 5.3], [7.7, 5.3]];
+const E5 = [[0, 1, 6], [0, 3, 7], [1, 2, 5], [1, 3, 8], [1, 4, -4],
+            [2, 1, -2], [3, 2, -3], [3, 4, 9], [4, 0, 2], [4, 2, 7]];
+const RAD = .44, INF = Infinity;
+const ek = (u, v) => u + '>' + v;
+const SHIFT = {'1>2':.17, '2>1':.17};          // the one pair that runs both ways
+const LOFF = {'4>0':[3.05, 3.05]};             // label would sit on top of a node
+const shownum = d => d === INF ? '∞' : String(d);
+
+function adjOf(edges, n){
+  const a = []; for (let i = 0; i < n; i++) a.push([]);
+  edges.forEach(([u, v, w]) => a[u].push([v, w]));
+  return a;
+}
+
+function gShapes(edges, o){
+  o = o || {}; const out = [];
+  edges.forEach(([u, v, w]) => {
+    const k = ek(u, v), st = (o.est && o.est[k]) || 'ghost';
+    const [x1, y1] = P[u], [x2, y2] = P[v];
+    const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+    const ux = dx / L, uy = dy / L, s = SHIFT[k] || 0;
+    const ax = x1 + uy * s, ay = y1 - ux * s, bx = x2 + uy * s, by = y2 - ux * s;
+    out.push(S.e(ax, ay, bx, by, {s:st, pad:RAD + .05,
+      w:(st === 'hot' || st === 'ok' || st === 'bad') ? .10 : .045}));
+    const lp = LOFF[k];
+    out.push(S.t(lp ? lp[0] : (ax + bx) / 2 + uy * .30,
+                 lp ? lp[1] : (ay + by) / 2 - ux * .30, String(w),
+      {c:st === 'ghost' ? '#8fa3ac' : (st === 'bad' ? '#ff5c5c'
+        : (st === 'hot' ? '#ffbe6b' : '#3fe0dd')), fs:.30}));
+  });
+  for (let i = 0; i < NM.length; i++)
+    out.push(S.c(P[i][0], P[i][1], RAD, (o.st && o.st[i]) || 'idle', NM[i],
+      {fs:.34, sub:o.dist ? shownum(o.dist[i]) : null,
+       subc:(o.dist && o.dist[i] < INF) ? '#3fe0dd' : '#8fa3ac', subfs:.30}));
+  return out;
+}
+function distPanel(dist, hl, lbl){
+  return {lbl:lbl || {zh:'dist：從 A 出發目前最好的距離', en:'dist: best known distance from A'},
+    chips:dist.map((d, i) => ({t:NM[i] + ' ' + shownum(d),
+      cls:hl && hl[i] ? hl[i] : (d < INF ? '' : 'soft')}))};
+}
+
+const CODE_BF = [
+'def bellman_ford(n, edges, src):',
+'    dist = [INF] * n',
+'    dist[src] = 0',
+'',
+'    for _ in range(n - 1):        # V-1 rounds',
+'        changed = False',
+'        for u, v, w in edges:     # every edge, every round',
+'            if dist[u] + w < dist[v]:',
+'                dist[v] = dist[u] + w',
+'                changed = True',
+'        if not changed:           # converged early',
+'            break',
+'',
+'    for u, v, w in edges:         # one extra round',
+'        if dist[u] + w < dist[v]:',
+'            return dist, True     # negative cycle',
+'    return dist, False'];
+
+// ---- tab 1: Bellman-Ford, round by round ----------------------------------
+function buildBF(){
+  const F = new Frames(), n = 5;
+  const dist = [INF, INF, INF, INF, INF]; dist[0] = 0;
+  const stOf = () => { const s = {}; for (let i = 0; i < n; i++)
+      s[i] = dist[i] < INF ? 'ok' : 'idle'; return s; };
+  const snap = (est, st, line, msg, extra) => F.push({
+    shapes:gShapes(E5, {est:est, st:Object.assign(stOf(), st), dist:dist}),
+    panels:[distPanel(dist, extra && extra.hl), extra && extra.p2].filter(Boolean),
+    line:line, msg:msg});
+
+  snap({}, {0:'hot'}, 2,
+    {zh:'Dijkstra 靠「pop 出來就定案」跑得快，而那句話只有在<b>邊都非負</b>時才成立。' +
+        'Bellman-Ford 的作法是<b>什麼都不定案</b>：既然不知道該先處理誰，就把<b>每一條邊都放鬆一次</b>，' +
+        '重複 V−1 輪。慢，但不需要任何前提。',
+     en:'Dijkstra is fast because a popped vertex is settled, and that claim needs <b>non-negative edges</b>. Bellman-Ford <b>settles nothing</b>: if we cannot know which vertex to trust first, just <b>relax every edge</b> and repeat V-1 times. Slower, but it assumes nothing.'});
+
+  for (let r = 1; r <= n - 1; r++){
+    const before = dist.slice();
+    let changed = 0;
+    for (const [u, v, w] of E5){
+      if (dist[u] + w < dist[v]){
+        const old = dist[v]; dist[v] = dist[u] + w; changed++;
+        snap({[ek(u, v)]:'hot'}, {[u]:'act', [v]:'hot'}, 7,
+          {zh: '第 <b>' + r + '</b> 輪：邊 <b>' + NM[u] + '→' + NM[v] + '（' + w + '）</b>放鬆成功，' +
+               NM[v] + ' 從 ' + shownum(old) + ' 變成 <b>' + dist[v] + '</b>。' +
+               '放鬆這一行 <code>dist[u] + w &lt; dist[v]</code> 跟 Dijkstra <b>一字不差</b>——' +
+               '差別只在 Bellman-Ford 不挑順序，所以永遠有機會把先前的答案改小。',
+           en: 'Round <b>' + r + '</b>: edge <b>' + NM[u] + ' to ' + NM[v] + ' (' + w + ')</b> relaxes, ' + NM[v] + ' drops from ' + shownum(old) + ' to <b>' + dist[v] + '</b>. The relaxation line <code>dist[u] + w &lt; dist[v]</code> is <b>character for character</b> Dijkstra\'s - the difference is that Bellman-Ford never commits to an order, so an earlier answer can always be improved later.'},
+          {hl:{[v]:'hot', [u]:'ok'}});
+      }
+    }
+    const moved = [];
+    for (let i = 0; i < n; i++) if (before[i] !== dist[i])
+      moved.push(NM[i] + ': ' + shownum(before[i]) + ' → ' + dist[i]);
+    if (!changed){
+      snap({}, {}, 10,
+        {zh:'第 ' + r + ' 輪<b>沒有任何邊放鬆成功</b>，代表答案已經穩定，可以直接 <code>break</code>。' +
+            '最壞情況要跑滿 V−1 輪，但實務上通常提早收工。',
+         en:'Round ' + r + ' relaxed <b>nothing at all</b>, so the answer has converged and we can <code>break</code>. The V-1 bound is the worst case; in practice it usually stops earlier.'});
+      break;
+    }
+    snap({}, {}, 4,
+      {zh:'第 <b>' + r + '</b> 輪結束：' + moved.join('、') + '。' +
+          '每一輪的保證是「<b>所有最多用 ' + r + ' 條邊的最短路，現在都算出來了</b>」。' +
+          '沒有負環時最短路不會重複經過同一個點，所以最多 V−1 條邊——<b>V−1 輪就一定夠</b>。',
+       en:'End of round <b>' + r + '</b>: ' + moved.join(', ') + '. The invariant is that <b>every shortest path using at most ' + r + ' edges is now correct</b>. Without a negative cycle a shortest path never repeats a vertex, so it uses at most V-1 edges - <b>V-1 rounds always suffice</b>.'});
+  }
+  const treeE = {}; E5.forEach(([u, v, w]) => { if (dist[u] + w === dist[v]) treeE[ek(u, v)] = 'ok'; });
+  F.push({shapes:gShapes(E5, {est:treeE, st:{0:'ok', 1:'ok', 2:'ok', 3:'ok', 4:'ok'}, dist:dist}),
+    panels:[distPanel(dist, null, {zh:'結果', en:'result'})], line:16,
+    msg:{zh:'最後 <b>A=0 B=2 C=4 D=7 E=−2</b>。注意 B：第 1 輪它是 6（A→B 直接走），' +
+            '第 2 輪掉到 2，因為 <b>A→D→C→B = 7−3−2</b> 更便宜。' +
+            'Dijkstra 早在 B=6 的時候就把 B 定案了，<b>再也不會回頭看</b>——這就是它在負邊上錯掉的地方。',
+         en:'Final answer: <b>A=0 B=2 C=4 D=7 E=-2</b>. Watch B: it is 6 after round 1 (straight down A to B), then drops to 2 in round 2 because <b>A-D-C-B costs 7-3-2</b>. Dijkstra would have settled B at 6 and <b>never looked again</b> - that is exactly where it goes wrong on negative edges.'}});
+  return F.list;
+}
+
+const CODE_SPFA = [
+'def spfa(n, adj, src):',
+'    dist = [INF] * n',
+'    dist[src] = 0',
+'    q, inq = deque([src]), [False] * n',
+'    inq[src] = True',
+'',
+'    while q:',
+'        u = q.popleft(); inq[u] = False',
+'        for v, w in adj[u]:',
+'            if dist[u] + w < dist[v]:',
+'                dist[v] = dist[u] + w',
+'                if not inq[v]:        # only queue what changed',
+'                    q.append(v); inq[v] = True',
+'    return dist'];
+
+// ---- tab 2: SPFA -----------------------------------------------------------
+function buildSPFA(){
+  const F = new Frames(), n = 5, ADJ = adjOf(E5, n);
+  const dist = [INF, INF, INF, INF, INF]; dist[0] = 0;
+  const inq = [true, false, false, false, false];
+  let q = [0], pops = 0;
+  const stOf = () => { const s = {}; for (let i = 0; i < n; i++)
+      s[i] = inq[i] ? 'act' : (dist[i] < INF ? 'ok' : 'idle'); return s; };
+  const qPanel = () => ({lbl:{zh:'佇列：只放「剛剛變小的點」', en:'queue: only vertices that just improved'},
+    chips:q.length ? q.map((u, i) => ({t:NM[u] + ' ' + shownum(dist[u]), cls:i === 0 ? 'hot' : 'act'}))
+                   : [{t:LANG === 'zh' ? '空' : 'empty', cls:'soft'}]});
+  const snap = (est, st, line, msg) => F.push({
+    shapes:gShapes(E5, {est:est, st:Object.assign(stOf(), st), dist:dist}),
+    panels:[qPanel(), distPanel(dist)], line:line, msg:msg});
+
+  snap({}, {0:'hot'}, 4,
+    {zh:'Bellman-Ford 每輪都掃過<b>全部 10 條邊</b>，可是大部分邊掃了也放鬆不了——' +
+        '只有<b>起點剛剛變小</b>的邊才有機會。SPFA 就是把這件事寫進程式：' +
+        '維護一個佇列，<b>誰的 dist 變小了才把誰排進去</b>。',
+     en:'Bellman-Ford rescans <b>all 10 edges</b> every round, yet most of them cannot possibly relax - only an edge whose <b>tail just improved</b> can. SPFA writes that observation down: keep a queue and <b>enqueue a vertex only when its dist actually drops</b>.'});
+
+  let guard = 0;
+  while (q.length && guard++ < 40){
+    const u = q.shift(); inq[u] = false; pops++;
+    const improved = [], hotE = {};
+    for (const [v, w] of ADJ[u]){
+      if (dist[u] + w < dist[v]){
+        const old = dist[v]; dist[v] = dist[u] + w;
+        hotE[ek(u, v)] = 'hot'; improved.push(NM[v] + ' ' + shownum(old) + '→' + dist[v]);
+        if (!inq[v]){ q.push(v); inq[v] = true; }
+      }
+    }
+    snap(hotE, {[u]:'hot'}, 8, improved.length
+      ? {zh:'取出 <b>' + NM[u] + '</b>（dist ' + dist[u] + '），只檢查它自己的出邊，改到了 <b>' +
+            improved.join('、') + '</b>。這些點<b>排進佇列</b>，因為它們的鄰居可能也要跟著變小；' +
+            '沒被改到的點<b>連碰都不用碰</b>。',
+         en:'Pop <b>' + NM[u] + '</b> (dist ' + dist[u] + ') and scan only its own out-edges, improving <b>' + improved.join(', ') + '</b>. Those vertices <b>go into the queue</b> because their own neighbours may now improve too; everything else is <b>never touched</b>.'}
+      : {zh:'取出 <b>' + NM[u] + '</b>，它的出邊全都放鬆不了——<b>這條分支到此為止</b>，' +
+            '不會再有東西進佇列。Bellman-Ford 下一輪還是會把這些邊再掃一次。',
+         en:'Pop <b>' + NM[u] + '</b>: none of its out-edges relax, so <b>this branch stops here</b> and nothing new is queued. Bellman-Ford would still rescan those edges next round.'});
+  }
+  const treeE = {}; E5.forEach(([u, v, w]) => { if (dist[u] + w === dist[v]) treeE[ek(u, v)] = 'ok'; });
+  F.push({shapes:gShapes(E5, {est:treeE, st:{0:'ok', 1:'ok', 2:'ok', 3:'ok', 4:'ok'}, dist:dist}),
+    panels:[qPanel(), distPanel(dist, null, {zh:'結果', en:'result'})], line:13,
+    msg:{zh:'答案跟 Bellman-Ford <b>一模一樣</b>，但只彈出 <b>' + pops + '</b> 次、每次只看一個點的出邊，' +
+            '而 Bellman-Ford 掃了 10×4 = 40 條邊。' +
+            '注意：SPFA <b>沒有更好的最壞複雜度</b>，仍然是 O(VE)，' +
+            '刻意設計的圖可以把它逼回原形——競賽圈那句「SPFA 已死」就是這個意思。',
+         en:'Same answer as Bellman-Ford, reached with <b>' + pops + '</b> pops that each scan a single vertex\'s out-edges, against Bellman-Ford\'s 10 x 4 = 40 edge scans. Note that SPFA has <b>no better worst case</b> - still O(VE), and adversarial graphs push it right back there, which is what competitive programmers mean by "SPFA is dead".'}});
+  return F.list;
+}
+
+// ---- tab 3: negative cycle -------------------------------------------------
+const NEG = E5.map(([u, v, w]) => [u, v, (u === 4 && v === 2) ? 1 : w]);
+const CYC = [[1, 4], [4, 2], [2, 1]];
+
+function buildNeg(){
+  const F = new Frames(), n = 5;
+  const dist = [INF, INF, INF, INF, INF]; dist[0] = 0;
+  const stOf = () => { const s = {}; for (let i = 0; i < n; i++)
+      s[i] = dist[i] < INF ? 'ok' : 'idle'; return s; };
+  const cycE = {}; CYC.forEach(([u, v]) => cycE[ek(u, v)] = 'bad');
+  const snap = (est, st, line, msg) => F.push({
+    shapes:gShapes(NEG, {est:est, st:Object.assign(stOf(), st), dist:dist}),
+    panels:[distPanel(dist)], line:line, msg:msg});
+
+  snap(cycE, {}, 0,
+    {zh:'同一張圖，只把 <b>E→C 從 7 改成 1</b>。現在 <b>B→E→C→B = −4 + 1 − 2 = −5</b>：' +
+        '繞一圈回到原地，成本反而少 5。<b>「最短路」在這裡不存在</b>——想多便宜就繞幾圈。',
+     en:'Same graph with one weight changed: <b>E to C is now 1</b> instead of 7. That makes <b>B, E, C, B cost -4 + 1 - 2 = -5</b>: you come back to where you started 5 cheaper. <b>No shortest path exists</b> - name a price and loop until you beat it.'});
+
+  for (let r = 1; r <= n - 1; r++){
+    for (const [u, v, w] of NEG) if (dist[u] + w < dist[v]) dist[v] = dist[u] + w;
+    if (r === 1 || r === n - 1)
+      snap({}, {}, 4,
+        {zh:'第 ' + r + ' 輪跑完，dist 看起來很正常——<b>演算法完全沒有卡住</b>，' +
+            '負環不會讓迴圈停不下來，因為輪數是寫死的 V−1。',
+         en:'After round ' + r + ' the numbers look perfectly ordinary - <b>nothing hangs</b>. A negative cycle cannot trap the loop, because the round count is hard-wired to V-1.'});
+  }
+  let hitU = -1, hitV = -1;
+  for (const [u, v, w] of NEG) if (dist[u] + w < dist[v]){ hitU = u; hitV = v; break; }
+  snap({[ek(hitU, hitV)]:'bad'}, {[hitU]:'act', [hitV]:'bad'}, 14,
+    {zh:'跑<b>第 V 輪</b>（多出來的那一輪）：邊 <b>' + NM[hitU] + '→' + NM[hitV] +
+        '</b> 竟然<b>還能再放鬆</b>。但 V−1 輪已經涵蓋所有「不重複經過點」的路徑，' +
+        '還能變小就代表這條路<b>重複經過了某個點</b>，也就是繞了一個<b>總和為負的環</b>。',
+     en:'Run the <b>V-th round</b>, the extra one: edge <b>' + NM[hitU] + ' to ' + NM[hitV] + '</b> <b>still improves</b>. But V-1 rounds already cover every path that repeats no vertex, so anything that still gets cheaper must <b>revisit a vertex</b> - it is going round a cycle whose weights sum to negative.'});
+  snap(cycE, {1:'bad', 2:'bad', 4:'bad'}, 15,
+    {zh:'沿著 <code>parent</code> 往回走 V 步一定會走進環裡，就能把環本身印出來：' +
+        '<b>B → E → C → B</b>。SPFA 用另一個等價的訊號：' +
+        '<b>某個點被排進佇列 V 次</b>——沒有負環的話這是不可能的。',
+     en:'Walking back V steps along <code>parent</code> is guaranteed to land inside the cycle, so the cycle itself can be printed: <b>B, E, C, B</b>. SPFA uses an equivalent signal: <b>a vertex entering the queue V times</b>, which cannot happen without a negative cycle.'});
+  snap(cycE, {1:'bad', 2:'bad', 4:'bad'}, 15,
+    {zh:'實務上這個「錯誤」常常才是<b>真正想要的東西</b>：把匯率取 −log 當邊權，' +
+        '一個負環就是一組<b>套利循環</b>。所以 Bellman-Ford 的回傳值不是「失敗」，' +
+        '而是<b>一個發現</b>。',
+     en:'In practice this "failure" is often <b>the thing you were looking for</b>: take -log of exchange rates as weights and a negative cycle is an <b>arbitrage loop</b>. Bellman-Ford is not reporting an error, it is reporting <b>a finding</b>.'});
+  return F.list;
+}
+
+const CODE_FLOYD = [
+'def floyd_warshall(n, edges):',
+'    dist = [[INF] * n for _ in range(n)]',
+'    for i in range(n): dist[i][i] = 0',
+'    for u, v, w in edges: dist[u][v] = min(dist[u][v], w)',
+'',
+'    for k in range(n):            # k MUST be outermost',
+'        for i in range(n):',
+'            for j in range(n):',
+'                if dist[i][k] + dist[k][j] < dist[i][j]:',
+'                    dist[i][j] = dist[i][k] + dist[k][j]',
+'    return dist'];
+
+const MX = 2.15, MY = 1.35, MW = 1.05, MH = .78;
+function mShapes(d, st){
+  st = st || {}; const out = [];
+  for (let j = 0; j < 5; j++)
+    out.push(S.t(MX + j * MW + (MW - .08) / 2, MY - .28, NM[j], {c:'#c7a6ff', fs:.34}));
+  for (let i = 0; i < 5; i++){
+    out.push(S.t(MX - .28, MY + i * MH + MH * .62, NM[i], {c:'#c7a6ff', fs:.34, anchor:'end'}));
+    for (let j = 0; j < 5; j++)
+      out.push(S.r(MX + j * MW, MY + i * MH, MW - .08, MH - .08, st[i + ',' + j] || 'idle',
+        shownum(d[i][j]), {fs:.34}));
+  }
+  return out;
+}
+
+function buildFloyd(){
+  const F = new Frames(), n = 5;
+  const d = []; for (let i = 0; i < n; i++){ const row = [];
+    for (let j = 0; j < n; j++) row.push(i === j ? 0 : INF); d.push(row); }
+  E5.forEach(([u, v, w]) => { if (w < d[u][v]) d[u][v] = w; });
+
+  F.push({shapes:mShapes(d, {}), panels:[], line:3,
+    msg:{zh:'換個問法：不是「A 到大家多遠」，而是<b>「每一對點之間多遠」</b>。' +
+            '表格先填直接相連的邊，其它是 ∞、對角線是 0。' +
+            '跑 V 次 Bellman-Ford 要 O(V²E)；Floyd-Warshall 用一個 DP 一次做完，' +
+            '而且<b>只有三層迴圈</b>。',
+         en:'Change the question: not "how far is everything from A" but <b>"how far is every pair from every other"</b>. The table starts with the direct edges, infinity elsewhere, zero on the diagonal. Running Bellman-Ford V times costs O(V^2 E); Floyd-Warshall answers all of it with one DP - and <b>three nested loops</b>.'}});
+
+  for (let k = 0; k < n; k++){
+    const band = {};
+    for (let i = 0; i < n; i++){ band[i + ',' + k] = 'act'; band[k + ',' + i] = 'act'; }
+    band[k + ',' + k] = 'hot';
+    F.push({shapes:mShapes(d, band), panels:[], line:5,
+      msg:{zh:'第 <b>k = ' + NM[k] + '</b> 階段。這一階段之後，<code>dist[i][j]</code> 的意思是' +
+              '「<b>中途只准經過 ' + NM.slice(0, k + 1).split('').join('、') + ' 的最短 i→j</b>」。' +
+              '要用到的只有<b>第 ' + NM[k] + ' 列和第 ' + NM[k] + ' 行</b>（紫色），' +
+              '因為經過 ' + NM[k] + ' 的路一定拆成 i→' + NM[k] + ' 和 ' + NM[k] + '→j。',
+           en:'Stage <b>k = ' + NM[k] + '</b>. After it, <code>dist[i][j]</code> means "<b>the cheapest i to j whose intermediate vertices all come from ' + NM.slice(0, k + 1).split('').join(', ') + '</b>". Only <b>row ' + NM[k] + ' and column ' + NM[k] + '</b> (purple) are read, because any path through ' + NM[k] + ' splits into i to ' + NM[k] + ' and ' + NM[k] + ' to j.'}});
+    const hits = {}, told = [];
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++)
+      if (d[i][k] + d[k][j] < d[i][j]){
+        told.push(NM[i] + '→' + NM[j] + ' ' + shownum(d[i][j]) + '→' + (d[i][k] + d[k][j]));
+        d[i][j] = d[i][k] + d[k][j]; hits[i + ',' + j] = 'hot';
+      }
+    F.push({shapes:mShapes(d, Object.assign({}, band, hits)), panels:[], line:9,
+      msg:told.length
+        ? {zh:'把 ' + NM[k] + ' 開放當中繼點後，改進了 <b>' + told.slice(0, 6).join('、') +
+              (told.length > 6 ? ' …' : '') + '</b>。' +
+              '每一格只問一個是非題：<b>繞經 ' + NM[k] + ' 比較便宜嗎？</b>' +
+              '這就是 <code>min(dist[i][j], dist[i][k] + dist[k][j])</code> 的全部。',
+           en:'Allowing ' + NM[k] + ' as a stopover improves <b>' + told.slice(0, 6).join(', ') + (told.length > 6 ? ' ...' : '') + '</b>. Every cell answers one yes/no question: <b>is going via ' + NM[k] + ' cheaper?</b> That is all of <code>min(dist[i][j], dist[i][k] + dist[k][j])</code>.'}
+        : {zh:'開放 ' + NM[k] + ' 當中繼點<b>沒有改善任何一格</b>——沒關係，DP 還是要問過，' +
+              '因為「問過了、答案是不」跟「沒問」是兩回事。',
+           en:'Opening ' + NM[k] + ' as a stopover <b>improves nothing</b> - fine. The DP still has to ask: "asked and the answer was no" is not the same state as "never asked".'}});
+  }
+  const allOk = {}; for (let i = 0; i < 5; i++) for (let j = 0; j < 5; j++) allOk[i + ',' + j] = 'ok';
+  F.push({shapes:mShapes(d, allOk), panels:[], line:10,
+    msg:{zh:'五個階段跑完，<b>25 個答案全部出爐</b>。第一列正是 Bellman-Ford 從 A 算出來的 ' +
+            '<b>0 2 4 7 −2</b>，兩邊互相對答案。' +
+            '負邊完全沒問題；負環的話<b>對角線會出現負數</b>（自己回到自己居然是負的），一眼就抓到。',
+         en:'Five stages, <b>all 25 answers done</b>. The first row is exactly the <b>0 2 4 7 -2</b> that Bellman-Ford produced from A - the two algorithms check each other. Negative edges are fine here; a negative cycle shows up as <b>a negative number on the diagonal</b>, i.e. leaving a vertex and returning cheaper than free.'}});
+
+  const bad = []; for (let i = 0; i < n; i++){ const row = [];
+    for (let j = 0; j < n; j++) row.push(i === j ? 0 : INF); bad.push(row); }
+  E5.forEach(([u, v, w]) => { if (w < bad[u][v]) bad[u][v] = w; });
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) for (let k = 0; k < n; k++)
+    if (bad[i][k] + bad[k][j] < bad[i][j]) bad[i][j] = bad[i][k] + bad[k][j];
+  const wrong = {}, list = [];
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if (bad[i][j] !== d[i][j]){
+    wrong[i + ',' + j] = 'bad'; list.push(NM[i] + '→' + NM[j] + ' ' + bad[i][j] + ' ≠ ' + d[i][j]); }
+  F.push({shapes:mShapes(bad, wrong), panels:[], line:5,
+    msg:{zh:'把三層迴圈的順序寫成 <code>for i / for j / for k</code>（k 放最內層）會發生什麼事？' +
+            '程式照跑、表格照填、<b>不會有任何錯誤訊息</b>，但這 ' + list.length + ' 格是錯的：<b>' +
+            list.join('、') + '</b>。' +
+            '原因是 k 當內層時，<code>dist[i][k]</code> 自己都還沒算完就被拿去用。' +
+            '<b>k 必須在最外層</b>，因為它是 DP 的「階段」，i 和 j 只是這個階段裡要更新的格子。',
+         en:'What if the loops are written <code>for i / for j / for k</code> with k innermost? The program runs, the table fills, <b>nothing raises an error</b> - but these ' + list.length + ' cells are wrong: <b>' + list.join(', ') + '</b>. With k inside, <code>dist[i][k]</code> is read before it has been finished. <b>k must be outermost</b> because it is the DP <i>stage</i>; i and j are merely the cells that stage updates.'}});
+  return F.list;
+}
+
+const CODE_LC = [
+'def findCheapestPrice(n, flights, src, dst, k):',
+'    dist = [INF] * n',
+'    dist[src] = 0',
+'',
+'    for _ in range(k + 1):        # at most k+1 edges',
+'        prev = dist[:]            # <- snapshot of last round',
+'        for u, v, w in flights:',
+'            if prev[u] + w < dist[v]:',
+'                dist[v] = prev[u] + w',
+'',
+'    return dist[dst] if dist[dst] < INF else -1'];
+
+const LP = [[1.2, 3.3], [4.4, 1.5], [4.4, 5.1], [7.6, 3.3]];
+const FL = [[0, 1, 100], [1, 2, 100], [2, 0, 100], [1, 3, 600], [2, 3, 200]];
+const LSHIFT = {'2>0':.18};
+
+function lcShapes(dist, o){
+  o = o || {}; const out = [];
+  FL.forEach(([u, v, w]) => {
+    const k = ek(u, v), st = (o.est && o.est[k]) || 'ghost';
+    const [x1, y1] = LP[u], [x2, y2] = LP[v];
+    const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+    const ux = dx / L, uy = dy / L, s = LSHIFT[k] || 0;
+    const ax = x1 + uy * s, ay = y1 - ux * s, bx = x2 + uy * s, by = y2 - ux * s;
+    out.push(S.e(ax, ay, bx, by, {s:st, pad:RAD + .05,
+      w:(st === 'hot' || st === 'bad') ? .10 : .045}));
+    out.push(S.t((ax + bx) / 2 + uy * .32, (ay + by) / 2 - ux * .32, String(w),
+      {c:st === 'ghost' ? '#8fa3ac' : (st === 'bad' ? '#ff5c5c' : '#ffbe6b'), fs:.30}));
+  });
+  for (let i = 0; i < 4; i++)
+    out.push(S.c(LP[i][0], LP[i][1], RAD, (o.st && o.st[i]) || 'idle', String(i),
+      {fs:.34, top:(i === 0 ? {zh:'出發', en:'src'} : (i === 3 ? {zh:'目的地', en:'dst'} : null))}));
+  const cs = {}; for (let i = 0; i < 4; i++) cs[i] = (o.cell && o.cell[i]) || (dist[i] < INF ? 'ok' : 'idle');
+  out.push(...cellRow(dist.map(shownum), 2.6, 6.05, 1.15, .74, {states:cs, title:'dist'}));
+  return out;
+}
+
+function buildLC(v){
+  const F = new Frames(), copy = (v === 0), K = 1, n = 4;
+  const dist = [0, INF, INF, INF];
+  const snap = (est, st, cell, line, msg, panels) => F.push({
+    shapes:lcShapes(dist, {est:est, st:st, cell:cell}),
+    panels:panels || [], line:line, msg:msg});
+
+  snap({}, {0:'hot'}, {}, 2, copy
+    ? {zh:'LC 787：從 0 飛到 3，<b>最多轉機 k = 1 次</b>。' +
+          '「最多 1 次轉機」＝「最多 2 段航程」＝<b>最多 2 條邊</b>——' +
+          '而 Bellman-Ford 的第 r 輪剛好就是「最多 r 條邊的最短路」。' +
+          '<b>那個看起來很麻煩的限制，其實就是迴圈次數。</b>',
+       en:'LC 787: fly from 0 to 3 with <b>at most k = 1 stop</b>. "At most 1 stop" is "at most 2 flights" is <b>at most 2 edges</b> - and round r of Bellman-Ford is exactly "shortest path using at most r edges". <b>The constraint that looks like a complication is the loop counter.</b>'}
+    : {zh:'同一題，只把 <code>prev = dist[:]</code> 這一行拿掉，' +
+          '直接在 <code>dist</code> 上放鬆。看起來只是少一次複製，' +
+          '<b>答案卻會變</b>——而且變成比較小的那個，最容易被誤認為「更好」。',
+       en:'The same problem with a single line removed: no <code>prev = dist[:]</code>, relax straight into <code>dist</code>. It looks like saving one copy, but <b>the answer changes</b> - and it changes to a smaller number, the kind that looks like an improvement.'});
+
+  for (let r = 1; r <= K + 1; r++){
+    const prev = dist.slice();
+    if (copy)
+      snap({}, {}, {}, 5,
+        {zh:'第 ' + r + ' 輪開始，先把上一輪的 <code>dist</code> <b>拍一張快照 prev</b>。' +
+            '這一輪的放鬆<b>只能讀 prev</b>，寫進 dist——這樣每個答案最多只會多長一條邊。',
+         en:'Round ' + r + ' starts by <b>snapshotting</b> last round\'s <code>dist</code> into <code>prev</code>. This round reads only from <code>prev</code> and writes into <code>dist</code>, so every answer grows by at most one edge.'});
+    const hotE = {}, told = [];
+    for (const [u, vv, w] of FL){
+      const base = copy ? prev[u] : dist[u];
+      if (base + w < dist[vv]){
+        const old = dist[vv]; dist[vv] = base + w;
+        hotE[ek(u, vv)] = copy ? 'hot' : 'bad';
+        told.push(u + '→' + vv + '：' + shownum(old) + '→' + dist[vv]);
+      }
+    }
+    snap(hotE, {}, {}, copy ? 8 : 8,
+      copy
+        ? {zh:'第 <b>' + r + '</b> 輪放鬆完：' + (told.join('、') || '沒有變化') + '。' +
+              '因為讀的是 prev，<b>0→1→2 這種連鎖不可能發生在同一輪</b>：' +
+              '2 這一輪只能從「上一輪的 1」接過來。',
+           en:'Round <b>' + r + '</b> done: ' + (told.join(', ') || 'nothing changed') + '. Because we read from <code>prev</code>, <b>a chain like 0-1-2 cannot happen inside one round</b>: 2 can only extend last round\'s value of 1.'}
+        : {zh:'第 <b>' + r + '</b> 輪：' + (told.join('、') || '沒有變化') + '。' +
+              '看出問題了嗎？<b>0→1、1→2、2→3 在同一輪裡連成一串</b>，' +
+              '因為 <code>dist[1]</code> 才剛被寫進去就馬上被 <code>1→2</code> 讀走。' +
+              '一輪走了三條邊，等於偷偷放寬了轉機次數。',
+           en:'Round <b>' + r + '</b>: ' + (told.join(', ') || 'nothing changed') + '. See it? <b>0-1, 1-2 and 2-3 chained inside a single round</b>, because <code>dist[1]</code> was written and then immediately read by <code>1-2</code>. Three edges in one round quietly grants extra stops.'});
+    if (!copy) break;
+  }
+  const ans = dist[3] < INF ? dist[3] : -1;
+  F.push({shapes:lcShapes(dist, {est:{}, st:{3:copy ? 'ok' : 'bad'},
+      cell:{3:copy ? 'ok' : 'bad'}}), panels:[], line:10,
+    msg:copy
+      ? {zh:'答案 <b>' + ans + '</b>，走 0→1→3（1 次轉機）。' +
+            '更便宜的 0→1→2→3 只要 400，但那要<b>轉 2 次</b>，題目不准。' +
+            '注意這裡<b>不能用 Dijkstra 的直覺</b>：便宜的路不一定合法，' +
+            '狀態必須是「(點, 已用幾條邊)」而不是只有點。',
+         en:'Answer <b>' + ans + '</b>, flying 0-1-3 with one stop. The cheaper 0-1-2-3 costs 400 but needs <b>two</b> stops, which the problem forbids. Note that <b>Dijkstra\'s instinct fails here</b>: cheapest is not the same as legal, and the state has to be "(vertex, edges used)" rather than just the vertex.'}
+      : {zh:'錯誤版本答 <b>' + ans + '</b>——正確答案是 700。' +
+            '它回報的是 0→1→2→3，<b>轉了 2 次機</b>，超出題目允許的 1 次。' +
+            '這個 bug <b>不會爆炸、不會慢、只會給你一個比較好看的數字</b>，' +
+            '所以在面試裡它是最常見也最致命的一行。一行 <code>prev = dist[:]</code> 就修好了。',
+         en:'The buggy version answers <b>' + ans + '</b>; the correct answer is 700. It is reporting 0-1-2-3, which uses <b>two</b> stops - one more than allowed. The bug <b>never crashes, never slows down, and returns a nicer-looking number</b>, which is what makes it the classic interview trap. One line, <code>prev = dist[:]</code>, fixes it.'}});
+  return F.list;
+}
+
+const DAY_META = {
+  title:{zh:'負權與全點對', en:'Negative weights and all pairs'},
+  sub:{zh:'Bellman-Ford、SPFA、Floyd-Warshall：放棄「定案」之後，最短路變成什麼樣子',
+       en:'Bellman-Ford, SPFA and Floyd-Warshall - what shortest paths look like once you stop settling vertices'},
+  tabs:[
+    {id:'bf', label:{zh:'Bellman-Ford 一輪一輪', en:'Bellman-Ford round by round'},
+     stage:{zh:'不挑順序，就把每條邊都放鬆 V−1 次', en:'Pick no order: relax every edge, V-1 times'},
+     view:[9.4, 7.0],
+     idea:{zh:'Dijkstra 用 heap 決定「誰先定案」，代價是<b>邊不能為負</b>。' +
+              'Bellman-Ford 不定案任何點，只保證「<b>第 r 輪之後，所有最多 r 條邊的最短路都對了</b>」。' +
+              '最短路最多 V−1 條邊，所以 V−1 輪就夠。',
+           en:'Dijkstra uses a heap to decide who gets settled first, and pays for it with the <b>non-negative weights</b> precondition. Bellman-Ford settles nobody and only promises that <b>after round r, every shortest path of at most r edges is correct</b>. A shortest path has at most V-1 edges, so V-1 rounds are enough.'},
+     legend:['hot', 'act', 'ok', 'idle'], code:CODE_BF, build:buildBF},
+    {id:'spfa', label:{zh:'SPFA：只重算變動過的', en:'SPFA: re-check only what changed'},
+     stage:{zh:'同樣的放鬆，換一個工作清單', en:'The same relaxation, driven by a work list'},
+     view:[9.4, 7.0],
+     idea:{zh:'只有「起點剛剛變小」的邊才可能放鬆成功，' +
+              '所以維護一個佇列，變小的點才進去。' +
+              '答案跟 Bellman-Ford 完全一樣，實務上快很多，' +
+              '但<b>最壞情況仍是 O(VE)</b>，不能拿它當保證。',
+           en:'Only an edge whose tail just improved can possibly relax, so keep a queue and enqueue a vertex only when its distance drops. The answer is identical to Bellman-Ford and usually much faster, but the <b>worst case is still O(VE)</b> - never rely on it as a guarantee.'},
+     legend:['hot', 'act', 'ok', 'idle'], code:CODE_SPFA, build:buildSPFA},
+    {id:'neg', label:{zh:'負環：答案是負無限', en:'negative cycle: minus infinity'},
+     stage:{zh:'多跑一輪，就知道有沒有負環', en:'One extra round is the whole detector'},
+     view:[9.4, 7.0],
+     idea:{zh:'V−1 輪涵蓋了所有<b>不重複經過點</b>的路徑。' +
+              '如果第 V 輪還能再放鬆，代表最短路想重複經過某個點——' +
+              '也就是有一個<b>總和為負的環</b>，此時「最短路」根本不存在。',
+           en:'V-1 rounds cover every path that <b>repeats no vertex</b>. If a V-th round can still relax something, the "shortest path" wants to revisit a vertex - there is a <b>cycle with negative total weight</b>, and no shortest path exists at all.'},
+     legend:['bad', 'act', 'ok', 'idle'], code:CODE_BF, build:buildNeg},
+    {id:'floyd', label:{zh:'Floyd-Warshall 全點對', en:'Floyd-Warshall, all pairs'},
+     stage:{zh:'三層迴圈就是一個 DP，k 是階段', en:'Three loops are a DP, and k is the stage'},
+     view:[8.2, 6.4],
+     idea:{zh:'<code>dist[i][j]</code> 在第 k 階段之後的意思是' +
+              '「<b>中途只准經過 {0..k} 的最短 i→j</b>」。' +
+              '加入 k 只有兩種可能：經過它或不經過它，' +
+              '所以更新就是一行 min。<b>k 必須放最外層</b>，因為它是階段。',
+           en:'After stage k, <code>dist[i][j]</code> means "<b>the cheapest i to j whose intermediate vertices all come from {0..k}</b>". Adding k offers exactly two options - use it or not - so the update is a single min. <b>k must be the outer loop</b>, because it is the stage.'},
+     legend:['hot', 'act', 'bad', 'ok'], code:CODE_FLOYD, build:buildFloyd},
+    {id:'lc', label:{zh:'LC 787 最多 k 次轉機', en:'LC 787 within K stops'},
+     stage:{zh:'輪數就是轉機次數', en:'The round counter is the stop counter'},
+     view:[9.6, 7.2],
+     variants:[{zh:'正確：先複製 prev', en:'correct: snapshot prev'},
+               {zh:'錯誤：原地放鬆', en:'buggy: relax in place'}],
+     idea:{zh:'最多 k 次轉機＝最多 k+1 條邊＝<b>跑 k+1 輪 Bellman-Ford</b>。' +
+              '唯一的陷阱是必須從<b>上一輪的快照</b>放鬆；' +
+              '原地改會讓一輪串起好幾條邊，等於偷偷多轉了幾次機，' +
+              '而且<b>完全不會報錯</b>。',
+           en:'At most k stops is at most k+1 edges is <b>k+1 rounds of Bellman-Ford</b>. The only trap is that each round must relax from a <b>snapshot of the previous round</b>; relaxing in place chains several edges into one round, silently granting extra stops - and <b>nothing ever raises an error</b>.'},
+     legend:['hot', 'bad', 'ok', 'idle'], code:CODE_LC, build:buildLC}
+  ]
+};
+
+/* =========================================================================
+   100 Days of Python - shared demo engine
+   palette: teal/blue-green base, purple pointers, orange "current step"
+   ========================================================================= */
+const T = {
+  title:{zh:DAY_META.title.zh, en:DAY_META.title.en},
+  sub:{zh:DAY_META.sub.zh, en:DAY_META.sub.en},
+  play:{zh:'▶ 播放', en:'▶ Play'}, pause:{zh:'❚❚ 暫停', en:'❚❚ Pause'},
+  speed:{zh:'速度', en:'Speed'}, state:{zh:'演算法狀態', en:'Algorithm state'},
+  code:{zh:'程式碼', en:'Code'}, idea:{zh:'重點', en:'The idea'}
+};
+let LANG = 'zh';
+const tr = o => (o == null ? '' : (typeof o === 'string' ? o : (o[LANG] != null ? o[LANG] : o.en)));
+const $ = id => document.getElementById(id);
+
+function setLang(l){
+  LANG = l;
+  document.documentElement.lang = l === 'zh' ? 'zh-Hant' : 'en';
+  $('btn-zh').classList.toggle('on', l === 'zh');
+  $('btn-en').classList.toggle('on', l === 'en');
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.getAttribute('data-i18n');
+    if (T[k]) el.textContent = tr(T[k]);
+  });
+  buildTabs(); render();
+}
+
+/* --------------------------------------------------------------- palette */
+const STY = {
+  idle :{fill:'#07293a', stroke:'#0a6b74', text:'#dff2f5', w:.045, glow:0},
+  soft :{fill:'#052330', stroke:'#0a6b74', text:'#a8c8d0', w:.035, glow:0},
+  hot  :{fill:'#3a2109', stroke:'#ff9736', text:'#ffbe6b', w:.075, glow:.65},
+  act  :{fill:'#241542', stroke:'#9d6bff', text:'#c7a6ff', w:.070, glow:.55},
+  ok   :{fill:'#08414a', stroke:'#3fe0dd', text:'#d9ffff', w:.070, glow:.5},
+  done :{fill:'#062430', stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0},
+  bad  :{fill:'#3a0d0d', stroke:'#ff5c5c', text:'#ff9a9a', w:.070, glow:.4},
+  ghost:{fill:'none',    stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0, dash:'.12 .10'}
+};
+const COL = {teal:'#12b3b8', tealL:'#3fe0dd', purple:'#9d6bff', purpleL:'#c7a6ff',
+             orange:'#ff9736', orangeL:'#ffbe6b', red:'#ff5c5c', grey:'#8fa3ac',
+             pale:'#dff2f5', white:'#ffffff'};
+const LEGEND = {
+  hot:[COL.orange, {zh:'目前這一步', en:'current step'}],
+  act:[COL.purple, {zh:'指標 / 走訪位置', en:'pointer / cursor'}],
+  ok:[COL.tealL,  {zh:'完成 / 結果', en:'done / result'}],
+  bad:[COL.red,   {zh:'失敗 / 要避開的寫法', en:'failure / the wrong way'}],
+  done:['#2f5661', {zh:'已處理完', en:'already done'}],
+  soft:['#0a6b74', {zh:'其他元素', en:'other items'}],
+  idle:['#0a6b74', {zh:'尚未處理', en:'untouched'}],
+  ghost:['#123f4d', {zh:'尚未處理', en:'not yet reached'}]
+};
+const leg = (...keys) => keys.map(k => LEGEND[k]);
+
+/* ---------------------------------------------------------- frame buffer */
+function Frames(){
+  this.list = [];
+  this.push = (o) => this.list.push({
+    shapes:JSON.parse(JSON.stringify(o.shapes || [])),
+    panels:JSON.parse(JSON.stringify(o.panels || [])),
+    view:(o.view || null), line:(o.line == null ? 0 : o.line), msg:o.msg
+  });
+}
+/* shape helpers - engines call these, the renderer just draws */
+const S = {
+  r:(x, y, w, h, s, lab, o) => Object.assign({t:'r', x:x, y:y, w:w, h:h, s:s || 'idle', lab:lab}, o || {}),
+  c:(x, y, r, s, lab, o) => Object.assign({t:'c', x:x, y:y, r:r, s:s || 'idle', lab:lab}, o || {}),
+  e:(x1, y1, x2, y2, o) => Object.assign({t:'e', x1:x1, y1:y1, x2:x2, y2:y2}, o || {}),
+  t:(x, y, s, o) => Object.assign({t:'t', x:x, y:y, s:s}, o || {})
+};
+/* a labelled row of array cells; returns shapes */
+function cellRow(vals, x0, y, w, h, opt){
+  opt = opt || {};
+  const out = [], st = opt.states || {};
+  vals.forEach((v, i) => {
+    out.push(S.r(x0 + i * w, y, w - (opt.gap == null ? .06 : opt.gap), h, st[i] || 'idle',
+                 v == null ? '' : String(v), {fs:opt.fs || h * .52}));
+    if (opt.index !== false)
+      out.push(S.t(x0 + i * w + (w - .06) / 2, y + h + (opt.ilift || .34),
+                   opt.labels ? opt.labels[i] : String(i),
+                   {c:st[i] && st[i] !== 'idle' ? COL.orangeL : COL.grey, fs:opt.ifs || .30}));
+  });
+  if (opt.title) out.push(S.t(x0 - .22, y + h * .62, opt.title, {c:COL.tealL, fs:.32, anchor:'end'}));
+  return out;
+}
+/* binary-tree layout from a heap-style array (index 0 = root, 2i+1 / 2i+2) */
+function heapTreeShapes(arr, x0, y0, w, rowH, states, opt){
+  opt = opt || {};
+  const n = arr.length, out = [], R = opt.r || .34;
+  const depth = i => Math.floor(Math.log2(i + 1));
+  const maxD = n ? depth(n - 1) : 0;
+  const px = i => {
+    const d = depth(i), first = Math.pow(2, d) - 1, k = i - first;
+    const slots = Math.pow(2, d), span = w;
+    return x0 + span * (k + .5) / slots;
+  };
+  const py = i => y0 + depth(i) * rowH;
+  for (let i = 1; i < n; i++){
+    if (arr[i] == null) continue;
+    const p = Math.floor((i - 1) / 2);
+    out.push(S.e(px(p), py(p), px(i), py(i), {pad:R + .04,
+      s:(states && (states[i] === 'hot' || states[i] === 'act')) ? states[i] : 'idle'}));
+  }
+  for (let i = 0; i < n; i++){
+    if (arr[i] == null) continue;
+    out.push(S.c(px(i), py(i), R, (states && states[i]) || 'idle', String(arr[i]), {fs:R * .95}));
+    if (opt.showIndex)
+      out.push(S.t(px(i), py(i) + R + .34, String(i), {c:COL.grey, fs:.26}));
+  }
+  return out;
+}
+
+/* -------------------------------------------------------------- renderer */
+const svgNS = 'http://www.w3.org/2000/svg';
+const mk = (tag, a) => { const e = document.createElementNS(svgNS, tag);
+  for (const k in a) e.setAttribute(k, a[k]); return e; };
+const clear = svg => { while (svg.firstChild) svg.removeChild(svg.firstChild); };
+
+function defs(svg){
+  const d = mk('defs', {});
+  const f = mk('filter', {id:'glow', x:'-70%', y:'-70%', width:'240%', height:'240%'});
+  f.appendChild(mk('feGaussianBlur', {stdDeviation:'.055', result:'b'}));
+  const m = mk('feMerge', {});
+  m.appendChild(mk('feMergeNode', {in:'b'}));
+  m.appendChild(mk('feMergeNode', {in:'SourceGraphic'}));
+  f.appendChild(m); d.appendChild(f);
+  Object.keys(STY).forEach(k => {
+    const mk2 = mk('marker', {id:'ar-' + k, viewBox:'0 0 10 10', refX:'8.5', refY:'5',
+      markerWidth:'5.2', markerHeight:'5.2', orient:'auto-start-reverse'});
+    mk2.appendChild(mk('path', {d:'M 0 1 L 9 5 L 0 9 z', fill:STY[k].stroke}));
+    d.appendChild(mk2);
+  });
+  svg.appendChild(d);
+}
+
+function drawShape(svg, sh){
+  const st = STY[sh.s || 'idle'];
+  if (sh.t === 'e'){
+    let {x1, y1, x2, y2} = sh;
+    if (sh.pad){
+      const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+      x1 += dx / L * sh.pad; y1 += dy / L * sh.pad;
+      x2 -= dx / L * sh.pad; y2 -= dy / L * sh.pad;
+    }
+    const a = {x1:x1.toFixed(3), y1:y1.toFixed(3), x2:x2.toFixed(3), y2:y2.toFixed(3),
+      stroke:st.stroke, 'stroke-width':(sh.w || st.w || .05), 'stroke-linecap':'round',
+      opacity:(sh.o == null ? (sh.s && sh.s !== 'idle' ? 1 : .75) : sh.o)};
+    if (sh.dash || st.dash) a['stroke-dasharray'] = sh.dash || st.dash;
+    if (sh.arrow !== false) a['marker-end'] = 'url(#ar-' + (sh.s || 'idle') + ')';
+    svg.appendChild(mk('line', a));
+    if (sh.lab != null)
+      svg.appendChild(txt((x1 + x2) / 2 + (sh.lx || 0), (y1 + y2) / 2 + (sh.ly || -.16),
+        tr(sh.lab), st.stroke, sh.fs || .30, 'middle'));
+    return;
+  }
+  if (sh.t === 't'){
+    svg.appendChild(txt(sh.x, sh.y, tr(sh.s), sh.c || COL.pale, sh.fs || .32,
+      sh.anchor || 'middle', sh.o));
+    return;
+  }
+  let node;
+  if (sh.t === 'c'){
+    node = mk('circle', {cx:sh.x.toFixed(3), cy:sh.y.toFixed(3), r:sh.r.toFixed(3),
+      fill:st.fill, stroke:st.stroke, 'stroke-width':st.w});
+  } else {
+    node = mk('rect', {x:sh.x.toFixed(3), y:sh.y.toFixed(3), width:sh.w.toFixed(3),
+      height:sh.h.toFixed(3), rx:(sh.rx == null ? .09 : sh.rx), fill:st.fill,
+      stroke:st.stroke, 'stroke-width':st.w});
+  }
+  if (st.dash || sh.dash) node.setAttribute('stroke-dasharray', sh.dash || st.dash);
+  if (st.glow) node.setAttribute('filter', 'url(#glow)');
+  if (sh.o != null) node.setAttribute('opacity', sh.o);
+  svg.appendChild(node);
+  const cx = sh.t === 'c' ? sh.x : sh.x + sh.w / 2;
+  const cy = sh.t === 'c' ? sh.y : sh.y + sh.h / 2;
+  if (sh.lab != null && sh.lab !== '')
+    svg.appendChild(txt(cx + (sh.dx || 0), cy + (sh.fs || .40) * .35, tr(sh.lab), st.text,
+      sh.fs || .40, 'middle'));
+  if (sh.sub != null)
+    svg.appendChild(txt(cx, cy + (sh.t === 'c' ? sh.r : sh.h) + .34, tr(sh.sub),
+      sh.subc || COL.grey, sh.subfs || .28, 'middle'));
+  if (sh.top != null)
+    svg.appendChild(txt(cx, cy - (sh.t === 'c' ? sh.r : sh.h / 2) - .22, tr(sh.top),
+      sh.topc || COL.purpleL, sh.topfs || .28, 'middle'));
+}
+function txt(x, y, s, c, fs, anchor, o){
+  const t = mk('text', {x:(+x).toFixed(3), y:(+y).toFixed(3), 'text-anchor':anchor || 'middle',
+    fill:c, 'font-size':(+fs).toFixed(3)});
+  if (o != null) t.setAttribute('opacity', o);
+  t.textContent = s;
+  return t;
+}
+
+function renderStage(frame){
+  const svg = $('stage');
+  clear(svg); defs(svg);
+  const v = frame.view || curTab().view || [10, 6.4];
+  svg.setAttribute('viewBox', '0 0 ' + v[0] + ' ' + v[1]);
+  (frame.shapes || []).forEach(sh => drawShape(svg, sh));
+}
+
+function drawPanels(frame){
+  const box = $('panels'); box.innerHTML = '';
+  (frame.panels || []).forEach(p => {
+    const d = document.createElement('div'); d.className = 'panel';
+    const l = document.createElement('div'); l.className = 'lbl'; l.textContent = tr(p.lbl);
+    const c = document.createElement('div'); c.className = 'chips';
+    (p.chips.length ? p.chips : [{t:'—', cls:'empty'}]).forEach(ch => {
+      const s = document.createElement('span');
+      s.className = 'chip ' + (ch.cls || ''); s.textContent = ch.t; c.appendChild(s);
+    });
+    d.appendChild(l); d.appendChild(c); box.appendChild(d);
+  });
+}
+function drawCode(frame){
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  $('code').innerHTML = curTab().code.map((ln, i) => {
+    const h = esc(ln).replace(/(#.*)$/, '<span class="cm">$1</span>');
+    return '<span class="ln' + (i === frame.line ? ' on' : '') + '">' + (h || ' ') + '</span>';
+  }).join('');
+}
+function drawLegend(){
+  const keys = curTab().legend || ['hot', 'act', 'ok', 'idle'];
+  $('legend').innerHTML = keys.map(k => {
+    const [c, txt] = Array.isArray(k) ? k : LEGEND[k];
+    return '<span><i style="background:' + c + '"></i>' + tr(txt) + '</span>';
+  }).join('');
+}
+
+let tabIx = 0, varIx = 0, frames = [], cur = 0, timer = null;
+const TABS = DAY_META.tabs;
+const curTab = () => TABS[tabIx];
+
+function render(){
+  if (!frames.length) return;
+  cur = Math.max(0, Math.min(cur, frames.length - 1));
+  const f = frames[cur];
+  $('stage-title').textContent = tr(curTab().stage);
+  renderStage(f); drawPanels(f); drawCode(f); drawLegend();
+  $('narr').innerHTML = tr(f.msg);
+  $('idea').innerHTML = tr(curTab().idea);
+  $('stepno').textContent = (cur + 1) + ' / ' + frames.length;
+  $('prev').disabled = cur === 0;
+  $('next').disabled = cur === frames.length - 1;
+}
+function buildTabs(){
+  $('tabs').innerHTML = '';
+  TABS.forEach((t, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(t.label);
+    if (i === tabIx) b.classList.add('on');
+    b.onclick = () => { tabIx = i; varIx = 0; load(); };
+    $('tabs').appendChild(b);
+  });
+  const ex = $('extra'); ex.innerHTML = '';
+  const vs = curTab().variants;
+  if (vs) vs.forEach((v, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(v);
+    if (i === varIx) b.classList.add('on');
+    b.onclick = () => { varIx = i; load(); };
+    ex.appendChild(b);
+  });
+}
+function load(){
+  stop();
+  frames = curTab().build(varIx) || [];
+  cur = 0; buildTabs(); render();
+}
+function step(d){ stop(); cur += d; render(); }
+function reset(){ stop(); cur = 0; render(); }
+function stop(){ if (timer){ clearInterval(timer); timer = null; $('play').textContent = tr(T.play); } }
+function togglePlay(){
+  if (timer){ stop(); return; }
+  if (cur >= frames.length - 1) cur = 0;
+  $('play').textContent = tr(T.pause);
+  timer = setInterval(() => {
+    if (cur >= frames.length - 1){ stop(); return; }
+    cur++; render();
+  }, Number($('speed').value));
+}
+$('speed').addEventListener('input', () => { if (timer){ stop(); togglePlay(); } });
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight'){ step(1); e.preventDefault(); }
+  else if (e.key === 'ArrowLeft'){ step(-1); e.preventDefault(); }
+  else if (e.key === ' '){ togglePlay(); e.preventDefault(); }
+});
+setLang('zh');
+load();
