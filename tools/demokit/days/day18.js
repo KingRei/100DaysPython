@@ -1,0 +1,547 @@
+// DAY: 18
+// TITLE_ZH: Tarjan：一個 DFS 時間戳，三種結構
+// TITLE_EN: Tarjan - one DFS with timestamps, three structures
+// SUB_ZH: 同一次 DFS 記下 disc 與 low 兩個數字，就能同時回答橋、關節點、強連通分量三個問題。
+// SUB_EN: Write down two numbers per vertex during one DFS - disc and low - and the same traversal answers bridges, articulation points and strongly connected components.
+// FOLDER: day%2018%20-%20tarjan%20scc%20and%20bridges
+// MEDIUM: https://medium.com/100-days-of-python
+
+const RAD = .40;
+const ek = (a, b) => a + '>' + b;
+
+/* ---------------------------------------------------------- undirected graph */
+const UP = [[1.0, 1.6], [1.0, 4.6], [2.9, 3.1], [4.7, 1.6],
+            [4.7, 4.6], [6.6, 4.6], [8.4, 3.1], [8.4, 5.9]];
+const UE = [[0, 1], [1, 2], [2, 0], [2, 3], [3, 4], [4, 2],
+            [4, 5], [5, 6], [6, 7], [7, 5]];
+
+/* directed graph */
+const DP = [[0.9, 3.6], [3.2, 2.0], [5.6, 1.3], [5.0, 3.5], [3.4, 5.6], [6.2, 5.6]];
+const DE = [[0, 1], [0, 4], [1, 2], [2, 3], [3, 1], [4, 5], [5, 4], [5, 2]];
+const DSHIFT = {'4>5':.16, '5>4':.16};
+
+function uAdj(edges, n){
+  const a = []; for (let i = 0; i < n; i++) a.push([]);
+  edges.forEach(([u, v], i) => { a[u].push([v, i]); a[v].push([u, i]); });
+  return a;
+}
+
+/* undirected picture: est maps edge index -> style, st maps vertex -> style */
+function uShapes(edges, pos, o){
+  o = o || {}; const out = [], est = o.est || {}, st = o.st || {}, sh = o.shift || {};
+  edges.forEach(([u, v], i) => {
+    const s = est[i] || 'ghost';
+    const [x1, y1] = pos[u], [x2, y2] = pos[v];
+    const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+    const ux = dx / L, uy = dy / L, k = sh[i] || 0;
+    out.push(S.e(x1 + uy * k, y1 - ux * k, x2 + uy * k, y2 - ux * k,
+      {s:s, pad:RAD + .05, arrow:false,
+       w:(s === 'ghost' || s === 'idle') ? .045 : .10}));
+  });
+  const ab = o.above || [];
+  for (let i = 0; i < pos.length; i++){
+    const tm = (o.times && o.times[i]) || null;
+    const lift = ab.indexOf(i) >= 0;
+    out.push(S.c(pos[i][0], pos[i][1], RAD, st[i] || 'idle', String(i),
+      {fs:.34, sub:lift ? null : tm, subc:COL.orangeL, subfs:.26,
+       top:lift ? tm : null, topc:COL.orangeL, topfs:.26}));
+  }
+  return out;
+}
+
+/* directed picture */
+function dShapes(o){
+  o = o || {}; const out = [], est = o.est || {}, st = o.st || {};
+  DE.forEach(([u, v]) => {
+    const k = ek(u, v), s = est[k] || 'ghost';
+    const [x1, y1] = DP[u], [x2, y2] = DP[v];
+    const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+    const ux = dx / L, uy = dy / L, sh = DSHIFT[k] || 0;
+    out.push(S.e(x1 + uy * sh, y1 - ux * sh, x2 + uy * sh, y2 - ux * sh,
+      {s:s, pad:RAD + .06, w:(s === 'ghost' || s === 'idle') ? .045 : .10}));
+  });
+  for (let i = 0; i < DP.length; i++){
+    const tm = (o.times && o.times[i]) || null, lift = (i === 2);
+    out.push(S.c(DP[i][0], DP[i][1], RAD, st[i] || 'idle', String(i),
+      {fs:.34, sub:lift ? null : tm, subc:COL.orangeL, subfs:.26,
+       top:lift ? tm : null, topc:COL.orangeL, topfs:.26}));
+  }
+  return out;
+}
+
+const timesOf = (disc, low) => disc.map((d, i) => d < 0 ? '' : d + '/' + low[i]);
+
+function chipPanel(lbl, items){ return {lbl:lbl, chips:items}; }
+
+const CODE_BR = [
+'def find_bridges(n, edges):',
+'    disc = [-1] * n; low = [0] * n; clock = 0',
+'',
+'    def dfs(u, in_edge):',
+'        disc[u] = low[u] = clock; clock += 1',
+'        for v, eid in adj[u]:',
+'            if eid == in_edge:      # skip the edge, not the vertex',
+'                continue',
+'            if disc[v] == -1:       # tree edge',
+'                dfs(v, eid)',
+'                low[u] = min(low[u], low[v])',
+'                if low[v] > disc[u]:',
+'                    bridges.append((u, v))',
+'            else:                   # back edge to an ancestor',
+'                low[u] = min(low[u], disc[v])'];
+
+const CODE_CUT = [
+'def find_articulation_points(n, edges):',
+'    def dfs(u, in_edge, root):',
+'        disc[u] = low[u] = clock; clock += 1',
+'        children = 0',
+'        for v, eid in adj[u]:',
+'            if eid == in_edge:',
+'                continue',
+'            if disc[v] == -1:',
+'                children += 1',
+'                dfs(v, eid, root)',
+'                low[u] = min(low[u], low[v])',
+'                if u != root and low[v] >= disc[u]:',
+'                    cut.add(u)      # >= instead of >',
+'            else:',
+'                low[u] = min(low[u], disc[v])',
+'        if u == root and children > 1:',
+'            cut.add(u)              # the root needs its own rule'];
+
+const CODE_SCC = [
+'def tarjan_scc(n, edges):',
+'    def dfs(u):',
+'        disc[u] = low[u] = clock; clock += 1',
+'        stack.append(u); on_stack[u] = True',
+'        for v in adj[u]:',
+'            if disc[v] == -1:',
+'                dfs(v)',
+'                low[u] = min(low[u], low[v])',
+'            elif on_stack[v]:        # only an ancestor counts',
+'                low[u] = min(low[u], disc[v])',
+'            # else: v is in a finished component - ignore it',
+'        if low[u] == disc[u]:        # u is the root of an SCC',
+'            comp = []',
+'            while True:',
+'                w = stack.pop(); on_stack[w] = False',
+'                comp.append(w)',
+'                if w == u:',
+'                    break',
+'            comps.append(comp)'];
+
+const CODE_LC = [
+'def critical_connections(n, connections):',
+'    disc = [-1] * n; low = [0] * n; clock = 0; out = []',
+'    disc[0] = low[0] = clock; clock += 1',
+'    stack = [(0, -1, iter(adj[0]))]      # explicit frames',
+'    while stack:',
+'        u, in_edge, it = stack[-1]',
+'        descended = False',
+'        for v, eid in it:                # the cursor resumes here',
+'            if eid == in_edge:',
+'                continue',
+'            if disc[v] == -1:',
+'                disc[v] = low[v] = clock; clock += 1',
+'                stack.append((v, eid, iter(adj[v])))',
+'                descended = True',
+'                break                    # go deeper',
+'            low[u] = min(low[u], disc[v])',
+'        if not descended:                # this is the "return"',
+'            stack.pop()',
+'            if stack:',
+'                p = stack[-1][0]',
+'                low[p] = min(low[p], low[u])',
+'                if low[u] > disc[p]:',
+'                    out.append([p, u])'];
+
+/* ------------------------------------------------- generic undirected DFS */
+const LINES = {
+  bridge:{enter:4, skip:6, tree:9, pull:10, test:11, mark:12, back:14, root:-1},
+  cut   :{enter:2, skip:5, tree:9, pull:10, test:11, mark:12, back:14, root:15}
+};
+
+function uRun(cfg){
+  const edges = cfg.edges, pos = cfg.pos, n = pos.length, mode = cfg.mode;
+  const L = LINES[mode];
+  const adj = uAdj(edges, n);
+  const disc = new Array(n).fill(-1), low = new Array(n).fill(0);
+  const est = {}, st = {};
+  const bridges = [], cuts = [];
+  let clock = 0;
+  const F = new Frames();
+
+  const panels = () => {
+    const p = [chipPanel({zh:'disc / low', en:'disc / low'},
+      disc.map((d, i) => ({t:i + ': ' + (d < 0 ? '–' : d + '/' + low[i]),
+                           cls:d < 0 ? 'dim' : (st[i] === 'hot' ? 'hot' : 'ok')})))];
+    if (mode === 'cut')
+      p.push(chipPanel({zh:'關節點 cut vertices', en:'articulation points'},
+        cuts.slice().sort((a, b) => a - b).map(v => ({t:String(v), cls:'bad'}))));
+    else
+      p.push(chipPanel({zh:'找到的橋', en:'bridges found'},
+        bridges.map(e => ({t:e[0] + '–' + e[1], cls:'bad'}))));
+    return p;
+  };
+  const snap = (line, msg) => F.push({
+    shapes:uShapes(edges, pos, {est:est, st:st, times:timesOf(disc, low),
+                               shift:cfg.shift, above:cfg.above}),
+    panels:panels(), view:cfg.view, line:line, msg:msg});
+
+  function dfs(u, inEdge, pv, root){
+    disc[u] = low[u] = clock++; st[u] = 'hot';
+    snap(L.enter, {
+      zh:'進入 ' + u + '，蓋下時間戳：disc[' + u + ']=' + disc[u] + '，low 先設成一樣。low 的定義是「從 ' + u + ' 的子樹出發，最多再走一條回邊，能回到多早的時間戳」。',
+      en:'Enter ' + u + ' and stamp it: disc[' + u + ']=' + disc[u] + ', low starts equal. low means "the earliest timestamp reachable from ' + u + '’s subtree using tree edges plus at most one back edge".'});
+    let children = 0;
+    for (let idx = 0; idx < adj[u].length; idx++){
+      const v = adj[u][idx][0], eid = adj[u][idx][1];
+      const skipIt = (cfg.skip === 'vertex') ? (v === pv) : (eid === inEdge);
+      if (skipIt){
+        if (cfg.narrateSkip && cfg.narrateSkip(u, v, eid))
+          snap(L.skip, cfg.skip === 'vertex' ? {
+            zh:'看到鄰居 ' + v + '，它就是父節點，於是整個跳過——連編號 ' + eid + ' 這條「另一條」邊也一起跳掉了。這就是 bug 的源頭。',
+            en:'Neighbour ' + v + ' is the parent, so it is skipped entirely - including edge #' + eid + ', which is a *different* cable. That is where the bug comes from.'} : {
+            zh:'鄰居 ' + v + ' 是父節點，但我們只跳過「走進來的那一條邊」（編號 ' + inEdge + '），編號 ' + eid + ' 這條平行邊照走。',
+            en:'Neighbour ' + v + ' is the parent, but we only skip the edge we came in on (#' + inEdge + '); the parallel edge #' + eid + ' is still fair game.'});
+        continue;
+      }
+      if (disc[v] === -1){
+        children++;
+        est[eid] = 'ok';
+        st[u] = 'act';
+        snap(L.tree, {
+          zh:'邊 ' + u + '–' + v + ' 通往沒走過的點，是一條 tree edge，往下遞迴。',
+          en:'Edge ' + u + '–' + v + ' leads somewhere unvisited - a tree edge. Recurse into ' + v + '.'});
+        dfs(v, eid, u, root);
+        st[u] = 'hot';
+        low[u] = Math.min(low[u], low[v]);
+        snap(L.pull, {
+          zh:v + ' 的子樹跑完了，low[' + v + ']=' + low[v] + '。把它拉上來：low[' + u + '] 取兩者較小者 = ' + low[u] + '。子樹能爬多高，父節點就能爬多高。',
+          en:v + '’s subtree is finished with low[' + v + ']=' + low[v] + '. Pull it up: low[' + u + '] = min of the two = ' + low[u] + '. Whatever the subtree can reach, the parent can reach too.'});
+        if (mode === 'bridge'){
+          if (low[v] > disc[u]){
+            bridges.push([u, v]); est[eid] = 'bad';
+            snap(L.mark, {
+              zh:'low[' + v + ']=' + low[v] + ' > disc[' + u + ']=' + disc[u] + '：' + v + ' 的整個子樹連一條回邊都繞不回 ' + u + ' 或更早的點，所以 ' + u + '–' + v + ' 一斷，圖就裂成兩塊——這是一座橋。',
+              en:'low[' + v + ']=' + low[v] + ' > disc[' + u + ']=' + disc[u] + ': nothing in ' + v + '’s subtree can climb back to ' + u + ' or earlier, so cutting ' + u + '–' + v + ' splits the graph. It is a bridge.'});
+          } else {
+            snap(L.test, {
+              zh:'low[' + v + ']=' + low[v] + ' ≤ disc[' + u + ']=' + disc[u] + '：子樹裡有回邊繞過這條邊，把它剪掉大家還是連在一起，不是橋。',
+              en:'low[' + v + ']=' + low[v] + ' ≤ disc[' + u + ']=' + disc[u] + ': a back edge inside the subtree routes around this edge, so removing it keeps everyone connected. Not a bridge.'});
+          }
+        } else {
+          if (u !== root && low[v] >= disc[u]){
+            if (cuts.indexOf(u) < 0) cuts.push(u);
+            st[u] = 'bad';
+            snap(L.mark, {
+              zh:'low[' + v + ']=' + low[v] + ' ≥ disc[' + u + ']=' + disc[u] + '：' + v + ' 的子樹最多只能爬回 ' + u + ' 本身，爬不過去。拿掉點 ' + u + '（不是拿掉邊），子樹就斷了——' + u + ' 是關節點。等號就是橋與關節點唯一的差別。',
+              en:'low[' + v + ']=' + low[v] + ' ≥ disc[' + u + ']=' + disc[u] + ': ' + v + '’s subtree can climb back to ' + u + ' at best, never past it. Delete the *vertex* ' + u + ' and the subtree falls off - ' + u + ' is an articulation point. That "=" is the only difference from the bridge test.'});
+            st[u] = 'hot';
+          } else if (u !== root){
+            snap(L.test, {
+              zh:'low[' + v + ']=' + low[v] + ' < disc[' + u + ']=' + disc[u] + '：子樹有回邊直接跳過 ' + u + '，就算刪掉 ' + u + ' 也還連著。',
+              en:'low[' + v + ']=' + low[v] + ' < disc[' + u + ']=' + disc[u] + ': a back edge jumps over ' + u + ' entirely, so deleting ' + u + ' would not disconnect the subtree.'});
+          }
+        }
+      } else {
+        if (est[eid] !== 'ok' && est[eid] !== 'bad') est[eid] = 'act';
+        low[u] = Math.min(low[u], disc[v]);
+        snap(L.back, {
+          zh:'邊 ' + u + '–' + v + ' 指向已經走過的 ' + v + '（disc=' + disc[v] + '），是一條 back edge。用 disc[' + v + '] 而不是 low[' + v + ']：我們問的是「能跳回哪個時間點」，不是「那個點的子樹能到哪」。low[' + u + '] 變成 ' + low[u] + '。',
+          en:'Edge ' + u + '–' + v + ' points at an already-visited vertex (disc=' + disc[v] + ') - a back edge. We take disc[' + v + '], not low[' + v + ']: the question is which timestamp we can jump back to, not where that vertex’s subtree reaches. low[' + u + '] becomes ' + low[u] + '.'});
+      }
+    }
+    if (mode === 'cut' && u === root && children > 1){
+      if (cuts.indexOf(u) < 0) cuts.push(u);
+      st[u] = 'bad';
+      snap(L.root, {
+        zh:'根節點 ' + u + ' 有 ' + children + ' 棵 DFS 子樹。根沒有父節點可以「回去」，所以上面的 low 測試對它沒意義，要另外判斷：子樹超過一棵就是關節點。',
+        en:'Root ' + u + ' has ' + children + ' DFS subtrees. A root has no parent to climb back to, so the low test says nothing about it - it needs its own rule: more than one child subtree means it is an articulation point.'});
+      st[u] = 'hot';
+    }
+    st[u] = 'done';
+  }
+
+  for (let s = 0; s < n; s++) if (disc[s] === -1) dfs(s, -1, -1, s);
+
+  for (const k in est) if (est[k] === 'act') est[k] = 'soft';
+  Object.keys(st).forEach(k => { st[k] = 'done'; });
+  if (mode === 'cut') cuts.forEach(v => { st[v] = 'bad'; });
+  snap(L.enter, cfg.done(bridges, cuts));
+  return F.list;
+}
+
+const UVIEW = [9.6, 7.1];
+const UABOVE = [0, 3, 6];
+
+function buildBridges(){
+  return uRun({edges:UE, pos:UP, mode:'bridge', view:UVIEW, above:UABOVE,
+    done:(br) => ({
+      zh:'走完了。整張圖只有一條橋：' + br.map(e => e[0] + '–' + e[1]).join('、') +
+         '。兩個三角形各自有回邊撐著，所以三角形內部的邊都不是橋；把它們串起來的那一條沒有備援，斷了就分家。整趟只走了一次 DFS，O(V+E)。',
+      en:'Done. The whole graph has exactly one bridge: ' + br.map(e => e[0] + '–' + e[1]).join(', ') +
+         '. Each triangle has a back edge holding it together, so no edge inside a triangle is critical; the single link joining them has no backup. One DFS, O(V+E).'})});
+}
+
+function buildCut(){
+  return uRun({edges:UE, pos:UP, mode:'cut', view:UVIEW, above:UABOVE,
+    done:(br, cuts) => ({
+      zh:'關節點是 ' + cuts.slice().sort((a, b) => a - b).join('、') +
+         '。注意 2 和 4 並不在任何一條橋上——刪掉邊 2–4 圖還是連通的，但刪掉「點」2 就會把左右兩半切開。橋講的是邊，關節點講的是點，程式碼只差一個等號和根節點那條規則。',
+      en:'The articulation points are ' + cuts.slice().sort((a, b) => a - b).join(', ') +
+         '. Note that 2 and 4 sit on no bridge at all - removing the edge 2–4 keeps the graph connected, but removing the *vertex* 2 tears the two halves apart. Bridges are about edges, cut vertices about vertices, and the code differs by one "=" plus the root rule.'})});
+}
+
+const DUP_E = UE.concat([[4, 5]]);
+const DUP_SHIFT = {6:.16, 10:-.16};
+
+function buildDup(variant){
+  const byVertex = variant === 1;
+  return uRun({edges:DUP_E, pos:UP, mode:'bridge', view:UVIEW, above:UABOVE,
+    shift:DUP_SHIFT, narrateSkip:(u, v) => (u === 4 || u === 5) && (v === 4 || v === 5), skip:byVertex ? 'vertex' : 'edge',
+    done:(br) => byVertex ? {
+      zh:'這個版本回報 4–5 是橋，但畫面上 4 和 5 之間明明有兩條線。錯在 `if v == parent: continue`：它跳過的是「父節點這個人」，於是第二條平行邊也被當成同一條而略過，5 的子樹永遠爬不回 4。正確寫法是記住走進來的那條邊的編號，只跳過那一條。',
+      en:'This version reports 4–5 as a bridge even though the picture clearly shows two cables between 4 and 5. The culprit is `if v == parent: continue`: it skips the parent *vertex*, so the second parallel edge is swallowed too and 5’s subtree can never climb back to 4. The fix is to remember the edge id you came in on and skip only that edge.'} : {
+      zh:'找到的橋：' + (br.length ? br.map(e => e[0] + '–' + e[1]).join('、') : '（一條都沒有）') +
+         '。因為 4 和 5 之間有兩條實體線路，剪掉任一條，另一條還撐著——正確答案就是沒有橋。關鍵在跳過的是「邊的編號」而不是「父節點」。',
+      en:'Bridges found: ' + (br.length ? br.map(e => e[0] + '–' + e[1]).join(', ') : '(none)') +
+         '. With two physical cables between 4 and 5, cutting either one leaves the other - so the correct answer is no bridges at all. The whole difference is skipping an *edge id* instead of a *vertex*.'}});
+}
+
+/* ------------------------------------------------------------ Tarjan SCC */
+const DVIEW = [7.4, 6.6];
+
+function buildSCC(variant){
+  const buggy = variant === 1, n = DP.length;
+  const adj = []; for (let i = 0; i < n; i++) adj.push([]);
+  DE.forEach(e => adj[e[0]].push(e[1]));
+  const disc = new Array(n).fill(-1), low = new Array(n).fill(0);
+  const onStack = new Array(n).fill(false);
+  const stack = [], comps = [], est = {}, st = {};
+  let clock = 0;
+  const F = new Frames();
+
+  const panels = () => [
+    chipPanel({zh:'disc / low', en:'disc / low'},
+      disc.map((d, i) => ({t:i + ': ' + (d < 0 ? '–' : d + '/' + low[i]),
+                           cls:d < 0 ? 'dim' : (st[i] === 'hot' ? 'hot' : 'ok')}))),
+    chipPanel({zh:'stack（還沒歸屬的點）', en:'stack (vertices with no component yet)'},
+      stack.map(v => ({t:String(v), cls:'act'}))),
+    chipPanel({zh:'已完成的強連通分量', en:'completed SCCs'},
+      comps.map(c => ({t:'[' + c.slice().sort((a, b) => a - b).join(',') + ']',
+                       cls:buggy ? 'bad' : 'ok'})))];
+
+  const snap = (line, msg) => F.push({
+    shapes:dShapes({est:est, st:st, times:timesOf(disc, low)}),
+    panels:panels(), view:DVIEW, line:line, msg:msg});
+
+  function dfs(u){
+    disc[u] = low[u] = clock++; st[u] = 'hot';
+    stack.push(u); onStack[u] = true;
+    snap(3, {
+      zh:'進入 ' + u + '，disc=low=' + disc[u] + '，並把它推進 stack。stack 裝的是「已經走過、但還不知道屬於哪個分量」的點；一個分量要等到它的根確定了才會整批被彈出來。',
+      en:'Enter ' + u + ' with disc=low=' + disc[u] + ' and push it on the stack. The stack holds vertices already visited but not yet assigned to a component; a component only comes off once its root is confirmed.'});
+    for (let i = 0; i < adj[u].length; i++){
+      const v = adj[u][i], k = ek(u, v);
+      if (disc[v] === -1){
+        est[k] = 'ok'; st[u] = 'act';
+        snap(6, {zh:'邊 ' + u + '→' + v + ' 通往沒走過的點，往下遞迴。',
+                 en:'Edge ' + u + '→' + v + ' leads to an unvisited vertex - recurse.'});
+        dfs(v); st[u] = 'hot';
+        low[u] = Math.min(low[u], low[v]);
+        snap(7, {
+          zh:v + ' 的子樹跑完，low[' + v + ']=' + low[v] + '，拉上來得到 low[' + u + ']=' + low[u] + '。',
+          en:v + '’s subtree is finished with low[' + v + ']=' + low[v] + '; pull it up, low[' + u + ']=' + low[u] + '.'});
+      } else if (onStack[v]){
+        est[k] = 'act'; low[u] = Math.min(low[u], disc[v]);
+        snap(9, {
+          zh:v + ' 已經走過而且還在 stack 上，代表它是還沒收攏的祖先——這條邊真的能繞回去。low[' + u + '] 變成 ' + low[u] + '。',
+          en:v + ' has been visited and is still on the stack, so it is an unfinished ancestor - this edge really does loop back. low[' + u + '] becomes ' + low[u] + '.'});
+      } else if (buggy){
+        est[k] = 'bad'; low[u] = Math.min(low[u], disc[v]);
+        snap(9, {
+          zh:'漏了 on_stack 檢查的版本：' + v + ' 早就被分進別的分量了，但這裡照樣用 disc[' + v + ']=' + disc[v] + ' 去壓 low[' + u + ']（變成 ' + low[u] + '）。從 ' + u + ' 走得到 ' + v + '，但 ' + v + ' 回不來——單向可達不是強連通。這個數字等一下會把兩個不相干的分量黏在一起。',
+          en:'The version without the on_stack test: ' + v + ' was already assigned to a finished component, yet we still relax low[' + u + '] against disc[' + v + ']=' + disc[v] + ' (now ' + low[u] + '). ' + u + ' can reach ' + v + ', but ' + v + ' cannot come back - one-way reachability is not strong connectivity. This number is about to glue two unrelated components together.'});
+      } else {
+        est[k] = 'done';
+        snap(10, {
+          zh:'邊 ' + u + '→' + v + ' 指向 ' + v + '，它已經走過而且**不在 stack 上**——表示它所屬的分量早就封好了。從 ' + u + ' 走得到 ' + v + '，但 ' + v + ' 絕對回不到 ' + u + '，所以這條邊對 low[' + u + '] 沒有貢獻，直接忽略。這個 `elif on_stack[v]` 就是 Tarjan 全部的精髓。',
+          en:'Edge ' + u + '→' + v + ' points at a visited vertex that is **not on the stack**, meaning its component is already closed. ' + u + ' can reach ' + v + ', but ' + v + ' can never get back to ' + u + ', so this edge contributes nothing to low[' + u + ']. Ignore it. That single `elif on_stack[v]` is the whole trick.'});
+      }
+    }
+    if (low[u] === disc[u]){
+      const comp = [];
+      while (true){
+        const w = stack.pop(); onStack[w] = false; comp.push(w);
+        st[w] = buggy ? 'bad' : 'ok';
+        if (w === u) break;
+      }
+      comps.push(comp);
+      snap(18, {
+        zh:'low[' + u + ']=disc[' + u + ']=' + disc[u] + '：' + u + ' 的整棵子樹都爬不到比它更早的時間戳，' + u + ' 就是這個分量的根。把 stack 一路彈到 ' + u + ' 為止，彈出來的 [' + comp.slice().sort((a, b) => a - b).join(', ') + '] 就是一個強連通分量。',
+        en:'low[' + u + ']=disc[' + u + ']=' + disc[u + ''] + ': nothing in ' + u + '’s subtree reaches an earlier timestamp, so ' + u + ' is the root of a component. Pop the stack down to ' + u + ' and the vertices that come off - [' + comp.slice().sort((a, b) => a - b).join(', ') + '] - form one strongly connected component.'});
+    } else {
+      st[u] = 'act';
+      snap(11, {
+        zh:'low[' + u + ']=' + low[u] + ' < disc[' + u + ']=' + disc[u] + '：' + u + ' 還能爬到更早的祖先，代表它跟上面的人在同一個分量裡，所以先留在 stack 上，等真正的根出現再一起彈。',
+        en:'low[' + u + ']=' + low[u] + ' < disc[' + u + ']=' + disc[u] + ': ' + u + ' can still reach an earlier ancestor, so it belongs to the same component as someone above it. Leave it on the stack until the real root shows up.'});
+    }
+  }
+
+  for (let s = 0; s < n; s++) if (disc[s] === -1) dfs(s);
+
+  const shown = comps.map(c => '[' + c.slice().sort((a, b) => a - b).join(',') + ']').join(' ');
+  snap(18, buggy ? {
+    zh:'結果是 ' + shown + '，錯了。0、4、5 被當成同一個分量，但 0 沒有任何一條入邊——沒有人回得到 0。錯誤只來自一條邊 5→2：少了 on_stack 檢查，就把「單向走得到」誤當成「互相到得了」。正確答案是 [1,2,3] [4,5] [0]。',
+    en:'The result is ' + shown + ', which is wrong. 0, 4 and 5 end up in one component even though 0 has no incoming edge at all - nobody can get back to 0. The whole error comes from one edge, 5→2: without the on_stack test, "can reach" was mistaken for "can reach each other". The right answer is [1,2,3] [4,5] [0].'} : {
+    zh:'三個強連通分量：' + shown + '。輸出順序也不是巧合——分量是反拓樸序被吐出來的，把每個分量縮成一個點得到的 condensation 一定是 DAG，這正好接回 Day 13 的拓樸排序。',
+    en:'Three strongly connected components: ' + shown + '. The order is not an accident - components come out in reverse topological order, and contracting each one to a single node always yields a DAG. That is Day 13’s topological sort waiting on the other side.'});
+  return F.list;
+}
+
+/* --------------------------------------------- LC 1192, iterative version */
+const LP = [[1.4, 4.6], [3.7, 3.1], [1.4, 1.6], [6.4, 3.1]];
+const LE = [[0, 1], [1, 2], [2, 0], [1, 3]];
+
+function buildLC(){
+  const n = LP.length, adj = uAdj(LE, n);
+  const disc = new Array(n).fill(-1), low = new Array(n).fill(0);
+  const est = {}, st = {}, out = [], stack = [];
+  let clock = 0;
+  const F = new Frames();
+
+  const panels = () => [
+    chipPanel({zh:'disc / low', en:'disc / low'},
+      disc.map((d, i) => ({t:i + ': ' + (d < 0 ? '–' : d + '/' + low[i]),
+                           cls:d < 0 ? 'dim' : 'ok'}))),
+    chipPanel({zh:'自己維護的呼叫堆疊（點, 進入邊, 游標）',
+               en:'explicit call stack (vertex, in-edge, cursor)'},
+      stack.map((f, i) => ({t:'(' + f.u + ', ' + f.e + ', ' + f.c + ')',
+                            cls:i === stack.length - 1 ? 'hot' : 'act'}))),
+    chipPanel({zh:'答案', en:'answer'}, out.map(e => ({t:'[' + e[0] + ',' + e[1] + ']', cls:'bad'})))];
+
+  const snap = (line, msg) => F.push({
+    shapes:uShapes(LE, LP, {est:est, st:st, times:timesOf(disc, low), above:[2]}),
+    panels:panels(), view:[7.6, 6.4], line:line, msg:msg});
+
+  disc[0] = low[0] = clock++; st[0] = 'hot';
+  stack.push({u:0, e:-1, c:0});
+  snap(3, {
+    zh:'題目的 n 最大到 10⁵，而 CPython 預設遞迴深度只有 1000——一條長鏈就會 RecursionError。所以把遞迴改寫成自己維護的堆疊：每一格存「目前的點、走進來的邊、鄰居清單的游標」。游標就是遞迴回來以後要接著看哪一個鄰居。',
+    en:'The constraints go up to n = 10⁵ while CPython’s recursion limit is 1000 - a single long chain blows the stack. So the recursion is rewritten with an explicit stack whose frames hold the current vertex, the edge we entered on, and a cursor into the neighbour list. That cursor is exactly what the language normally remembers for us: where to resume after a call returns.'});
+
+  while (stack.length){
+    const fr = stack[stack.length - 1], u = fr.u;
+    let descended = false;
+    while (fr.c < adj[u].length){
+      const v = adj[u][fr.c][0], eid = adj[u][fr.c][1];
+      fr.c++;
+      if (eid === fr.e) continue;
+      if (disc[v] === -1){
+        disc[v] = low[v] = clock++; est[eid] = 'ok';
+        st[u] = 'act'; st[v] = 'hot';
+        stack.push({u:v, e:eid, c:0});
+        descended = true;
+        snap(12, {
+          zh:'從 ' + u + ' 走到沒看過的 ' + v + '：蓋上 disc=' + disc[v] + '，把新的一格推上堆疊然後 break。break 相當於「呼叫遞迴」——外層 while 下一圈就會從 ' + v + ' 這一格繼續，而 ' + u + ' 的游標已經停在 ' + fr.c + '。',
+          en:'From ' + u + ' we reach the unvisited ' + v + ': stamp disc=' + disc[v] + ', push a new frame and break. The break is the function call - the outer while picks up at ' + v + ' next round, and ' + u + '’s cursor is parked at ' + fr.c + '.'});
+        break;
+      }
+      if (est[eid] !== 'ok') est[eid] = 'act';
+      low[u] = Math.min(low[u], disc[v]);
+      snap(15, {
+        zh:'邊 ' + u + '–' + v + ' 是回邊（' + v + ' 的 disc=' + disc[v] + '）。low[' + u + '] 壓到 ' + low[u] + '。注意我們比對的是邊的編號而不是父節點，題目雖然保證沒有重複連線，但這個習慣一養成就不會在有平行邊的題目上出錯。',
+        en:'Edge ' + u + '–' + v + ' is a back edge (disc[' + v + ']=' + disc[v] + '), so low[' + u + '] drops to ' + low[u] + '. Note we compare edge ids, not parent vertices - this problem promises no duplicate links, but the habit is what keeps the code correct when duplicates do exist.'});
+    }
+    if (!descended){
+      stack.pop(); st[u] = 'done';
+      if (stack.length){
+        const p = stack[stack.length - 1].u;
+        low[p] = Math.min(low[p], low[u]);
+        if (low[u] > disc[p]){
+          out.push([p, u]); est[fr.e] = 'bad';
+          snap(22, {
+            zh:u + ' 的鄰居看完了，彈出這一格＝遞迴 return。low[' + u + ']=' + low[u] + ' > disc[' + p + ']=' + disc[p + ''] + '，所以 ' + p + '–' + u + ' 是關鍵連線：' + u + ' 那一側沒有任何備援路徑。',
+            en:'All of ' + u + '’s neighbours are done, so popping the frame is the return. low[' + u + ']=' + low[u] + ' > disc[' + p + ']=' + disc[p] + ', so ' + p + '–' + u + ' is a critical connection: the ' + u + ' side has no alternative route.'});
+        } else {
+          snap(20, {
+            zh:u + ' 收工，low[' + u + ']=' + low[u] + ' 拉回父節點 ' + p + '（low[' + p + ']=' + low[p] + '）。low[' + u + '] ≤ disc[' + p + ']，代表 ' + u + ' 這一側繞得回來，這條線斷了也沒關係。',
+            en:u + ' is finished; low[' + u + ']=' + low[u] + ' flows into its parent ' + p + ' (low[' + p + ']=' + low[p] + '). Since low[' + u + '] ≤ disc[' + p + '], the ' + u + ' side loops back on its own and this link is not critical.'});
+        }
+      } else {
+        snap(17, {zh:'堆疊清空，走訪結束。', en:'The stack is empty - the traversal is over.'});
+      }
+    }
+  }
+  Object.keys(st).forEach(k => { st[k] = 'done'; });
+  snap(22, {
+    zh:'答案是 ' + out.map(e => '[' + e[0] + ',' + e[1] + ']').join('、') +
+       '。0–1–2 這個三角形互為備援，任何一條斷掉還連得上；只有 1–3 是伺服器 3 對外的唯一通道。整題就是「找橋」換個說法，O(V+E) 一次走完。',
+    en:'The answer is ' + out.map(e => '[' + e[0] + ',' + e[1] + ']').join(', ') +
+       '. The 0–1–2 triangle backs itself up, so no edge inside it matters; only 1–3 is server 3’s single way out. The problem is "find the bridges" in disguise, one O(V+E) pass.'});
+  return F.list;
+}
+
+/* ---------------------------------------------------------------- tabs */
+const DAY_META = {
+  title:{zh:'Tarjan：一個 DFS 時間戳，三種結構',
+         en:'Tarjan - one DFS with timestamps, three structures'},
+  sub:{zh:'同一次 DFS 記下 disc 與 low 兩個數字，就能同時回答橋、關節點、強連通分量三個問題。',
+       en:'Write down two numbers per vertex during one DFS - disc and low - and the same traversal answers bridges, articulation points and strongly connected components.'},
+  tabs:[
+    {id:'bridge', label:{zh:'橋：low[v] > disc[u]', en:'bridges: low[v] > disc[u]'},
+     stage:{zh:'哪一條邊斷掉會讓圖裂開', en:'Which edge splits the graph if it fails'},
+     view:UVIEW,
+     idea:{zh:'<code>disc[u]</code> 是抵達時間，<code>low[u]</code> 是' +
+              '「u 的子樹加上最多一條回邊，能回到多早的時間戳」。' +
+              '若 <b>low[v] &gt; disc[u]</b>，v 的整棵子樹連 u 都繞不回去，' +
+              '<code>u–v</code> 就是唯一的通道——一座橋。',
+           en:'<code>disc[u]</code> is the arrival time; <code>low[u]</code> is "the earliest timestamp reachable from u’s subtree using tree edges plus at most one back edge". If <b>low[v] &gt; disc[u]</b>, nothing under v can climb back even as far as u, so <code>u–v</code> is the only way through - a bridge.'},
+     legend:['hot', 'act', 'ok', 'bad', 'ghost'], code:CODE_BR, build:buildBridges},
+
+    {id:'cut', label:{zh:'關節點：改成 ≥', en:'cut vertices: swap > for ≥'},
+     stage:{zh:'哪一個機器掛掉會讓網路斷成兩半', en:'Which machine takes the network down with it'},
+     view:UVIEW,
+     idea:{zh:'刪的是「點」不是「邊」，所以連 u 自己都不算退路：' +
+              '把測試從 <code>&gt;</code> 換成 <b><code>&gt;=</code></b> 就好。' +
+              '根節點沒有父節點可以回去，low 測試對它無效，' +
+              '要另外看它是否有<b>兩棵以上的 DFS 子樹</b>。',
+           en:'Here we delete a <i>vertex</i>, not an edge, so u itself no longer counts as an escape: change the test from <code>&gt;</code> to <b><code>&gt;=</code></b>. The root has no parent to climb back to, so the low test says nothing about it - it gets its own rule, <b>more than one DFS child subtree</b>.'},
+     legend:['hot', 'act', 'ok', 'bad', 'ghost'], code:CODE_CUT, build:buildCut},
+
+    {id:'dup', label:{zh:'陷阱：跳過父節點還是父邊？', en:'trap: skip the parent, or the edge?'},
+     stage:{zh:'兩台機器之間拉了兩條線', en:'Two cables between the same pair of routers'},
+     view:UVIEW,
+     variants:[{zh:'正確：跳過走進來的那條邊', en:'correct: skip the edge we came in on'},
+               {zh:'錯誤：跳過父節點', en:'buggy: skip the parent vertex'}],
+     idea:{zh:'<code>if v == parent: continue</code> 在大多數測資上都會過，' +
+              '直到出現<b>平行邊</b>：它把第二條線也一起跳掉，' +
+              '於是回報一條根本不存在的橋。' +
+              '正解是記住<b>走進來那條邊的編號</b>，只跳過那一條。',
+           en:'<code>if v == parent: continue</code> passes almost every test case - until <b>parallel edges</b> show up. It swallows the second cable as well and reports a bridge that does not exist. The fix is to remember the <b>id of the edge you entered on</b> and skip only that one.'},
+     legend:['hot', 'act', 'ok', 'bad', 'ghost'], code:CODE_BR, build:buildDup},
+
+    {id:'scc', label:{zh:'強連通分量', en:'strongly connected components'},
+     stage:{zh:'有向圖：誰跟誰互相到得了', en:'Directed graph: who can reach whom, both ways'},
+     view:DVIEW,
+     variants:[{zh:'正確：elif on_stack[v]', en:'correct: elif on_stack[v]'},
+               {zh:'錯誤：少了 on_stack 檢查', en:'buggy: no on_stack test'}],
+     idea:{zh:'同一個 low 的定義，換成有向邊，再加一個 stack。' +
+              '<b>只有還在 stack 上的點才算祖先</b>——' +
+              '已經封好的分量代表「走得到但回不來」，對 low 沒有貢獻。' +
+              '當 <code>low[u] == disc[u]</code>，u 就是分量的根，把 stack 彈到 u 為止。',
+           en:'Same definition of low, directed edges, plus one stack. <b>Only a vertex still on the stack counts as an ancestor</b> - a closed component means "reachable but never coming back", which contributes nothing to low. When <code>low[u] == disc[u]</code>, u is the root of a component: pop the stack down to u.'},
+     legend:['hot', 'act', 'ok', 'bad', 'ghost'], code:CODE_SCC, build:buildSCC},
+
+    {id:'lc', label:{zh:'LC 1192 關鍵連線', en:'LC 1192 critical connections'},
+     stage:{zh:'把遞迴改寫成自己的堆疊', en:'Turning the recursion into an explicit stack'},
+     view:[7.6, 6.4],
+     idea:{zh:'題目就是「找橋」，但 n 到 10⁵，' +
+              'CPython 預設遞迴上限 1000，一條長鏈直接爆掉。' +
+              '改寫的關鍵是每一格要存<b>鄰居清單的游標</b>——' +
+              '那正是語言原本幫我們記住的「return 之後從哪裡繼續」。',
+           en:'The problem is "find the bridges", but n goes to 10⁵ while CPython stops recursing at depth 1000 - one long chain is enough to crash it. The trick when rewriting is that each frame must carry a <b>cursor into the neighbour list</b>: that is exactly the "where to resume after the call returns" the language normally keeps for us.'},
+     legend:['hot', 'act', 'ok', 'bad', 'ghost'], code:CODE_LC, build:buildLC}
+  ]
+};

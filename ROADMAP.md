@@ -1,6 +1,6 @@
 # 100 Days of Python — Roadmap
 
-已完成 Day 01–17（linked list → Bellman-Ford / Floyd-Warshall）。以下為 Day 18–100 的規劃。
+已完成 Day 01–18（linked list → Tarjan）。以下為 Day 19–100 的規劃。
 原則：經典資料結構／演算法**壓到最精簡**（相似的主題同一天講完、順手帶到它的平行版本），
 把省下來的篇幅全部灌進 LLM 內核與強化學習，最後 6 天做中型專案，把前面 94 天的積木組起來。
 
@@ -31,7 +31,7 @@
 | 15 | 最小生成樹 — Kruskal ✅ | 接 Day 14；Prim 併到 Day 16 一起講 |
 | 16 | Prim 與 Dijkstra：同一套 heap greedy 骨架 ✅ | LC 743；接 Day 05 heap。兩者只差 key 是「邊權」還是「距離和」 |
 | 17 | 負權與全點對：Bellman-Ford / SPFA / Floyd-Warshall ✅ | LC 787；負權環偵測＝套利；Floyd 就是三層迴圈的 DP，k 必須在最外層 |
-| 18 | Tarjan：強連通分量、橋、關節點 | 一個 DFS 時間戳框架三種用途 |
+| 18 | Tarjan：強連通分量、橋、關節點 ✅ | LC 1192；disc/low 一次 DFS 三種讀法；跳過的是「邊」不是「父節點」；少了 on_stack 會把分量黏在一起 |
 | 19 | A* 與平行圖搜尋 | 第一次碰 heuristic，AI 的橋樑；順帶 frontier 展開的平行 BFS、Δ-stepping |
 
 ## Part 2 — 排序與搜尋（Day 20–23）
