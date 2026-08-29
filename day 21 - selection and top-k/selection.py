@@ -835,7 +835,249 @@ def find_kth_largest(nums, k):
     return a[k - 1]
 
 
-# ================================================ 7. which kernel do you want?
+# ============================================== 7. guess, verify, refine (GVR)
+#
+# Radix select never looks at the *values*.  It slices bits, and a slice is a
+# slice whether the numbers are attention logits or lottery numbers.  That is
+# what makes it worst-case-proof, and it is also what makes it leave money on
+# the table: four passes over the row for fp32, every single time, even when
+# the answer was obvious after the first one.
+#
+# flashinfer's GVR kernel (flashinfer/topk_varlen/kernels/gvr_topk_decode.py,
+# "Guess-Verify-Refine") takes the opposite bet.  It works in *value* space:
+# guess a threshold, count how many elements clear it, and treat the count as
+# a function of the threshold to be root-solved.  Four phases:
+#
+#   P1  guess    - statistics over the PREVIOUS step's top-k, not the row
+#   P2  verify   - secant search on count(v >= t) until the count lands in
+#                  an accept window [k, cand_cap]
+#   P3  collect  - one pass writing the survivors into shared memory
+#   P4  snap     - exact top-k inside that small candidate buffer
+#
+# Everything interesting is in P1 and P2.
+
+# Tuning constants, copied from GvrParams<float32, 512, cr=1> in the kernel.
+GVR_K = 512            # top_k
+GVR_CAND_CAP = 5120    # kC   - candidate buffer, 10x k
+GVR_TARGET = 384       # kFTarget for compress_ratio=1 - note: BELOW k
+GVR_TARGET_V4 = 512    # kFTarget for compress_ratio=4, deliberately == top_k
+GVR_MAX_ITERS = 15     # MAX_REFINE_ITERS
+FLT_MAX = 3.4028235e38
+
+
+def count_ge(values, threshold):
+    """One full pass over the row.  This is the only expensive thing GVR does,
+    so the whole design is about calling it as few times as possible."""
+    c = 0
+    for v in values:
+        if v >= threshold:
+            c += 1
+    return c
+
+
+def gvr_phase1(values, prev_top_k, k):
+    """P1 - the guess.
+
+    The kernel does NOT scan the row here.  It reads `pre_idx`, the index list
+    this same kernel emitted on the *previous* decode step, and takes the min,
+    max and mean of the current logits at those positions.  One token has been
+    appended since, so the indices are shifted by `preIdxOffset` first.
+
+    The bet is temporal locality: the tokens that mattered one step ago mostly
+    still matter, so the mean of last step's winners sits close to this step's
+    k-th value.  Cost is k loads, not n.
+
+    Returns (threshold, val_lo, val_hi, cnt_lo, cnt_hi).  val_lo/val_hi are the
+    value-space bracket; cnt_lo/cnt_hi are the counts believed to go with them,
+    and the seeds below are frankly made up - they exist only to give the first
+    secant step a slope to work with."""
+    if prev_top_k:
+        picked = [values[i] for i in prev_top_k if 0 <= i < len(values)]
+    else:
+        picked = []
+    if picked:
+        lo = min(picked)
+        hi = max(picked)
+        mean = sum(picked) / len(picked)
+    else:
+        # Cold start (first decode step): fall back to the whole row.
+        lo, hi = min(values), max(values)
+        mean = (lo + hi) * 0.5
+    cnt_lo_seed = k + (k >> 2)      # "assume val_lo lets through about 1.25k"
+    cnt_hi_seed = 1                 # "assume val_hi lets through one"
+    return mean, lo, hi, cnt_lo_seed, cnt_hi_seed
+
+
+def gvr_secant_step(val_lo, val_hi, cnt_lo, cnt_hi, target, first):
+    """One secant interpolation, transcribed from phase2_secant_search.
+
+    The bracket is kept in value space with the counts running the other way:
+    val_lo is the low threshold that let *too many* through (cnt_lo), val_hi is
+    the high threshold that let *too few* through (cnt_hi).  Pretend count is
+    linear in threshold between them and solve for `target`:
+
+        f = (cnt_lo - target) / (cnt_lo - cnt_hi)     in [0, 1]
+        new = val_lo + (val_hi - val_lo) * f
+
+    Two guards matter more than the formula:
+
+      * f is clamped to [0.05, 0.95], so a wild extrapolation can still only
+        eat 95% of the bracket - the loop stays a bisection in the worst case.
+      * on the very first iteration f is additionally capped at 0.5.  Iteration
+        zero is the one using the made-up seed counts from P1, so its slope is
+        the least trustworthy one in the whole run and the kernel refuses to
+        let it jump more than half the bracket."""
+    rng_ = val_hi - val_lo
+    if cnt_lo > cnt_hi and rng_ > 1e-10:
+        f = (cnt_lo - target) / float(cnt_lo - cnt_hi)
+        f = max(0.05, min(0.95, f))
+        if first:
+            f = min(f, 0.5)
+        nv = val_lo + rng_ * f
+    else:
+        nv = (val_lo + val_hi) * 0.5
+    if nv <= val_lo:
+        nv = val_lo + rng_ * 0.05
+    if nv >= val_hi:
+        nv = val_hi - rng_ * 0.05
+    return nv
+
+
+def gvr_topk(values, k, prev_top_k=None, target=None, cand_cap=None,
+             max_iters=GVR_MAX_ITERS, trace=None):
+    """The whole kernel, in order.  Returns (top_k_values, info).
+
+    `info` records what it cost: how many full passes over the row, how many
+    candidates P3 had to keep, and whether P2 converged or gave up."""
+    if target is None:
+        target = GVR_TARGET
+    if cand_cap is None:
+        cand_cap = GVR_CAND_CAP
+
+    thr, val_lo, val_hi, cnt_lo, cnt_hi = gvr_phase1(values, prev_top_k, k)
+    passes = 0
+    done = 0                       # 0 running, 1 converged, 2 gave up
+
+    # ---- P2, first verify: does the guess already land in the window? ----
+    cnt = count_ge(values, thr)
+    passes += 1
+    if trace is not None:
+        trace.append({'it': 0, 'thr': thr, 'cnt': cnt, 'lo': val_lo,
+                      'hi': val_hi, 'clo': cnt_lo, 'chi': cnt_hi,
+                      'verdict': 'seed'})
+    if k <= cnt <= cand_cap:
+        done = 1
+    elif cnt > cand_cap:
+        val_lo, cnt_lo = thr, cnt   # too many -> the threshold must go UP
+    else:
+        val_hi, cnt_hi = thr, cnt   # too few  -> the threshold must come DOWN
+
+    # ---- P2, the refine loop ----
+    it = 0
+    while it < max_iters and done == 0:
+        thr = gvr_secant_step(val_lo, val_hi, cnt_lo, cnt_hi, target, it == 0)
+        cnt = count_ge(values, thr)
+        passes += 1
+        if k <= cnt <= cand_cap:
+            done = 1
+            verdict = 'in window'
+        elif cnt > cand_cap:
+            val_lo, cnt_lo = thr, cnt
+            verdict = 'too many'
+        else:
+            val_hi, cnt_hi = thr, cnt
+            verdict = 'too few'
+        if trace is not None:
+            trace.append({'it': it + 1, 'thr': thr, 'cnt': cnt, 'lo': val_lo,
+                          'hi': val_hi, 'clo': cnt_lo, 'chi': cnt_hi,
+                          'verdict': verdict})
+        it += 1
+
+    if done == 0:
+        # Ran out of iterations.  Take the safe end of the bracket: val_lo lets
+        # too many through, but too many is recoverable and too few is not.
+        thr = val_lo
+        done = 2
+
+    # ---- P3, collect ----
+    cand = [(v, i) for i, v in enumerate(values) if v >= thr]
+    passes += 1
+
+    # ---- P4, snap.  The kernel runs a small histogram inside the candidate
+    # buffer; the answer is the same as an exact select over `cand`, which is
+    # cheap precisely because P2 promised |cand| <= cand_cap.
+    cand.sort(key=lambda p: (-p[0], p[1]))
+    out = [v for v, _ in cand[:k]]
+
+    info = {'passes': passes, 'p2_iters': it, 'candidates': len(cand),
+            'threshold': thr, 'done': done,
+            'converged': done == 1}
+    return out, info
+
+
+# ------------------------------------------------------- cluster and DSMEM
+#
+# The multi-CTA radix kernel in section 5 shares one row through *global*
+# memory: a counter in GMEM, an acquire load in a spin loop, a grid-wide
+# barrier.  GVR's multi-CTA path does the same job without leaving the chip.
+# On Blackwell a thread-block cluster is a group of CTAs guaranteed to be
+# resident on the same GPC, and each one can address the others' shared memory
+# directly - distributed shared memory.  The kernel maps a peer's SMEM address
+# with `mapa.shared::cluster` and reads it with `ld.shared::cluster`, so the
+# per-iteration count aggregation is a handful of SMEM loads instead of a
+# round trip to L2.
+#
+# The same idea is the cluster path in SGLang's topk v2
+# (deepseek_v4/topk_impl.cuh), guarded there with a comment noting it is CUDA
+# only: CDNA has no equivalent of DSMEM.
+
+def gvr_cluster_count_ge(values, threshold, cluster_size):
+    """Count v >= threshold with `cluster_size` CTAs, aggregating in DSMEM.
+
+    Each CTA counts its own contiguous slice into its own shared memory, then
+    every CTA reads every peer's slot and sums.  Two things fall out of that:
+
+      * the total is computed redundantly, once per CTA, and that is the point
+        - nobody has to broadcast it, so there is no leader and no second
+          barrier after the reduction
+      * the sum is over a fixed slice order, so every CTA adds the same numbers
+        in the same order and they cannot disagree
+
+    Returns (total, per_cta_counts, dsmem_reads)."""
+    n = len(values)
+    bounds = [(n * c) // cluster_size for c in range(cluster_size + 1)]
+    partial = [0] * cluster_size
+    for c in range(cluster_size):
+        for v in values[bounds[c]:bounds[c + 1]]:
+            if v >= threshold:
+                partial[c] += 1
+    totals = []
+    for _ in range(cluster_size):          # every CTA repeats the gather
+        totals.append(sum(partial))
+    assert len(set(totals)) == 1, 'CTAs disagreed on the cluster count'
+    return totals[0], partial, cluster_size * cluster_size
+
+
+def gvr_long_short_split(seq_lens, long_threshold=64 * 1024, compress_ratio=1):
+    """GvrTopKLBPrepareKernel, in three lines.
+
+    One launch has to serve a whole batch, and in varlen decode the rows differ
+    by orders of magnitude.  Giving every row a cluster wastes CTAs on the
+    short ones; giving every row one CTA leaves the long ones as the critical
+    path.  So a one-block prepare kernel classifies rows into long and short,
+    writes an ordering with the long ones first, and the main kernel branches
+    on it: long rows get a whole cluster, short rows get one CTA each.
+
+    The cost of that flexibility is a counter written by the device and read by
+    the launch, which is exactly the thing a CUDA graph cannot capture - the
+    load-balanced path runs with use_cuda_graph=False."""
+    scan = [s // compress_ratio for s in seq_lens]
+    long_ids = [i for i, s in enumerate(scan) if s > long_threshold]
+    short_ids = [i for i, s in enumerate(scan) if s <= long_threshold]
+    return long_ids + short_ids, (len(long_ids), len(short_ids))
+
+
+# ================================================ 8. which kernel do you want?
 #
 # There is no single best top-k.  A library ships several and picks one at
 # launch time from the shape of the problem, because the thing that dominates
@@ -874,7 +1116,7 @@ def should_use_filtered(n, k, dtype='float32', smem_bytes=16 * 1024,
     return True, 'fits in shared memory, single block, no grid barrier'
 
 
-# ==================================================================== 8. main
+# ==================================================================== 9. main
 
 def rule(title):
     print()
@@ -1091,7 +1333,140 @@ def main():
     print('  membership reproducible, and that is why it costs more than the')
     print('  cheap ordering fix.')
 
-    rule('9.  which kernel does a library actually launch?')
+    rule('9.  guess-verify-refine - solving for the threshold instead')
+    gn = 20_000
+    grng = random.Random(2126)
+    # A decode step: logits over the whole KV cache, heavy-tailed.  The next
+    # step is the same distribution nudged, which is what makes P1's bet work.
+    step_a = [grng.gauss(0.0, 1.0) + 3.0 * grng.random() ** 8 for _ in range(gn)]
+    step_b = [v + grng.gauss(0.0, 0.05) for v in step_a]
+    prev_idx = [i for _, i in sorted(((v, i) for i, v in enumerate(step_a)),
+                                     reverse=True)[:GVR_K]]
+    truth_b = sorted(step_b, reverse=True)[:GVR_K]
+
+    cold_trace = []
+    cold, cold_info = gvr_topk(step_b, GVR_K, prev_top_k=None, trace=cold_trace)
+    assert cold == truth_b
+    print(f'  n = {gn:,}, k = {GVR_K}, accept window = [{GVR_K}, {GVR_CAND_CAP}]')
+    print()
+    print('  cold start - no previous step, so P1 falls back to the whole row:')
+    for t in cold_trace:
+        print(f'      it {t["it"]:>2}: threshold {t["thr"]:+.4f} -> '
+              f'{t["cnt"]:>6,} pass the bar   ({t["verdict"]})')
+    print(f'      converged={cold_info["converged"]}  '
+          f'candidates={cold_info["candidates"]:,}  '
+          f'full passes over the row={cold_info["passes"]}')
+    print(f'  {cold_info["p2_iters"]} refinements to bracket {GVR_K} out of {gn:,}.  '
+          f'Radix select would have')
+    print(f'  paid {32 // RADIX_BITS} counting passes on fp32 regardless of the data.')
+
+    print()
+    print('  warm start - P1 reads the PREVIOUS step\'s top-k indices instead.')
+    print(f'  It never touches the row: {GVR_K} loads, one min, one max, one mean.')
+    warm_trace = []
+    warm, warm_info = gvr_topk(step_b, GVR_K, prev_top_k=prev_idx,
+                               target=GVR_TARGET, trace=warm_trace)
+    assert warm == truth_b
+    for t in warm_trace[:4]:
+        print(f'      it {t["it"]:>2}: threshold {t["thr"]:+.4f} -> '
+              f'{t["cnt"]:>6,} pass the bar   ({t["verdict"]})')
+    print(f'      ... {len(warm_trace) - 5} more iterations, each moving the '
+          f'threshold by about 0.01 ...')
+    tl = warm_trace[-1]
+    print(f'      it {tl["it"]:>2}: threshold {tl["thr"]:+.4f} -> '
+          f'{tl["cnt"]:>6,} pass the bar   ({tl["verdict"]})')
+    print(f'      converged={warm_info["converged"]}  '
+          f'candidates={warm_info["candidates"]:,}  '
+          f'full passes over the row={warm_info["passes"]}')
+    print()
+    print('  The better guess did WORSE - 15 refinements and then a give-up.')
+    print('  This is upper-clamp saturation, and it is worth understanding')
+    print('  because it is a failure mode of the tuning, not of the idea.')
+    print()
+    print(f'  kFTarget is {GVR_TARGET}: the number of survivors the secant aims for.')
+    print(f'  The accept window starts at k = {GVR_K}.  {GVR_TARGET} is below it, so a')
+    print('  threshold that hits the target exactly is still rejected as "too')
+    print('  few".  The loop is converging on a point it will never accept.')
+    print('  Worse, P1 seeded cnt_lo with k + k/4 = '
+          f'{GVR_K + (GVR_K >> 2)}, and the true count at')
+    print(f'  val_lo turned out to be {warm_info["candidates"]:,} - close enough that '
+          'cnt_lo - cnt_hi')
+    print('  is tiny, f pins to its 0.95 ceiling, and every iteration shaves 5%')
+    print('  off the bracket instead of jumping across it.')
+    print()
+    print('  The upstream fix is one number.  GvrParams for compress_ratio=4')
+    print('  sets kFTarget = kK, with the comment "aligns kFTarget with kK to')
+    print('  avoid upper-clamp saturation on tight-sigma layers (1.5-2.2x fewer')
+    print('  P2 iters on swe-bench)".  Same row, same guess, target moved:')
+    warm2_trace = []
+    warm2, warm2_info = gvr_topk(step_b, GVR_K, prev_top_k=prev_idx,
+                                 target=GVR_TARGET_V4, trace=warm2_trace)
+    assert warm2 == truth_b
+    for t in warm2_trace:
+        print(f'      it {t["it"]:>2}: threshold {t["thr"]:+.4f} -> '
+              f'{t["cnt"]:>6,} pass the bar   ({t["verdict"]})')
+    print(f'      converged={warm2_info["converged"]}  '
+          f'candidates={warm2_info["candidates"]:,}  '
+          f'full passes over the row={warm2_info["passes"]}')
+    print('  All three runs return the identical top-512.  The accept window')
+    print('  only bounds the candidate buffer - P4 does the exact selection')
+    print('  either way - so a bad target costs time, never correctness.')
+
+    print()
+    print('  the same comparison over 200 random rows (n=4,000, k=128):')
+    means = {}
+    for label, tgt in (('kFTarget = 0.75k', 96), ('kFTarget = k   ', 128)):
+        iters = 0
+        gaveup = 0
+        for trial in range(200):
+            r2 = random.Random(9000 + trial)
+            row = [r2.gauss(0.0, 1.0) + 3.0 * r2.random() ** 8
+                   for _ in range(4000)]
+            pidx = [i for _, i in sorted(((v, i) for i, v in enumerate(row)),
+                                         reverse=True)[:128]]
+            row2 = [v + r2.gauss(0.0, 0.05) for v in row]
+            out2, inf = gvr_topk(row2, 128, prev_top_k=pidx, target=tgt,
+                                 cand_cap=1280)
+            assert out2 == sorted(row2, reverse=True)[:128]
+            iters += inf['p2_iters']
+            gaveup += 0 if inf['converged'] else 1
+        means[tgt] = iters / 200
+        print(f'      {label}: mean refine iters = {iters / 200:5.2f}   '
+              f'gave up on {gaveup:>3} / 200 rows')
+    print(f'  {means[96] / means[128]:.1f}x fewer P2 iterations from moving one '
+          'constant, which sits')
+    print('  inside the 1.5-2.2x the kernel authors measured on real traces.')
+    print('  Every row still returns the exact top-128 - checked above.')
+
+    print()
+    print('  the cluster: aggregating the count without touching global memory')
+    thr_w = warm2_info['threshold']
+    single = count_ge(step_b, thr_w)
+    for cs in (1, 2, 4):
+        tot, partial, reads = gvr_cluster_count_ge(step_b, thr_w, cs)
+        assert tot == single
+        print(f'      cluster_size={cs}: per-CTA {partial} -> {tot:,}  '
+              f'({reads} DSMEM reads, 0 global atomics)')
+    print('  Section 6 needed a barrier in global memory for this, because two')
+    print('  arbitrary blocks are not co-resident.  A cluster is co-resident by')
+    print('  definition, so mapa.shared::cluster turns the reduction into a')
+    print('  shared-memory load.  The price is portability: clusters are a CUDA')
+    print('  feature, and the same path in SGLang\'s topk v2 is compiled out on')
+    print('  CDNA, which has no distributed shared memory.')
+
+    print()
+    print('  load balancing a varlen batch')
+    lens = [128_000, 900, 512, 240_000, 1_100, 70_000, 300, 64_000]
+    order, (nl, ns) = gvr_long_short_split(lens)
+    print(f'      seq_lens  = {lens}')
+    print(f'      order_row = {order}   ({nl} long, {ns} short)')
+    print('  Long rows first, so they start in the earliest wave and get a whole')
+    print('  cluster each; the short rows behind them take one CTA each and fill')
+    print('  the gaps.  The counter saying how many are long is written by the')
+    print('  device and read by the launch, which is exactly the dependency a')
+    print('  CUDA graph cannot capture - this variant runs uncaptured.')
+
+    rule('10.  which kernel does a library actually launch?')
     cases = [
         (4096, 8, 'float32', False, 512),
         (200_000, 64, 'float32', False, 1),
@@ -1111,7 +1486,7 @@ def main():
     print('  The odd one out is the second row: it fits perfectly well, it is')
     print('  just that one block per row means one block, and 131 idle SMs.')
 
-    rule('10.  LeetCode 215 - Kth Largest Element in an Array')
+    rule('11.  LeetCode 215 - Kth Largest Element in an Array')
     print('  nums = [3,2,3,1,2,4,5,5,6], k = 4  ->', find_kth_largest([3, 2, 3, 1, 2, 4, 5, 5, 6], 4))
     print('  nums = [3,2,1,5,6,4],       k = 2  ->', find_kth_largest([3, 2, 1, 5, 6, 4], 2))
     assert find_kth_largest([3, 2, 3, 1, 2, 4, 5, 5, 6], 4) == 4

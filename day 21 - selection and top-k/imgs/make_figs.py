@@ -286,6 +286,144 @@ def fig6():
     save(fig, os.path.join(HERE, 'day21_6.png'))
 
 
+
+
+# --------------------------------------------------- GVR measurements (P1/P2)
+GRNG = random.Random(2126)
+GN = 20_000
+STEP_A = [GRNG.gauss(0.0, 1.0) + 3.0 * GRNG.random() ** 8 for _ in range(GN)]
+STEP_B = [v + GRNG.gauss(0.0, 0.05) for v in STEP_A]
+PREV_IDX = [i for _, i in sorted(((v, i) for i, v in enumerate(STEP_A)),
+                                 reverse=True)[:S.GVR_K]]
+P1 = S.gvr_phase1(STEP_B, PREV_IDX, S.GVR_K)          # thr, lo, hi, clo, chi
+GVR_T384 = []
+S.gvr_topk(STEP_B, S.GVR_K, prev_top_k=PREV_IDX, target=S.GVR_TARGET,
+           trace=GVR_T384)
+GVR_T512 = []
+S.gvr_topk(STEP_B, S.GVR_K, prev_top_k=PREV_IDX, target=S.GVR_TARGET_V4,
+           trace=GVR_T512)
+TRUE_AT_LO = S.count_ge(STEP_B, P1[1])
+
+
+def fig7():
+    """P1 - the guess costs k loads, not n."""
+    fig, ax = canvas(9, 6, xlim=(0, 9), ylim=(0, 6))
+
+    # the row at step t-1, with the emitted top-k marked
+    ncell = 26
+    hot = (3, 7, 8, 14, 19, 23)
+    cells(ax, 0.55, 4.72, ncell, w=0.30, h=0.52)
+    for h in hot:
+        box(ax, 0.55 + h * 0.30, 4.72, 0.30, 0.52, fill=NAVY, edge=AMBER, lw=2.2)
+    text(ax, 4.45, 5.62, 'step t-1: this kernel already emitted the top-k',
+         size=14, glowing=False)
+    text(ax, 4.45, 4.34, f'pre_idx  -  {S.GVR_K} indices out of n = {GN:,}',
+         size=13, color=AMBER, glowing=False)
+
+    arrow(ax, (4.45, 4.06), (4.45, 3.30), color=TEAL)
+    text(ax, 6.30, 3.68, '+ preIdxOffset', size=13, color=TEAL_L, glowing=False)
+    text(ax, 6.30, 3.32, 'one token was appended', size=12, color=GREY_L,
+         glowing=False)
+
+    # the row at step t - same positions read, nothing else touched
+    cells(ax, 0.55, 2.38, ncell, w=0.30, h=0.52)
+    for h in hot:
+        box(ax, 0.55 + h * 0.30, 2.38, 0.30, 0.52, fill=NAVY, edge=AMBER, lw=2.2)
+    text(ax, 4.45, 3.04, 'step t: read the logits at exactly those positions',
+         size=14, glowing=False)
+    text(ax, 4.45, 2.02, f'{S.GVR_K} loads, not {GN:,}  -  P1 never scans the row',
+         size=13, color=AMBER, glowing=False)
+
+    # min / mean / max -> the seed threshold
+    region(ax, 0.60, 0.22, 7.80, 1.22,
+           label='min, max, mean of those k values seed the whole search')
+    lo, mean, hi = P1[1], P1[0], P1[2]
+    ax.plot([1.30, 7.70], [0.80, 0.80], color=TEAL, lw=1.8, zorder=3)
+    for xx, val, lbl, col in ((1.30, lo, 'val_lo', TEAL),
+                              (1.30 + 6.40 * (mean - lo) / (hi - lo), mean,
+                               'threshold', AMBER),
+                              (7.70, hi, 'val_hi', TEAL)):
+        ax.plot([xx, xx], [0.66, 0.94], color=col, lw=2.0, zorder=4)
+        text(ax, xx, 1.20, lbl, size=13, color=col, glowing=False)
+        text(ax, xx, 0.44, f'{val:+.2f}', size=12, color=col, glowing=False)
+    save(fig, os.path.join(HERE, 'day21_7.png'))
+
+
+def fig8():
+    """P2 - the secant, and the accept window it has to land in."""
+    fig, ax = canvas(9, 6, xlim=(0, 9), ylim=(0, 6))
+    X0, X1, Y0, Y1 = 1.90, 8.20, 1.70, 5.30
+    lo, hi = P1[1], P1[2]
+    clo_seed, chi_seed = P1[3], GVR_T384[0]['cnt']
+    CMAX = 900.0
+
+    def px(t):
+        return X0 + (X1 - X0) * (t - lo) / (hi - lo)
+
+    def py(c):
+        return Y0 + (Y1 - Y0) * min(c, CMAX) / CMAX
+
+    # accept window: any count from k up to the candidate cap is good enough
+    ax.add_patch(Rectangle((X0, py(S.GVR_K)), X1 - X0, Y1 - py(S.GVR_K),
+                           facecolor=PALE, edgecolor=TEAL_L, alpha=0.45,
+                           linestyle=(0, (4, 3)), linewidth=1.4, zorder=1))
+    text(ax, X1 - 0.14, py(S.GVR_K) + 0.24,
+         f'accept window: count anywhere in [{S.GVR_K}, {S.GVR_CAND_CAP}]',
+         size=13, color=TEAL_L, ha='right', glowing=False)
+
+    # the true count curve
+    ts = [lo + (hi - lo) * i / 60.0 for i in range(61)]
+    cs = [S.count_ge(STEP_B, t) for t in ts]
+    ax.plot([px(t) for t in ts], [py(c) for c in cs], color=TEAL, lw=2.0,
+            zorder=3)
+    text(ax, 5.70, 2.78, 'count(v >= t)', size=13, color=TEAL, glowing=False)
+
+    # the secant the kernel actually draws: seeded cnt_lo vs measured cnt_hi
+    ax.plot([px(lo), px(hi)], [py(clo_seed), py(chi_seed)], color=AMBER,
+            lw=1.8, linestyle=(0, (5, 3)), zorder=4)
+    ax.plot([px(lo), px(hi)], [py(clo_seed), py(chi_seed)], 'o', color=AMBER,
+            ms=8, zorder=5)
+    arrow(ax, (3.55, 4.86), (px(lo) + 0.18, py(clo_seed) + 0.06),
+          color=AMBER, lw=1.4, ms=9)
+    text(ax, 3.70, 5.04, f'cnt_lo = k + k/4 = {clo_seed}',
+         size=13, color=AMBER, ha='left', glowing=False)
+    text(ax, 3.70, 4.70,
+         f'assumed by P1; the truth here is {TRUE_AT_LO}',
+         size=12, color=GREY_L, ha='left', glowing=False)
+    text(ax, X1 - 0.14, py(chi_seed) - 0.34,
+         f'cnt_hi = {chi_seed}, measured', size=12, color=AMBER, ha='right',
+         glowing=False)
+
+    # where each target lands on the secant
+    for tgt, col in ((S.GVR_TARGET, RED), (S.GVR_TARGET_V4, TEAL_L)):
+        f = (clo_seed - tgt) / float(clo_seed - chi_seed)
+        f = min(max(0.05, min(0.95, f)), 0.5)
+        xt = px(lo + (hi - lo) * f)
+        ax.plot([X0, xt], [py(tgt), py(tgt)], color=col, lw=1.4,
+                linestyle=(0, (2, 3)), zorder=4)
+        ax.plot([xt, xt], [py(tgt), Y0], color=col, lw=1.4,
+                linestyle=(0, (2, 3)), zorder=4)
+        text(ax, X0 - 0.16, py(tgt), f'{tgt}', size=13, color=col, ha='right',
+             glowing=False)
+
+    ax.plot([X0, X0], [Y0, Y1], color=TEAL, lw=1.4, zorder=2)
+    ax.plot([X0, X1], [Y0, Y0], color=TEAL, lw=1.4, zorder=2)
+    text(ax, X0 - 0.16, Y1 + 0.06, 'count', size=13, color=TEAL, ha='right',
+         glowing=False)
+    text(ax, X1, Y0 - 0.30, 'threshold', size=13, color=TEAL, glowing=False)
+
+    text(ax, 4.60, 1.02,
+         f'aiming at kFTarget = {S.GVR_TARGET} aims below the window, so the loop',
+         size=13, color=RED, glowing=False)
+    text(ax, 4.60, 0.64,
+         'converges on a count it is required to reject; aiming at',
+         size=13, color=RED, glowing=False)
+    text(ax, 4.60, 0.26,
+         f'kFTarget = k = {S.GVR_TARGET_V4} lands inside it on the first step',
+         size=13, color=RED, glowing=False)
+    save(fig, os.path.join(HERE, 'day21_8.png'))
+
+
 if __name__ == '__main__':
-    for f in (fig1, fig2, fig3, fig4, fig5, fig6):
+    for f in (fig1, fig2, fig3, fig4, fig5, fig6, fig7, fig8):
         print(f.__name__, f())
