@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Day 16 - Prim and Dijkstra - one heap-greedy skeleton / Prim 與 Dijkstra：同一套 heap greedy 骨架</title>
+<title>Day 16 - Prim's minimum spanning tree and Dijkstra's shortest path are the same algorithm / Prim 的最小生成樹與 Dijkstra 的最短路徑，其實是同一支演算法</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='2' y='2' width='28' height='28' rx='7' fill='%23062434'/><circle cx='11' cy='12' r='4' fill='%2312b3b8'/><circle cx='21' cy='12' r='4' fill='%239d6bff'/><circle cx='16' cy='22' r='4' fill='%23ff9736'/></svg>">
 <style>
 :root{
@@ -105,7 +105,7 @@ footer{margin-top:32px;padding-top:16px;border-top:1px solid rgba(18,179,184,.25
 <div class="wrap">
 <header>
   <span class="day">Day 16</span>
-  <h1 data-i18n="title">Prim 與 Dijkstra：同一套 heap greedy 骨架</h1>
+  <h1 data-i18n="title">Prim 的最小生成樹與 Dijkstra 的最短路徑，其實是同一支演算法</h1>
   <span class="spacer"></span>
   <div class="lang">
     <button id="btn-zh" class="on" onclick="setLang('zh')">中文</button>
@@ -160,8 +160,8 @@ footer{margin-top:32px;padding-top:16px;border-top:1px solid rgba(18,179,184,.25
 </div>
 <script>
 // DAY: 16
-// TITLE_ZH: Prim 與 Dijkstra：同一套 heap greedy 骨架
-// TITLE_EN: Prim and Dijkstra - one heap-greedy skeleton
+// TITLE_ZH: Prim 的最小生成樹與 Dijkstra 的最短路徑，其實是同一支演算法
+// TITLE_EN: Prim's minimum spanning tree and Dijkstra's shortest path are the same algorithm
 // SUB_ZH: 兩個看起來完全不同的演算法，程式碼只差一個 key：Prim 比「這條邊多貴」，Dijkstra 比「走到那裡總共多貴」。
 // SUB_EN: Two algorithms that look unrelated are one lambda apart - Prim compares the edge, Dijkstra compares the whole path.
 // FOLDER: day%2016%20-%20prim%20and%20dijkstra
@@ -519,8 +519,8 @@ function buildLC(){
 }
 
 const DAY_META = {
-  title:{zh:'Prim 與 Dijkstra：同一套 heap greedy 骨架',
-         en:'Prim and Dijkstra - one heap-greedy skeleton'},
+  title:{zh:'Prim 的最小生成樹與 Dijkstra 的最短路徑，其實是同一支演算法',
+         en:"Prim's minimum spanning tree and Dijkstra's shortest path are the same algorithm"},
   sub:{zh:'兩個看起來完全不同的演算法，程式碼只差一個 key：Prim 比「這條邊多貴」，Dijkstra 比「走到那裡總共多貴」。',
        en:'Two algorithms that look unrelated are one lambda apart: Prim compares the edge, Dijkstra compares the whole path.'},
   tabs:[

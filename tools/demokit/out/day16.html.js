@@ -1,6 +1,6 @@
 // DAY: 16
-// TITLE_ZH: Prim 與 Dijkstra：同一套 heap greedy 骨架
-// TITLE_EN: Prim and Dijkstra - one heap-greedy skeleton
+// TITLE_ZH: Prim 的最小生成樹與 Dijkstra 的最短路徑，其實是同一支演算法
+// TITLE_EN: Prim's minimum spanning tree and Dijkstra's shortest path are the same algorithm
 // SUB_ZH: 兩個看起來完全不同的演算法，程式碼只差一個 key：Prim 比「這條邊多貴」，Dijkstra 比「走到那裡總共多貴」。
 // SUB_EN: Two algorithms that look unrelated are one lambda apart - Prim compares the edge, Dijkstra compares the whole path.
 // FOLDER: day%2016%20-%20prim%20and%20dijkstra
@@ -358,8 +358,8 @@ function buildLC(){
 }
 
 const DAY_META = {
-  title:{zh:'Prim 與 Dijkstra：同一套 heap greedy 骨架',
-         en:'Prim and Dijkstra - one heap-greedy skeleton'},
+  title:{zh:'Prim 的最小生成樹與 Dijkstra 的最短路徑，其實是同一支演算法',
+         en:"Prim's minimum spanning tree and Dijkstra's shortest path are the same algorithm"},
   sub:{zh:'兩個看起來完全不同的演算法，程式碼只差一個 key：Prim 比「這條邊多貴」，Dijkstra 比「走到那裡總共多貴」。',
        en:'Two algorithms that look unrelated are one lambda apart: Prim compares the edge, Dijkstra compares the whole path.'},
   tabs:[

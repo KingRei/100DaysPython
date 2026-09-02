@@ -4,7 +4,7 @@
 // SUB_ZH: 邊由便宜排到貴，一條一條收，只要不繞回自己就留下。判斷「會不會繞回自己」的那一步，就是昨天的 Union-Find。
 // SUB_EN: Sort the edges cheapest first and keep each one unless it closes a cycle.
 // FOLDER: day%2015%20-%20minimum%20spanning%20tree%20-%20kruskal
-// MEDIUM: https://medium.com/100-days-of-python
+// MEDIUM: https://medium.com/100-days-of-python/day-15-%E6%9C%80%E5%B0%8F%E7%94%9F%E6%88%90%E6%A8%B9-kruskal-cae4865723fa
 
 const NM = 'ABCDEFG';
 const P = [[1.1, 3.3], [3.4, 2.4], [7.0, 3.0], [2.4, 4.4], [5.4, 4.4], [2.5, 6.2], [7.6, 5.8]];

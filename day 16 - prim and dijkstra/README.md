@@ -1,7 +1,7 @@
-# Prim and Dijkstra - one heap-greedy skeleton
+# Prim's minimum spanning tree and Dijkstra's shortest path are the same algorithm
 
 More details in:
-https://medium.com/100-days-of-python
+https://medium.com/100-days-of-python/prim-%E7%9A%84%E6%9C%80%E5%B0%8F%E7%94%9F%E6%88%90%E6%A8%B9-mst-%E8%88%87-dijkstra-%E7%9A%84%E6%9C%80%E7%9F%AD%E8%B7%AF%E5%BE%91-%E5%85%B6%E5%AF%A6%E6%98%AF%E5%90%8C%E4%B8%80%E6%94%AF%E6%BC%94%E7%AE%97%E6%B3%95-896c2d8d077f
 
 Interactive walkthrough: [demo.html](demo.html) - a single self-contained page
 (no build step, works offline, 中文 / English toggle) that animates the shared loop with

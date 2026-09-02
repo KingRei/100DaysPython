@@ -1,7 +1,7 @@
 # Bellman-Ford, SPFA and Floyd-Warshall - shortest paths without the non-negative assumption
 
 More details in:
-https://medium.com/100-days-of-python
+https://medium.com/100-days-of-python/day17-bellman-ford-floyd-warshall-%E8%AE%93-dijkstra-%E7%AE%97%E9%8C%AF%E7%9A%84%E9%82%A3%E4%B8%80%E8%A1%8C-abbe9a4955c5
 
 Interactive walkthrough: [demo.html](demo.html) - a single self-contained page
 (no build step, works offline, 中文 / English toggle) that animates Bellman-Ford round by

@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
-<title>讓 Dijkstra 算錯的那一行</title>
+<title>Day 17 — 讓 Dijkstra 算錯的那一行</title>
 <style>
 body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
          font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
@@ -26,7 +26,7 @@ li     { margin: .3em 0; }
 </style>
 </head>
 <body>
-<h1>讓 Dijkstra 算錯的那一行</h1>
+<h1>Day 17 — 讓 Dijkstra 算錯的那一行</h1>
 <p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2017%20-%20bellman%20ford%20and%20floyd%20warshall">day 17 on GitHub</a></p>
 <p><em>100 Days of Python - day 17</em></p>
 <p>昨天的 <code>heap_greedy</code> 骨架裡藏了一句沒有明講的理由：<em>任何通往這個節點的其他路線，都必須經過 還留在 heap 裡的某個節點，而那個節點的距離已經不小於它，再多接幾條邊只會更長。</em> Dijkstra 的所有保證都建立在這句話上，而這句話建立在一個前提上——多加一條邊，不會讓路徑變短。</p>

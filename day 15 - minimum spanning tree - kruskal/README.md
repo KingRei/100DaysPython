@@ -1,7 +1,7 @@
 # Minimum Spanning Tree - Kruskal
 
 More details in:
-https://medium.com/100-days-of-python
+https://medium.com/100-days-of-python/day-15-%E6%9C%80%E5%B0%8F%E7%94%9F%E6%88%90%E6%A8%B9-kruskal-cae4865723fa
 
 Interactive walkthrough: [demo.html](demo.html) - a single self-contained page
 (no build step, works offline, 中文 / English toggle) that animates the sorted edge scan,

@@ -29,7 +29,7 @@
 | 13 | 拓樸排序（Kahn + DFS 兩種寫法）✅ | LC 207 課程表；DAG、循環偵測 |
 | 14 | Union-Find（路徑壓縮 + 按秩合併）✅ | LC 547 省份數量 |
 | 15 | 最小生成樹 — Kruskal ✅ | 接 Day 14；Prim 併到 Day 16 一起講 |
-| 16 | Prim 與 Dijkstra：同一套 heap greedy 骨架 ✅ | LC 743；接 Day 05 heap。兩者只差 key 是「邊權」還是「距離和」 |
+| 16 | Prim 的最小生成樹與 Dijkstra 的最短路徑，其實是同一支演算法 ✅ | LC 743；接 Day 05 heap。兩者只差 key 是「邊權」還是「距離和」 |
 | 17 | 負權與全點對：Bellman-Ford / SPFA / Floyd-Warshall ✅ | LC 787；負權環偵測＝套利；Floyd 就是三層迴圈的 DP，k 必須在最外層 |
 | 18 | Tarjan：強連通分量、橋、關節點 ✅ | LC 1192；disc/low 一次 DFS 三種讀法；跳過的是「邊」不是「父節點」；少了 on_stack 會把分量黏在一起 |
 | 19 | A* 與平行圖搜尋 ✅ | 第一次碰 heuristic，AI 的橋樑；順帶 frontier 展開的平行 BFS、Δ-stepping |
@@ -41,14 +41,14 @@
 |---|---|---|
 | 20 | 分治排序：Quick sort + Merge sort + 它們的平行版 ✅ | 三路 partition、最壞情況、外部排序；parallel merge、sample sort、work-depth 直覺 |
 | 21 | 選擇問題：Heap sort、Top-K、Quickselect、中位數、Reservoir sampling ✅ | 接 Day 05；串流取樣；radix select 與 GPU top-k kernel（grid barrier、#3610 死鎖、ties） |
-| 22 | 非比較排序：counting / radix / bucket | O(n) 的條件；平行 counting sort 的骨架就是 prefix-sum (scan) |
-| 23 | 二分搜尋的三種邊界寫法 | 「在答案上二分」 |
+| 22 | 非比較排序：counting / radix / bucket ✅ | O(n) 的條件；平行 counting sort 的骨架就是 prefix-sum (scan) |
+| 23 | 二分搜尋的三種邊界寫法 ✅ | 「在答案上二分」；LC 34/33/875/410；sglang 的五處邊界搜尋（graph bucket、cu_seqlens、radix cache gallop、qps autotune） |
 
 ## Part 3 — 字串演算法（Day 24–27）
 
 | Day | 主題 | 備註 |
 |---|---|---|
-| 24 | Trie 與 Radix / Patricia Tree | 自動完成 + IP 路由表；Day 58 RadixAttention 的地基 |
+| 24 | Trie 與 Radix / Patricia Tree ✅ | 自動完成 + IP 路由表；longest prefix match；sglang RadixCache 的 split / page 對齊 / leaf-only LRU（RadixAttention 的地基） |
 | 25 | 字串匹配：KMP + Rabin-Karp | failure function、rolling hash |
 | 26 | Suffix Array + LCP 與 Aho-Corasick | 後綴結構與多模式匹配一起講 |
 | 27 | 編輯距離與相似度：Levenshtein、Jaccard、MinHash | 為 Day 66 檢索鋪路 |

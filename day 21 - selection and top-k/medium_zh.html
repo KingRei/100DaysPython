@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
-<title>選擇問題與 Top-K：從來就不需要先排序</title>
+<title>Day 21 — 選擇問題與 Top-K：從來就不需要先排序</title>
 <style>
 body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
          font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
@@ -26,7 +26,7 @@ li     { margin: .3em 0; }
 </style>
 </head>
 <body>
-<h1>選擇問題與 Top-K：從來就不需要先排序</h1>
+<h1>Day 21 — 選擇問題與 Top-K：從來就不需要先排序</h1>
 <p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2021%20-%20selection%20and%20top-k">day 21 on GitHub</a></p>
 <p><em>100 Days of Python - day 21</em></p>
 <p>LLM 每吐出一個 token，都要跑一次 top-k。模型對十萬多個 vocabulary entry 各給一個分數， 取樣之前得先挑出最好的那幾個。這顆 kernel 執行的次數大概是整個 stack 裡數一數二頻繁的， 所以被優化得很兇。而當我去讀我自己最常用的兩份實作 —— flashinfer 的 <code>topk.cuh</code> 和 SGLang 的 <code>topk_impl.cuh</code> —— 讓我意外的是<strong>難的地方跑到哪裡去了</strong>：幾乎沒有一點難度在「選擇」本身。 難的是誰負責把一個計數器歸零，以及平手的時候誰贏。</p>

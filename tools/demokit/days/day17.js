@@ -4,7 +4,7 @@
 // SUB_ZH: Dijkstra 的「定案就不再改」只有在邊非負時才成立。放棄定案、把每條邊放鬆 V−1 次，就是 Bellman-Ford。
 // SUB_EN: Dijkstra's "settle once, never revisit" only holds for non-negative edges. Settle nothing, relax every edge V-1 times, and you have Bellman-Ford.
 // FOLDER: day%2017%20-%20bellman%20ford%20and%20floyd%20warshall
-// MEDIUM: https://medium.com/100-days-of-python
+// MEDIUM: https://medium.com/100-days-of-python/day17-bellman-ford-floyd-warshall-%E8%AE%93-dijkstra-%E7%AE%97%E9%8C%AF%E7%9A%84%E9%82%A3%E4%B8%80%E8%A1%8C-abbe9a4955c5
 
 const NM = 'ABCDE';
 const P = [[1.1, 3.4], [4.3, 1.5], [7.7, 1.5], [4.3, 5.3], [7.7, 5.3]];

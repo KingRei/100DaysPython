@@ -1,7 +1,7 @@
 # Union-Find (Disjoint Set Union)
 
 More details in:
-https://medium.com/100-days-of-python/day-14-union-find
+https://medium.com/100-days-of-python/day-14-union-find-%E5%8F%AA%E5%9B%9E%E7%AD%94%E4%B8%80%E5%80%8B%E5%95%8F%E9%A1%8C%E7%9A%84%E8%B3%87%E6%96%99%E7%B5%90%E6%A7%8B-8a0819fe1560
 
 Interactive walkthrough: [demo.html](demo.html) - a single self-contained page
 (no build step, works offline) that animates union by rank, path compression, the
