@@ -1,4 +1,4 @@
-# Binary search and its three boundary variants
+# Binary search - lower_bound, upper_bound and the three boundary variants
 
 More details in:
 https://medium.com/100-days-of-python

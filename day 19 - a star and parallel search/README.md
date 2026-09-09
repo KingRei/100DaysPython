@@ -1,4 +1,4 @@
-# A* - Dijkstra with a guess, and what happens when the search stops being sequential
+# A* - heuristic shortest-path search, and what happens when the search stops being sequential
 
 More details in:
 https://medium.com/100-days-of-python

@@ -1,0 +1,1308 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 26 - Suffix array + LCP, and Aho-Corasick / Suffix Array + LCP 與 Aho-Corasick</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='2' y='2' width='28' height='28' rx='7' fill='%23062434'/><circle cx='11' cy='12' r='4' fill='%2312b3b8'/><circle cx='21' cy='12' r='4' fill='%239d6bff'/><circle cx='16' cy='22' r='4' fill='%23ff9736'/></svg>">
+<style>
+:root{
+  --bg0:#04121c; --bg1:#062434; --card:rgba(6,36,52,.72);
+  --teal:#12b3b8; --teal-d:#0a6b74; --teal-l:#3fe0dd;
+  --purple:#9d6bff; --purple-d:#241542; --purple-l:#c7a6ff;
+  --orange:#ff9736; --orange-d:#3a2109; --orange-l:#ffbe6b;
+  --red:#ff5c5c; --grey:#8fa3ac; --pale:#dff2f5; --white:#ffffff;
+  --serif:"Latin Modern Roman","Liberation Serif",Georgia,"Times New Roman",serif;
+  --mono:"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:
+    radial-gradient(900px 520px at 12% -8%,rgba(157,107,255,.20) 0%,rgba(157,107,255,0) 62%),
+    radial-gradient(900px 520px at 88% -4%,rgba(255,151,54,.16) 0%,rgba(255,151,54,0) 60%),
+    radial-gradient(1200px 800px at 50% 30%,#083041 0%,var(--bg1) 45%,var(--bg0) 100%);
+  color:var(--pale); font-family:var(--serif); min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--teal-l)}
+.wrap{max-width:1180px;margin:0 auto;padding:26px 20px 60px}
+header{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-bottom:6px}
+h1{font-size:30px;margin:0;color:var(--white);letter-spacing:.4px;
+   text-shadow:0 0 16px rgba(63,224,221,.35)}
+.day{font-size:13px;letter-spacing:2.4px;text-transform:uppercase;color:var(--orange-l);
+     border:1px solid var(--orange);border-radius:999px;padding:4px 12px;
+     background:rgba(255,151,54,.10)}
+.sub{color:var(--grey);font-size:15px;margin:8px 0 20px;max-width:72ch;line-height:1.6}
+.spacer{flex:1}
+.lang{display:flex;border:1px solid var(--teal-d);border-radius:999px;overflow:hidden}
+.lang button{background:transparent;color:var(--teal-l);border:0;padding:5px 14px;
+  font-family:var(--serif);font-size:14px;cursor:pointer}
+.lang button.on{background:var(--teal);color:#022}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
+.tabs button{
+  background:rgba(6,40,58,.75);border:1px solid rgba(18,179,184,.45);color:var(--pale);
+  padding:9px 16px;border-radius:9px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  transition:.18s}
+.tabs button:hover{border-color:var(--teal-l);color:var(--white)}
+.tabs button.on{background:linear-gradient(135deg,var(--teal) 0%,var(--purple) 140%);
+  border-color:var(--teal-l);color:#03222a;box-shadow:0 0 18px rgba(18,179,184,.30)}
+.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:18px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid rgba(18,179,184,.28);border-radius:13px;
+      padding:14px 16px}
+.card h3{margin:0 0 10px;font-size:14px;letter-spacing:2px;text-transform:uppercase;
+         color:var(--teal-l);font-weight:normal}
+svg.stage{width:100%;height:auto;display:block;touch-action:none}
+svg.stage text{font-family:var(--serif);user-select:none}
+.narr{min-height:52px;margin-top:10px;padding:10px 12px;border-left:3px solid var(--orange);
+      background:rgba(255,151,54,.07);font-size:16px;line-height:1.55;color:var(--white)}
+.narr code{font-family:var(--mono);font-size:14px;color:var(--orange-l)}
+.narr b{color:var(--orange-l);font-weight:normal}
+.ctrl{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
+.ctrl button{background:rgba(6,40,58,.9);border:1px solid var(--teal-d);color:var(--teal-l);
+  border-radius:8px;padding:7px 13px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  min-width:44px;transition:.15s}
+.ctrl button:hover:not(:disabled){background:var(--teal);color:#03222a}
+.ctrl button:disabled{opacity:.35;cursor:default}
+.ctrl .play{min-width:92px;font-weight:bold;border-color:var(--orange);color:var(--orange-l)}
+.ctrl .play:hover{background:var(--orange);color:#2a1400}
+.ctrl input[type=range]{width:120px;accent-color:var(--purple)}
+.stepno{color:var(--grey);font-size:14px;font-family:var(--mono)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;min-height:30px}
+.chip{border:1px solid var(--teal-d);border-radius:6px;padding:3px 9px;font-family:var(--mono);
+      font-size:14px;color:var(--pale);background:rgba(18,179,184,.10)}
+.chip.hot{border-color:var(--orange);color:var(--orange-l);background:rgba(255,151,54,.14)}
+.chip.act{border-color:var(--purple);color:var(--purple-l);background:rgba(157,107,255,.16)}
+.chip.ok{border-color:var(--teal-l);color:var(--teal-l);background:rgba(63,224,221,.12)}
+.chip.dim{border-color:#2f5661;color:var(--grey);background:transparent}
+.chip.bad{border-color:var(--red);color:#ff9a9a;background:rgba(255,92,92,.14)}
+.chip.empty{border-style:dashed;color:var(--grey);border-color:#2f5661}
+.panel+.panel{margin-top:12px}
+.panel .lbl{font-size:13px;letter-spacing:1.6px;text-transform:uppercase;color:var(--grey);
+  margin-bottom:5px}
+pre.code{margin:0;font-family:var(--mono);font-size:13.5px;line-height:1.72;overflow-x:auto;
+  color:#a8c8d0}
+pre.code .ln{display:block;padding:0 8px;border-left:3px solid transparent;white-space:pre}
+pre.code .ln.on{background:rgba(255,151,54,.12);border-left-color:var(--orange);color:var(--white)}
+pre.code .cm{color:#5f7b85;font-style:italic}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:13.5px;color:var(--grey)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;
+  vertical-align:-1px;border:1px solid rgba(255,255,255,.22)}
+.note{font-size:15px;line-height:1.65;color:var(--pale)}
+.note b{color:var(--purple-l);font-weight:normal}
+.note code{font-family:var(--mono);font-size:13.5px;color:var(--teal-l)}
+.toggle-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.toggle-row button{border:1px solid rgba(18,179,184,.45);border-radius:8px;padding:6px 13px;
+  cursor:pointer;font-family:var(--serif);font-size:14px;
+  background:rgba(6,40,58,.75);color:var(--pale)}
+.toggle-row button.on{background:var(--purple);border-color:var(--purple-l);color:#150a2b}
+footer{margin-top:32px;padding-top:16px;border-top:1px solid rgba(18,179,184,.25);
+  color:var(--grey);font-size:14px;display:flex;gap:18px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <span class="day">Day 26</span>
+  <h1 data-i18n="title">Suffix Array + LCP 與 Aho-Corasick</h1>
+  <span class="spacer"></span>
+  <div class="lang">
+    <button id="btn-zh" class="on" onclick="setLang('zh')">中文</button>
+    <button id="btn-en" onclick="setLang('en')">EN</button>
+  </div>
+</header>
+<p class="sub" data-i18n="sub">Day 25 問「這個 pattern 在哪」；今天問兩個它答不了的問題：「這段文字重複了什麼」（沒有 pattern 可以建表）與「這一萬個 pattern 哪一個剛剛出現」（不能掃一萬遍）。</p>
+
+<div class="tabs" id="tabs"></div>
+
+<div class="grid">
+  <div>
+    <div class="card">
+      <h3 id="stage-title"></h3>
+      <svg class="stage" id="stage" viewBox="0 0 10 6.4" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="legend" id="legend"></div>
+      <div class="narr" id="narr"></div>
+      <div class="ctrl">
+        <button onclick="reset()" title="reset">⟲</button>
+        <button id="prev" onclick="step(-1)">◀</button>
+        <button class="play" id="play" onclick="togglePlay()" data-i18n="play">▶ 播放</button>
+        <button id="next" onclick="step(1)">▶</button>
+        <span class="stepno" id="stepno">0 / 0</span>
+        <span class="spacer"></span>
+        <span style="font-size:13px;color:var(--grey)" data-i18n="speed">速度</span>
+        <input type="range" id="speed" min="180" max="1600" step="20" value="820">
+      </div>
+      <div class="toggle-row" id="extra"></div>
+    </div>
+  </div>
+  <div>
+    <div class="card" id="state-card">
+      <h3 data-i18n="state">演算法狀態</h3>
+      <div id="panels"></div>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="code">程式碼</h3>
+      <pre class="code" id="code"></pre>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="idea">重點</h3>
+      <div class="note" id="idea"></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <span>100 Days of Python — Day 26</span>
+  <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2026%20-%20suffix%20array%20and%20aho%20corasick" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://medium.com/100-days-of-python" target="_blank" rel="noopener">Medium</a>
+</footer>
+</div>
+<script>
+// DAY: 26
+// TITLE_ZH: Suffix Array + LCP 與 Aho-Corasick
+// TITLE_EN: Suffix array + LCP, and Aho-Corasick
+// SUB_ZH: Day 25 問「這個 pattern 在哪」；今天問兩個它答不了的問題：「這段文字重複了什麼」（沒有 pattern 可以建表）與「這一萬個 pattern 哪一個剛剛出現」（不能掃一萬遍）。
+// SUB_EN: Day 25 asked where one pattern occurs. Today: what does a text repeat (nobody hands you a pattern), and which of ten thousand patterns just fired (you cannot afford ten thousand passes).
+// FOLDER: day%2026%20-%20suffix%20array%20and%20aho%20corasick
+// MEDIUM: https://medium.com/100-days-of-python
+
+const VIEW = [9.8, 6.4];
+const mid2 = VIEW[0] / 2;
+const ln = (code, frag) => { const i = code.findIndex(l => l.indexOf(frag) >= 0); return i < 0 ? 0 : i; };
+const note = (y, s, c, fs) => S.t(mid2, y, s, {c:c || COL.tealL, fs:fs || .32});
+function chip(t, cls){ return {t:t, cls:cls || ''}; }
+
+/* ---- verbatim ports of suffix_aho.py ------------------------------------ */
+function suffixArray(s){
+  const n = s.length;
+  if (!n) return [];
+  let rank = [];
+  const alpha = Array.from(new Set(s.split(''))).sort();
+  for (let i = 0; i < n; i++) rank.push(alpha.indexOf(s[i]));
+  let sa = [], k = 1;
+  for (let i = 0; i < n; i++) sa.push(i);
+  const key = (i, r, kk) => [r[i], i + kk < n ? r[i + kk] : -1];
+  const cmp = (a, b) => (a[0] - b[0]) || (a[1] - b[1]);
+  for (;;){
+    sa.sort((a, b) => cmp(key(a, rank, k), key(b, rank, k)));
+    const nw = new Array(n).fill(0);
+    for (let i = 1; i < n; i++)
+      nw[sa[i]] = nw[sa[i - 1]] + (cmp(key(sa[i - 1], rank, k), key(sa[i], rank, k)) < 0 ? 1 : 0);
+    rank = nw;
+    if (rank[sa[n - 1]] === n - 1) return sa;
+    k *= 2;
+  }
+}
+function rankRounds(s){
+  const n = s.length, alpha = Array.from(new Set(s.split(''))).sort();
+  let rank = [];
+  for (let i = 0; i < n; i++) rank.push(alpha.indexOf(s[i]));
+  const out = [[1, rank.slice()]];
+  let sa = [], k = 1;
+  for (let i = 0; i < n; i++) sa.push(i);
+  const key = (i, r, kk) => [r[i], i + kk < n ? r[i + kk] : -1];
+  const cmp = (a, b) => (a[0] - b[0]) || (a[1] - b[1]);
+  while (Math.max.apply(null, rank) < n - 1){
+    sa.sort((a, b) => cmp(key(a, rank, k), key(b, rank, k)));
+    const nw = new Array(n).fill(0);
+    for (let i = 1; i < n; i++)
+      nw[sa[i]] = nw[sa[i - 1]] + (cmp(key(sa[i - 1], rank, k), key(sa[i], rank, k)) < 0 ? 1 : 0);
+    rank = nw; k *= 2;
+    out.push([k, rank.slice()]);
+  }
+  return out;
+}
+function lcpKasai(s, sa){
+  const n = s.length, rank = new Array(n).fill(0), lcp = new Array(n).fill(0);
+  sa.forEach((p, i) => { rank[p] = i; });
+  let h = 0;
+  for (let i = 0; i < n; i++){
+    if (rank[i] === 0){ h = 0; continue; }
+    const j = sa[rank[i] - 1];
+    while (i + h < n && j + h < n && s[i + h] === s[j + h]) h++;
+    lcp[rank[i]] = h;
+    if (h) h--;
+  }
+  return lcp;
+}
+function AC(words){
+  const goto_ = [{}], fail = [0], out = [[]], depth = [0];
+  words.forEach(w => {
+    let v = 0;
+    for (const ch of w){
+      if (!(ch in goto_[v])){
+        goto_[v][ch] = goto_.length;
+        goto_.push({}); fail.push(0); out.push([]); depth.push(depth[v] + 1);
+      }
+      v = goto_[v][ch];
+    }
+    out[v].push(w);
+  });
+  const order = [], q = [];
+  for (const ch in goto_[0]){ fail[goto_[0][ch]] = 0; q.push(goto_[0][ch]); }
+  while (q.length){
+    const v = q.shift();
+    order.push(v);
+    out[v] = out[v].concat(out[fail[v]]);
+    for (const ch in goto_[v]){
+      const u = goto_[v][ch];
+      let f = fail[v];
+      while (f && !(ch in goto_[f])) f = fail[f];
+      fail[u] = (ch in goto_[f]) ? goto_[f][ch] : 0;
+      q.push(u);
+    }
+  }
+  const spell = new Array(goto_.length).fill('');
+  for (let v = 0; v < goto_.length; v++)
+    for (const ch in goto_[v]) spell[goto_[v][ch]] = spell[v] + ch;
+  return {goto:goto_, fail:fail, out:out, depth:depth, spell:spell, order:order,
+    step:function(st, ch){ let s2 = st; while (s2 && !(ch in this.goto[s2])) s2 = this.fail[s2];
+                           return (ch in this.goto[s2]) ? this.goto[s2][ch] : 0; }};
+}
+function kmpFailure(pat){
+  const m = pat.length, fail = new Array(m).fill(0);
+  let k = 0;
+  for (let i = 1; i < m; i++){
+    while (k && pat[i] !== pat[k]) k = fail[k - 1];
+    if (pat[i] === pat[k]) k++;
+    fail[i] = k;
+  }
+  return fail;
+}
+
+/* ================================================= 1. building the array */
+const CODE_SA = [
+'def suffix_array(s):              # prefix doubling',
+'    rank = [ord(c) for c in s]    # rank after 1 character',
+'    sa, k = list(range(len(s))), 1',
+'    while True:',
+'        key = lambda i: (rank[i], rank[i + k] if i + k < n else -1)',
+'        sa.sort(key=key)          # sort by 2k characters',
+'        new = [0] * n             # re-rank: equal keys share a rank',
+'        for a, b in zip(sa, sa[1:]):',
+'            new[b] = new[a] + (1 if key(a) < key(b) else 0)',
+'        rank = new',
+'        if rank[sa[-1]] == n - 1: # all distinct -> order is final',
+'            return sa',
+'        k *= 2'
+];
+
+function saFrames(){
+  const s = 'banana', n = s.length, F = new Frames();
+  const rounds = rankRounds(s), sa = suffixArray(s);
+  const w = .78, x0 = (VIEW[0] - n * w) / 2 - .6, yS = 5.3;
+  const rowY = [4.2, 3.3, 2.4];
+
+  const base = (upto, hi) => {
+    const out = cellRow(s.split(''), x0, yS, w, .74, {states:{}, index:true, fs:.42});
+    out.push(S.t(x0 - .3, yS + .4, 'text', {c:COL.tealL, fs:.30, anchor:'end'}));
+    for (let r = 0; r <= upto && r < rounds.length; r++){
+      const st = {};
+      if (hi && r === upto) hi.forEach(i => { st[i] = 'hot'; });
+      out.push.apply(out, cellRow(rounds[r][1], x0, rowY[r], w, .64, {states:st, index:false, fs:.36}));
+      out.push(S.t(x0 - .3, rowY[r] + .34, 'k = ' + rounds[r][0], {c:COL.purpleL, fs:.30, anchor:'end'}));
+    }
+    return out;
+  };
+  const panels = r => [
+    {lbl:{zh:'比較的前綴長度', en:'prefix length compared'}, chips:[chip(String(rounds[r][0]), 'hot')]},
+    {lbl:{zh:'目前排名', en:'ranks so far'}, chips:rounds[r][1].map(v => chip(String(v)))},
+    {lbl:{zh:'還有並列嗎', en:'ties left'},
+     chips:[chip(Math.max.apply(null, rounds[r][1]) === n - 1 ? 'no' : 'yes',
+                 Math.max.apply(null, rounds[r][1]) === n - 1 ? 'ok' : 'bad')]}
+  ];
+
+  F.push({shapes:base(-1), panels:panels(0), view:VIEW, line:ln(CODE_SA, 'def suffix_array'),
+    msg:{zh:'目標是把 <b>banana</b> 的 6 個後綴排序。照定義寫 <code>sorted(range(n), key=lambda i: s[i:])</code> 完全正確，但每次比較都可能讀 O(n) 個字元，總共 O(n² log n) - 而且會實際切出 n 個子字串。',
+         en:'The goal is to sort the 6 suffixes of <b>banana</b>. Writing the definition, <code>sorted(range(n), key=lambda i: s[i:])</code>, is correct but every comparison can read O(n) characters, so it is O(n² log n) - and it materialises n substrings on the way.'}});
+
+  F.push({shapes:base(0), panels:panels(0), view:VIEW, line:ln(CODE_SA, 'rank = [ord'),
+    msg:{zh:'第一輪只看<b>一個字元</b>：a → 0，b → 1，n → 2。這一排不是答案，而是<b>把字元換成排名</b>。關鍵在下一句話：排完之後我們就不再需要字元本身了。',
+         en:'Round one looks at <b>one character</b>: a → 0, b → 1, n → 2. This row is not the answer - it <b>replaces characters by ranks</b>. The point is what comes next: once you have ranks, you never need the characters again.'}});
+
+  F.push({shapes:base(0, [1, 2]).concat([note(1.5, 'suffix 1 starts with (rank[1], rank[2]) = (0, 2)', COL.orangeL, .34)]),
+    panels:panels(0), view:VIEW, line:ln(CODE_SA, 'key = lambda'),
+    msg:{zh:'要比較「前 2 個字元」，不必真的去讀字元：後綴 i 的前兩個字元就是<b>一對排名</b> (rank[i], rank[i+1])。一對小整數比大小是 <b>O(1)</b>，不管這 2 個字元後面還有多長。',
+         en:'To compare the first 2 characters you do not read characters: the first two characters of suffix i are <b>a pair of ranks</b>, (rank[i], rank[i+1]). Comparing a pair of small integers is <b>O(1)</b>, however long the suffixes behind them are.'}});
+
+  F.push({shapes:base(1, [1, 3]), panels:panels(1), view:VIEW, line:ln(CODE_SA, 'new[b] = new[a]'),
+    msg:{zh:'k = 2 的排名出來了，但位置 1（anana）和位置 3（ana）<b>還是並列</b> - 前兩個字元都是 "an"。並列表示資訊還不夠，所以要再來一輪；<code>rank[sa[-1]] == n-1</code> 就是在問「還有並列嗎」。',
+         en:'The k = 2 ranks are in, but positions 1 (anana) and 3 (ana) are <b>still tied</b> - both start "an". A tie means the information is not yet enough, so another round is needed; <code>rank[sa[-1]] == n-1</code> is exactly the question "are there ties left?".'}});
+
+  F.push({shapes:base(2), panels:panels(2), view:VIEW, line:ln(CODE_SA, 'if rank[sa[-1]]'),
+    msg:{zh:'k = 4 之後排名<b>全部不同</b>，順序就固定了。注意輪數：k 每輪加倍，所以只要 <b>log n</b> 輪，每輪一次排序 - 這就是 O(n log² n)（把排序換成 day 22 的 counting sort 就是 O(n log n)）。',
+         en:'After k = 4 every rank is <b>distinct</b> and the order is fixed. Count the rounds: k doubles each time, so <b>log n</b> rounds of one sort each - that is O(n log² n), and swapping the sort for day 22\'s counting sort makes it O(n log n).'}});
+
+  const rowsShapes = hiIdx => {
+    const out = [];
+    sa.forEach((p, i) => {
+      const y = 5.0 - i * .78;
+      out.push(S.r(1.5, y, .7, .62, i === hiIdx ? 'hot' : 'idle', String(i), {fs:.34}));
+      out.push(S.r(2.35, y, .7, .62, 'act', String(p), {fs:.34}));
+      out.push(S.t(3.4, y + .31, s.slice(p), {c:COL.pale, fs:.42, anchor:'start'}));
+    });
+    out.push(S.t(1.85, 5.9, 'i', {c:COL.tealL, fs:.30}));
+    out.push(S.t(2.7, 5.9, 'sa[i]', {c:COL.purpleL, fs:.30}));
+    out.push(S.t(4.2, 5.9, 'sorted suffixes', {c:COL.tealL, fs:.30}));
+    return out;
+  };
+  F.push({shapes:rowsShapes(-1), panels:[{lbl:{zh:'suffix array', en:'suffix array'},
+      chips:sa.map(p => chip(String(p), 'ok'))}], view:VIEW, line:ln(CODE_SA, 'return sa'),
+    msg:{zh:'排好了。這個陣列<b>只存起始位置</b>，n 個整數，不是 n 個字串 - 記憶體是 O(n) 而不是 O(n²)。有了它，「這個 pattern 在哪」變成在排序好的清單上二分搜尋（day 23）。',
+         en:'Sorted. The array stores <b>starting positions only</b> - n integers, not n strings, so the memory is O(n) rather than O(n²). With it, "where does this pattern occur" becomes a binary search over a sorted list (day 23).'}});
+  return F.list;
+}
+
+/* ============================================================== 2. Kasai */
+const CODE_LCP = [
+'def lcp_kasai(s, sa):',
+'    rank = inverse_of(sa)          # rank[p] = where suffix p sits in sa',
+'    h = 0',
+'    for i in range(n):             # walk the TEXT, not the array',
+'        if rank[i] == 0:',
+'            h = 0; continue',
+'        j = sa[rank[i] - 1]        # the suffix just above it',
+'        while s[i + h] == s[j + h]:',
+'            h += 1                 # extend the common prefix',
+'        lcp[rank[i]] = h',
+'        if h: h -= 1               # <- the whole proof lives here'
+];
+
+function lcpFrames(){
+  const s = 'banana', n = s.length, F = new Frames();
+  const sa = suffixArray(s), rank = new Array(n).fill(0);
+  sa.forEach((p, i) => { rank[p] = i; });
+  const lcpFinal = lcpKasai(s, sa);
+
+  const rows = (known, hiRow, prevRow) => {
+    const out = [];
+    sa.forEach((p, i) => {
+      const y = 5.2 - i * .82;
+      const st = i === hiRow ? 'hot' : (i === prevRow ? 'act' : 'idle');
+      out.push(S.r(1.15, y, .7, .64, st, String(p), {fs:.34}));
+      out.push(S.r(2.05, y, .7, .64, known[i] == null ? 'ghost' : 'ok',
+                   known[i] == null ? '' : String(known[i]), {fs:.34}));
+      out.push(S.t(3.1, y + .32, s.slice(p), {c:st === 'idle' ? COL.pale : COL.orangeL, fs:.42, anchor:'start'}));
+    });
+    out.push(S.t(1.5, 6.0, 'sa[i]', {c:COL.purpleL, fs:.30}));
+    out.push(S.t(2.4, 6.0, 'lcp[i]', {c:COL.tealL, fs:.30}));
+    return out;
+  };
+  const known = new Array(n).fill(null);
+  let h = 0;
+
+  F.push({shapes:rows(known, -1, -1), panels:[{lbl:{zh:'h', en:'h'}, chips:[chip('0')]}],
+    view:VIEW, line:ln(CODE_LCP, 'def lcp_kasai'),
+    msg:{zh:'suffix array 只回答「在哪裡」。真正有價值的是 <b>lcp[i]</b>：sa[i−1] 和 sa[i] 這兩個相鄰後綴共用多長的開頭。一對一對慢慢比是 O(n²)，Kasai 只要 O(n)。',
+         en:'The suffix array alone answers "where". The valuable array is <b>lcp[i]</b>: how long a prefix the neighbours sa[i−1] and sa[i] share. Comparing pair by pair is O(n²); Kasai does it in O(n).'}});
+
+  for (let i = 0; i < n; i++){
+    if (rank[i] === 0){
+      h = 0;
+      F.push({shapes:rows(known.slice(), rank[i], -1), panels:[{lbl:{zh:'文字位置 i', en:'text position i'},
+          chips:[chip(String(i), 'hot')]}, {lbl:{zh:'h', en:'h'}, chips:[chip('0')]}],
+        view:VIEW, line:ln(CODE_LCP, 'if rank[i] == 0'),
+        msg:{zh:'後綴 <b>' + i + '</b>（' + s.slice(i) + '）排在最前面，上面沒有鄰居，lcp[0] 依定義是 0，h 歸零。',
+             en:'Suffix <b>' + i + '</b> (' + s.slice(i) + ') sits first, so it has no neighbour above it: lcp[0] is 0 by definition and h resets.'}});
+      known[0] = 0;
+      continue;
+    }
+    const j = sa[rank[i] - 1], hStart = h;
+    while (i + h < n && j + h < n && s[i + h] === s[j + h]) h++;
+    known[rank[i]] = h;
+    F.push({shapes:rows(known.slice(), rank[i], rank[i] - 1),
+      panels:[{lbl:{zh:'文字位置 i', en:'text position i'}, chips:[chip(String(i), 'hot')]},
+              {lbl:{zh:'上面的鄰居 j', en:'neighbour j'}, chips:[chip(String(j), 'act')]},
+              {lbl:{zh:'起始 h / 算出 h', en:'h before / after'},
+               chips:[chip(String(hStart)), chip(String(h), 'ok')]}],
+      view:VIEW, line:ln(CODE_LCP, 'while s[i + h]'),
+      msg:{zh:'後綴 <b>' + i + '</b>（' + s.slice(i) + '）與它上面的鄰居 <b>' + j + '</b>（' + s.slice(j) + '）共用 <b>' + h + '</b> 個字元，' +
+             (hStart ? '而且這一次<b>從 h = ' + hStart + ' 起跳</b>，不是從 0 - 前一步的成果直接繼承下來。' :
+                       '這一次從 h = 0 起跳。') +
+             ' 走的是<b>文字順序</b>，不是陣列順序，這是整個技巧的關鍵。',
+           en:'Suffix <b>' + i + '</b> (' + s.slice(i) + ') shares <b>' + h + '</b> characters with its neighbour <b>' + j + '</b> (' + s.slice(j) + ')' +
+             (hStart ? ', and it <b>started from h = ' + hStart + '</b> rather than 0 - the previous step\'s work carries over.' : ', starting from h = 0.') +
+             ' The walk is in <b>text order</b>, not array order, and that is the trick.'}});
+    if (h) h--;
+  }
+  const best = lcpFinal.indexOf(Math.max.apply(null, lcpFinal));
+  F.push({shapes:rows(lcpFinal, best, best - 1).concat([
+      note(.5, 'longest repeated substring = ' + JSON.stringify(s.slice(sa[best], sa[best] + lcpFinal[best])), COL.orangeL, .40)]),
+    panels:[{lbl:{zh:'lcp', en:'lcp'}, chips:lcpFinal.map(v => chip(String(v), v === lcpFinal[best] ? 'ok' : ''))}],
+    view:VIEW, line:ln(CODE_LCP, 'lcp[rank[i]] = h'),
+    msg:{zh:'為什麼 h 只會<b>掉一格</b>：後綴 i+1 就是後綴 i 砍掉第一個字元，所以它至少共用 h−1。h 每步最多減一、總共最多加 n，於是整段迴圈是 <b>O(n)</b>。最大的那一格（<b>' + lcpFinal[best] + '</b>）就是<b>最長重複子字串</b>，因為排序後任兩個後綴的共同開頭是它們之間 lcp 的最小值，所以最大值一定出現在相鄰的一對。',
+         en:'Why h only <b>drops by one</b>: suffix i+1 is suffix i minus its first character, so it shares at least h−1 with its own neighbour. h falls by at most one per step and rises at most n times in total, so the loop is <b>O(n)</b>. The largest entry (<b>' + lcpFinal[best] + '</b>) is the <b>longest repeated substring</b>: in a sorted array the common prefix of any two suffixes is the minimum lcp between them, so the maximum is always achieved by an adjacent pair.'}});
+  return F.list;
+}
+
+/* ======================================================= 3. query by SA */
+const CODE_Q = [
+'def sa_range(s, sa, pat):        # two binary searches (day 23)',
+'    lo, hi = 0, len(sa)          # lower bound: first suffix >= pat',
+'    while lo < hi:',
+'        mid = (lo + hi) // 2',
+'        if s[sa[mid]:sa[mid] + len(pat)] < pat: lo = mid + 1',
+'        else:                                   hi = mid',
+'    start, hi = lo, len(sa)      # upper bound: first suffix > pat',
+'    while lo < hi:',
+'        mid = (lo + hi) // 2',
+'        if s[sa[mid]:sa[mid] + len(pat)] <= pat: lo = mid + 1',
+'        else:                                    hi = mid',
+'    return start, lo             # every hit is one contiguous block'
+];
+
+function bsTrace(s, sa, pat){
+  const steps = [], m = pat.length;
+  const key = i => s.substr(sa[i], m);
+  let lo = 0, hi = sa.length;
+  while (lo < hi){
+    const mid = (lo + hi) >> 1, k = key(mid), less = k < pat;
+    steps.push({lo:lo, hi:hi, mid:mid, k:k, go:less ? 'right' : 'left', phase:'lower'});
+    if (less) lo = mid + 1; else hi = mid;
+  }
+  const start = lo;
+  hi = sa.length;
+  while (lo < hi){
+    const mid = (lo + hi) >> 1, k = key(mid), le = k <= pat;
+    steps.push({lo:lo, hi:hi, mid:mid, k:k, go:le ? 'right' : 'left', phase:'upper'});
+    if (le) lo = mid + 1; else hi = mid;
+  }
+  return {steps:steps, start:start, end:lo};
+}
+
+function queryFrames(v){
+  const s = 'banana', pat = v ? 'x' : 'ana', F = new Frames();
+  const sa = suffixArray(s), n = sa.length, tr = bsTrace(s, sa, pat);
+
+  const rows = (st, opt) => {
+    const o = [];
+    opt = opt || {};
+    sa.forEach((p, i) => {
+      const y = 5.0 - i * .78;
+      const inWin = opt.lo != null && i >= opt.lo && i < opt.hi;
+      let cls = st && st[i] ? st[i] : (inWin ? 'soft' : 'idle');
+      o.push(S.r(1.3, y, .7, .62, cls, String(p), {fs:.34}));
+      o.push(S.t(2.3, y + .31, s.slice(p), {c:cls === 'idle' ? COL.grey : COL.pale, fs:.42, anchor:'start'}));
+      o.push(S.t(2.3, y + .31, s.slice(p, p + pat.length), {c:cls === 'idle' ? COL.grey : COL.orangeL, fs:.42, anchor:'start'}));
+      if (opt.mid === i) o.push(S.t(1.0, y + .31, 'mid', {c:COL.purpleL, fs:.28, anchor:'end'}));
+    });
+    o.push(S.t(1.65, 5.8, 'sa[i]', {c:COL.purpleL, fs:.30}));
+    o.push(S.t(3.1, 5.8, 'sorted suffixes', {c:COL.tealL, fs:.30}));
+    return o;
+  };
+  const pans = st => [{lbl:{zh:'pattern', en:'pattern'}, chips:[chip(pat, 'hot')]},
+    {lbl:{zh:'搜尋區間 lo / hi', en:'window lo / hi'},
+     chips:[chip(String(st ? st.lo : 0)), chip(String(st ? st.hi : n))]},
+    {lbl:{zh:'已用比較次數', en:'probes so far'}, chips:[chip(String(st ? st.i : 0), 'act')]}];
+
+  F.push({shapes:rows(null), panels:pans(null), view:VIEW, line:ln(CODE_Q, 'def sa_range'),
+    msg:{zh:'day 25 的 KMP 是<b>先處理 pattern，再讀一遍文字</b>：每問一個新 pattern 就要重讀整份文字 O(n)。suffix array 反過來 - <b>文字只前處理一次</b>，之後每個查詢只要 O(m log n)，文字再也不用碰。',
+         en:'Day 25\'s KMP <b>preprocesses the pattern and re-reads the text</b>: every new pattern costs another O(n) pass. A suffix array flips that - <b>the text is preprocessed once</b>, and each query afterwards costs O(m log n) without touching the text again.'}});
+
+  tr.steps.forEach((st, idx) => {
+    const stateMap = {}; stateMap[st.mid] = 'hot';
+    F.push({shapes:rows(stateMap, {lo:st.lo, hi:st.hi, mid:st.mid}),
+      panels:pans({lo:st.lo, hi:st.hi, i:idx + 1}), view:VIEW,
+      line:ln(CODE_Q, st.phase === 'lower' ? 'if s[sa[mid]:sa[mid] + len(pat)] <' : 'if s[sa[mid]:sa[mid] + len(pat)] <='),
+      msg:{zh:'第 ' + (idx + 1) + ' 次探測：中間那筆的前 ' + pat.length + ' 個字元是 <b>' + JSON.stringify(st.k) + '</b>，' +
+             (st.go === 'right' ? '比 pattern 小，往<b>右半</b>找。' : '不小於 pattern，往<b>左半</b>找。') +
+             ' 每次比較只讀 <b>m = ' + pat.length + '</b> 個字元，所以是 O(m log n)。' +
+             (st.phase === 'lower' ? '這一輪找的是<b>第一個 ≥ pattern</b> 的位置。' : '這一輪找的是<b>第一個 > pattern</b> 的位置。'),
+           en:'Probe ' + (idx + 1) + ': the middle entry starts with <b>' + JSON.stringify(st.k) + '</b>, which is ' +
+             (st.go === 'right' ? 'smaller than the pattern, so we keep the <b>right half</b>.' : 'not smaller, so we keep the <b>left half</b>.') +
+             ' Each comparison reads only <b>m = ' + pat.length + '</b> characters, hence O(m log n). ' +
+             (st.phase === 'lower' ? 'This pass looks for the <b>first entry ≥ pattern</b>.' : 'This pass looks for the <b>first entry > pattern</b>.')}});
+  });
+
+  const fin = {}, hits = [];
+  for (let i = tr.start; i < tr.end; i++){ fin[i] = 'ok'; hits.push(sa[i]); }
+  F.push({shapes:rows(fin).concat([note(.5, hits.length ? 'occurrences at ' + hits.sort((a,b)=>a-b).join(', ')
+                                                        : 'no occurrence - the block is empty',
+                                     hits.length ? COL.orangeL : COL.red, .40)]),
+    panels:[{lbl:{zh:'區間', en:'range'}, chips:[chip('sa[' + tr.start + ':' + tr.end + ']', hits.length ? 'ok' : 'bad')]},
+            {lbl:{zh:'出現位置', en:'occurrences'}, chips:hits.length ? hits.map(h => chip(String(h), 'ok')) : [chip('none', 'bad')]},
+            {lbl:{zh:'總比較次數', en:'total probes'}, chips:[chip(String(tr.steps.length), 'act')]}],
+    view:VIEW, line:ln(CODE_Q, 'return start, lo'),
+    msg:v ? {zh:'<b>x</b> 不在文字裡，兩次二分搜尋收斂到<b>同一個位置</b>，區間長度 0 - 沒有出現。注意這裡<b>沒有</b>做任何字串比對迴圈：不存在這件事是靠排序的結構直接讀出來的。',
+             en:'<b>x</b> is not in the text: both binary searches converge to the <b>same index</b>, so the block has length 0. Note there was no matching loop at all - absence falls straight out of the sorted structure.'}
+          : {zh:'所有以 <b>ana</b> 開頭的後綴在排序後<b>一定連在一起</b>，所以答案永遠是一段連續區間；區間長度就是出現次數（<b>' + hits.length + '</b> 次），不必掃全文。要 count 只要 <code>end - start</code>，O(1)。',
+             en:'Every suffix starting with <b>ana</b> must be <b>contiguous</b> after sorting, so the answer is always one range; its length is the occurrence count (<b>' + hits.length + '</b>) with no scan of the text. Counting is <code>end - start</code>, O(1).'}});
+  return F.list;
+}
+
+/* ============================================== 4. dedup / left-diversity */
+const CODE_DD = [
+'def duplicate_spans(text, min_len):',
+'    sa, lcp = suffix_array(text), lcp_kasai(text, sa)',
+'    i, out = 1, []',
+'    while i < len(sa):',
+'        if lcp[i] < min_len: i += 1; continue',
+'        j, run = i, lcp[i]',
+'        while j < len(sa) and lcp[j] >= min_len:',
+'            run = min(run, lcp[j]); j += 1     # run of near-identical suffixes',
+'        group = sa[i - 1:j]',
+'        left = {text[p - 1] if p else None for p in group}',
+'        if len(left) > 1:                      # <- left-diverse only',
+'            out.append((len(group), text[group[0]:group[0] + run]))',
+'        i = j',
+'    return out'
+];
+
+function dupSpans(text, minLen, filter){
+  const sa = suffixArray(text), lcp = lcpKasai(text, sa), n = sa.length, out = [];
+  let i = 1;
+  while (i < n){
+    if (lcp[i] < minLen){ i++; continue; }
+    let j = i, run = lcp[i];
+    while (j < n && lcp[j] >= minLen){ run = Math.min(run, lcp[j]); j++; }
+    const group = sa.slice(i - 1, j).slice().sort((a, b) => a - b);
+    const left = {}; let ln2 = 0;
+    group.forEach(p => { const c = p > 0 ? text[p - 1] : '^'; if (!left[c]){ left[c] = 1; ln2++; } });
+    if (!filter || ln2 > 1) out.push({n:group.length, run:run, s:text.substr(group[0], run), at:group, left:Object.keys(left)});
+    i = j;
+  }
+  return out;
+}
+
+function dedupFrames(v){
+  const F = new Frames(), text = 'the cat sat.the cat sat.', cut = 12, minLen = 6;
+  const spans = dupSpans(text, minLen, false), kept = dupSpans(text, minLen, true);
+  const w = .58, x0 = (VIEW[0] - cut * w) / 2;
+
+  const docs = mark => {
+    const o = [];
+    for (let d = 0; d < 2; d++){
+      const y = 5.0 - d * 1.0, st = {};
+      for (let c = 0; c < cut; c++){
+        const g = d * cut + c;
+        if (mark && g >= mark[0] && g < mark[1]) st[c] = 'hot';
+      }
+      o.push.apply(o, cellRow(text.substr(d * cut, cut).split(''), x0, y, w, .62, {states:st, index:false, fs:.36}));
+      o.push(S.t(x0 - .25, y + .32, 'doc ' + (d + 1), {c:COL.tealL, fs:.28, anchor:'end'}));
+    }
+    return o;
+  };
+  const listShapes = (items, hiIdx) => {
+    const o = [];
+    items.forEach((sp, i) => {
+      const y = 3.2 - i * .46;
+      if (y < .1) return;
+      o.push(S.r(1.0, y, 5.4, .40, i === hiIdx ? 'hot' : (items === kept ? 'ok' : 'soft'),
+                 JSON.stringify(sp.s), {fs:.28}));
+      o.push(S.r(6.6, y, 1.0, .40, 'act', 'x' + sp.n, {fs:.28}));
+      o.push(S.t(7.9, y + .20, 'left: ' + sp.left.map(c => c === '\n' ? '\\n' : c).join(' '),
+                 {c:sp.left.length > 1 ? COL.orangeL : COL.grey, fs:.28, anchor:'start'}));
+    });
+    return o;
+  };
+
+  if (!v){
+    F.push({shapes:docs(null), panels:[{lbl:{zh:'min_len', en:'min_len'}, chips:[chip(String(minLen), 'hot')]}],
+      view:VIEW, line:ln(CODE_DD, 'def duplicate_spans'),
+      msg:{zh:'真實的用途不是 banana，是<b>訓練語料去重</b>。兩份文件有一整段一模一樣，我們想找出所有<b>長度 ≥ min_len 且出現不只一次</b>的區塊 - 事先不知道要找什麼，所以 day 25 的 pattern matching 幫不上忙。',
+           en:'The real use is not banana, it is <b>deduplicating a training corpus</b>. Two documents share a whole passage, and we want every block that is <b>at least min_len long and occurs more than once</b> - we do not know what to look for in advance, so day 25\'s pattern matching cannot help.'}});
+    F.push({shapes:docs(null).concat(listShapes(spans, -1)),
+      panels:[{lbl:{zh:'回報的區塊數', en:'spans reported'}, chips:[chip(String(spans.length), 'bad')]}],
+      view:VIEW, line:ln(CODE_DD, 'out.append'),
+      msg:{zh:'把 lcp ≥ min_len 的連續段都收下來，結果是<b>' + spans.length + ' 個區塊</b> - 而人眼只看得到<b>一段</b>重複。多出來的是<b>同一段的位移副本</b>："he cat sat." 只是 "the cat sat." 砍掉第一個字元。這種輸出沒辦法拿去統計「省了多少字」。',
+           en:'Taking every run with lcp ≥ min_len yields <b>' + spans.length + ' spans</b> - yet a human sees <b>one</b> repeated passage. The extras are <b>shifted copies</b>: "he cat sat." is just "the cat sat." with the first character removed. Output like this cannot be used to measure how much text you actually saved.'}});
+    let bad = 0;
+    spans.forEach((sp, i) => { if (sp.left.length === 1 && sp.run > spans[bad].run) bad = i; });
+    F.push({shapes:docs([spans[bad].at[0], spans[bad].at[0] + spans[bad].run]).concat(listShapes(spans, bad)),
+      panels:[{lbl:{zh:'左鄰字元', en:'preceding chars'}, chips:spans[bad].left.map(c => chip(c === '\n' ? '\\n' : c, 'bad'))}],
+      view:VIEW, line:ln(CODE_DD, 'left = {text[p - 1]'),
+      msg:{zh:'怎麼判斷一個區塊是<b>位移副本</b>？看它的<b>左鄰字元</b>：<b>' + JSON.stringify(spans[bad].s) + '</b> 的每一次出現前面都是同一個字元 <b>' + JSON.stringify(spans[bad].left[0]) + '</b>，代表它每次都能往左長一格 - 它不是極大的重複，只是別人的尾巴。',
+           en:'How do you spot a <b>shifted copy</b>? Look at the <b>character to its left</b>: every occurrence of <b>' + JSON.stringify(spans[bad].s) + '</b> is preceded by the same character <b>' + JSON.stringify(spans[bad].left[0]) + '</b>, so it can always grow one step left - it is not a maximal repeat, only somebody else\'s tail.'}});
+    return F.list;
+  }
+  const saved = kept.reduce((a, sp) => a + sp.run * (sp.n - 1), 0);
+  F.push({shapes:docs(null).concat(listShapes(kept, -1)),
+    panels:[{lbl:{zh:'保留的區塊', en:'spans kept'}, chips:[chip(String(kept.length), 'ok')]},
+            {lbl:{zh:'可省字元', en:'characters saved'}, chips:[chip(String(saved), 'ok'),
+              chip((100 * saved / text.length).toFixed(1) + '%', 'act')]}],
+    view:VIEW, line:ln(CODE_DD, 'if len(left) > 1'),
+    msg:{zh:'加上 <b>left-diverse</b> 這一行 - 「出現位置的左鄰字元不全相同」- 就只剩 <b>' + kept.length + ' 個</b>極大區塊，數字也變得能用了。這一行不是效能優化，是<b>正確性</b>：沒有它，去重報告會把同一段重複算很多次。',
+         en:'Adding the <b>left-diverse</b> test - "the occurrences are not all preceded by the same character" - leaves <b>' + kept.length + '</b> maximal span(s) and numbers you can actually quote. That line is not an optimisation, it is <b>correctness</b>: without it a dedup report counts the same passage many times over.'}});
+  F.push({shapes:docs([kept[0].at[0], kept[0].at[0] + kept[0].run]).concat(listShapes(kept, 0)),
+    panels:[{lbl:{zh:'出現位置', en:'occurs at'}, chips:kept[0].at.map(p => chip(String(p), 'ok'))}],
+    view:VIEW, line:ln(CODE_DD, 'return out'),
+    msg:{zh:'整條流程只掃過文字<b>兩次</b>（建 SA、建 lcp），之後掃一遍 lcp 就找完所有重複區塊 - 語料有多大都一樣是線性的。Lee 等人 2021 的去重論文用的就是這個結構，把重複段從訓練資料裡拿掉可以同時降低 loss 與記憶效應。',
+         en:'The whole pipeline touches the text <b>twice</b> (build the SA, build the lcp) and then scans lcp once to find every duplicated block - linear no matter how large the corpus is. This is the structure behind Lee et al. 2021 on deduplicating training data, where removing repeated passages lowered both loss and memorisation.'}});
+  return F.list;
+}
+
+/* ======================================================= 5. Aho-Corasick */
+const CODE_AC = [
+'def build(self):                  # KMP failure, but on a trie',
+'    q = deque()',
+'    for ch, v in self.goto[0].items():',
+'        self.fail[v] = 0; q.append(v)          # depth 1 fails to the root',
+'    while q:',
+'        v = q.popleft()',
+'        for ch, u in self.goto[v].items():',
+'            f = self.fail[v]',
+'            while f and ch not in self.goto[f]:',
+'                f = self.fail[f]               # walk down the fail chain',
+'            self.fail[u] = self.goto[f].get(ch, 0)',
+'            self.out[u] += self.out[self.fail[u]]   # inherit "he" inside "she"',
+'            q.append(u)'
+];
+
+const AC_WORDS = ['he', 'she', 'his', 'hers'];
+
+function trieLayout(ac){
+  const pos = {}; let cur = 0;
+  (function dfs(v){
+    const ks = Object.keys(ac.goto[v]).sort();
+    if (!ks.length){ pos[v] = cur; cur += 1; return; }
+    let lo = 1e9, hi = -1e9;
+    ks.forEach(k => { const u = ac.goto[v][k]; dfs(u); lo = Math.min(lo, pos[u]); hi = Math.max(hi, pos[u]); });
+    pos[v] = (lo + hi) / 2;
+  })(0);
+  const P = {};
+  for (const v in pos) P[v] = {x:1.6 + pos[v] * 2.6, y:5.7 - ac.depth[v] * 1.15};
+  return P;
+}
+
+function trieShapes(ac, P, states, opt){
+  const o = []; opt = opt || {};
+  for (let v = 0; v < ac.fail.length; v++){
+    for (const ch in ac.goto[v]){
+      const u = ac.goto[v][ch];
+      o.push(S.e(P[v].x, P[v].y, P[u].x, P[u].y,
+        {pad:.38, s:(opt.path && opt.path.indexOf(u) >= 0) ? 'act' : 'idle', lab:ch, fs:.30, w:.045}));
+    }
+  }
+  if (opt.fails) opt.fails.forEach(v => {
+    const f = ac.fail[v];
+    if (!f) return;
+    o.push(S.e(P[v].x, P[v].y, P[f].x, P[f].y,
+      {pad:.38, s:(opt.hotFail === v ? 'bad' : 'ghost'), dash:'.16 .12', w:.04}));
+  });
+  for (let v = 0; v < ac.fail.length; v++){
+    const lab = v === 0 ? '/' : ac.spell[v].slice(-1);
+    o.push(S.c(P[v].x, P[v].y, .34, (states && states[v]) || 'idle', lab, {fs:.40,
+      sub:ac.out[v].length ? ac.out[v].join(',') : null, subc:COL.orangeL, subfs:.28}));
+  }
+  return o;
+}
+
+function acFrames(v){
+  const ac = AC(AC_WORDS), P = trieLayout(ac), F = new Frames();
+  if (!v){
+    F.push({shapes:trieShapes(ac, P, {0:'act'}, {}), view:VIEW, line:ln(CODE_AC, 'def build'),
+      panels:[{lbl:{zh:'字典', en:'dictionary'}, chips:AC_WORDS.map(w => chip(w))},
+              {lbl:{zh:'節點數', en:'nodes'}, chips:[chip(String(ac.fail.length), 'act')]}],
+      msg:{zh:'四個 pattern 放進一棵 trie，只有 <b>' + ac.fail.length + '</b> 個節點 - 共用的前綴（he / hers、s / she）只存一份。但光有 trie 還不夠：走到一半配不上時，得<b>退回哪裡</b>？',
+           en:'The four patterns go into a trie of just <b>' + ac.fail.length + '</b> nodes - shared prefixes (he / hers, s / she) are stored once. But a trie alone is not enough: when a character fails halfway down, <b>where do you fall back to</b>?'}});
+    const seen = [];
+    ac.order.forEach(u => {
+      if (u === 0) return;
+      seen.push(u);
+      const f = ac.fail[u];
+      const st = {}; st[u] = 'hot'; if (f) st[f] = 'act'; else st[0] = 'soft';
+      F.push({shapes:trieShapes(ac, P, st, {fails:seen, hotFail:u}), view:VIEW,
+        line:ln(CODE_AC, f ? 'self.fail[u] = self.goto[f]' : 'self.fail[v] = 0; q.append(v)'),
+        panels:[{lbl:{zh:'節點拼出', en:'state spells'}, chips:[chip(ac.spell[u], 'hot')]},
+                {lbl:{zh:'fail 指向', en:'fail points to'}, chips:[chip(f ? ac.spell[f] : 'root', f ? 'act' : 'soft')]},
+                {lbl:{zh:'output', en:'output'}, chips:ac.out[u].length ? ac.out[u].map(w => chip(w, 'ok')) : [chip('-', '')]}],
+        msg:{zh:'狀態 <b>' + ac.spell[u] + '</b> 的 fail link 指向 <b>' + (f ? ac.spell[f] : 'root') + '</b>：也就是「' + ac.spell[u] + '」的<b>最長真後綴中，還留在 trie 裡的那一個</b>。這正是 day 25 KMP failure function 的定義，只是從一條字串換成一棵樹。' +
+               (ac.out[u].length > 1 ? ' 注意這裡 <b>output 也要繼承</b>：走到 "she" 的同時 "he" 也結束了，不繼承就會漏報。' : ''),
+             en:'The fail link of state <b>' + ac.spell[u] + '</b> points to <b>' + (f ? ac.spell[f] : 'root') + '</b> - the <b>longest proper suffix of "' + ac.spell[u] + '" that is still a node in the trie</b>. That is exactly day 25\'s KMP failure function, lifted from one string to a tree.' +
+               (ac.out[u].length > 1 ? ' Note the <b>output is inherited too</b>: arriving at "she" also finishes "he", and without inheritance that match is silently lost.' : '')}});
+    });
+    const kf = kmpFailure('ababaca'), ac2 = AC(['ababaca']);
+    F.push({shapes:trieShapes(ac, P, {}, {fails:ac.order}).concat([
+        note(.45, 'AC(["ababaca"]).fail_depths() == kmp_failure("ababaca") == [' + kf.join(', ') + ']', COL.orangeL, .34)]),
+      view:VIEW, line:ln(CODE_AC, 'while f and ch not in'),
+      panels:[{lbl:{zh:'fail 陣列', en:'fail array'}, chips:ac.fail.map(f => chip(String(f)))},
+              {lbl:{zh:'建表成本', en:'build cost'}, chips:[chip('O(total pattern length)', 'ok')]}],
+      msg:{zh:'驗證一下這個「一樣的東西」：把 trie 塞<b>單一個 pattern</b>，它退化成一條鏈，每個節點的 fail 深度就<b>完全等於</b> day 25 的 KMP failure 陣列。Aho-Corasick 不是新演算法，是 KMP 長出分支。',
+           en:'A quick check that these really are the same object: feed the trie a <b>single pattern</b> and it degenerates into a chain whose fail depths are <b>exactly</b> day 25\'s KMP failure array. Aho-Corasick is not a new algorithm, it is KMP with branches.'}});
+    return F.list;
+  }
+  const text = 'ushers', hits = [];
+  let s = 0;
+  F.push({shapes:trieShapes(ac, P, {0:'act'}, {fails:ac.order}).concat([
+      S.t(mid2, .5, 'text: ' + text, {c:COL.tealL, fs:.40})]),
+    view:VIEW, line:ln(CODE_AC, 'def build'),
+    panels:[{lbl:{zh:'狀態', en:'state'}, chips:[chip('root', 'act')]},
+            {lbl:{zh:'已讀', en:'consumed'}, chips:[chip('""')]}],
+    msg:{zh:'比對階段只做一件事：<b>每讀一個字元，走一步</b>。文字<b>只掃一遍</b>，而且指標從不回頭 - 不管字典裡有 4 個還是 40000 個 pattern。',
+         en:'Matching does exactly one thing: <b>read a character, take one step</b>. The text is scanned <b>once</b> and the cursor never backs up - whether the dictionary holds 4 patterns or 40000.'}});
+  for (let i = 0; i < text.length; i++){
+    const prev = s;
+    s = ac.step(s, text[i]);
+    ac.out[s].forEach(w => hits.push([i - w.length + 1, w]));
+    const st = {}; st[s] = 'hot'; if (prev !== s) st[prev] = 'soft';
+    const consumed = text.slice(0, i + 1);
+    F.push({shapes:trieShapes(ac, P, st, {fails:ac.order, hotFail:(ac.depth[s] < ac.depth[prev] + 1 ? prev : -1)})
+        .concat([S.t(mid2, .5, 'text: ' + consumed + ' |' + text.slice(i + 1), {c:COL.tealL, fs:.40})]),
+      view:VIEW, line:ln(CODE_AC, ac.depth[s] === ac.depth[prev] + 1 ? 'for ch, u in self.goto[v].items()' : 'while f and ch not in'),
+      panels:[{lbl:{zh:'讀到字元', en:'character'}, chips:[chip(text[i], 'hot')]},
+              {lbl:{zh:'狀態', en:'state'}, chips:[chip(s ? ac.spell[s] : 'root', 'act')]},
+              {lbl:{zh:'找到', en:'matches'}, chips:hits.length ? hits.map(h => chip(h[1] + '@' + h[0], 'ok')) : [chip('-', '')]}],
+      msg:{zh:'讀到 <b>' + text[i] + '</b>，狀態變成 <b>' + (s ? ac.spell[s] : 'root') + '</b>。' +
+             (ac.depth[s] === ac.depth[prev] + 1 ? '這是 trie 上的正常一步。' : '配不上，於是<b>沿 fail link 退</b>到還接得上的最長後綴 - 已經讀過的字元不會再讀第二次。') +
+             (ac.out[s].length ? ' 這個狀態的 output 是 <b>' + ac.out[s].join(', ') + '</b>：' + (ac.out[s].length > 1 ? '兩個 pattern <b>同時</b>在這裡結束，靠的就是剛剛繼承下來的 output。' : '一個 pattern 在這裡結束。') : ''),
+           en:'Read <b>' + text[i] + '</b>, state becomes <b>' + (s ? ac.spell[s] : 'root') + '</b>. ' +
+             (ac.depth[s] === ac.depth[prev] + 1 ? 'A normal step down the trie.' : 'No edge matched, so we <b>follow the fail link</b> to the longest suffix that can continue - characters already read are never re-read.') +
+             (ac.out[s].length ? ' Its output is <b>' + ac.out[s].join(', ') + '</b>: ' + (ac.out[s].length > 1 ? 'two patterns end here <b>at once</b>, which is precisely what the inherited output buys you.' : 'one pattern ends here.') : '')}});
+  }
+  const cmp = compareScansJS();
+  F.push({shapes:trieShapes(ac, P, {}, {fails:ac.order}).concat([
+      note(.5, 'one pass, ' + hits.length + ' matches: ' + hits.map(h => h[1] + '@' + h[0]).join('  '), COL.orangeL, .36)]),
+    view:VIEW, line:ln(CODE_AC, 'self.out[u] += self.out[self.fail[u]]'),
+    panels:[{lbl:{zh:'k 次 KMP 比較數', en:'k KMP passes'}, chips:[chip(String(cmp.kmp), 'bad')]},
+            {lbl:{zh:'1 次 AC 轉移數', en:'1 AC pass'}, chips:[chip(String(cmp.ac), 'ok')]},
+            {lbl:{zh:'結果相同', en:'same result'}, chips:[chip('true', 'ok')]}],
+    msg:{zh:'成本結構才是重點：k 個 pattern 各跑一次 KMP 是 <b>O(k·n)</b>，Aho-Corasick 是 <b>O(n + 總 pattern 長度 + 命中數)</b> - <b>與 k 無關</b>。同一份 126 字元的文字、5 個 pattern，比較次數 ' + cmp.kmp + ' 對 ' + cmp.ac + '。',
+         en:'The cost structure is the point: running KMP once per pattern is <b>O(k·n)</b>, while Aho-Corasick is <b>O(n + total pattern length + matches)</b> - <b>independent of k</b>. On the same 126-character text with 5 patterns that is ' + cmp.kmp + ' comparisons versus ' + cmp.ac + '.'}});
+  return F.list;
+}
+
+function compareScansJS(){
+  const text = 'the sheriff said he is his own usher here '.repeat(3);
+  const pats = ['he', 'she', 'his', 'hers', 'usher'];
+  let kmp = 0;
+  pats.forEach(p => {                       // kmp_search_cost, counted the same way
+    const fail = kmpFailure(p);
+    let j = 0;
+    for (let i = 0; i < text.length; i++){
+      const ch = text[i];
+      while (j && ch !== p[j]){ j = fail[j - 1]; kmp++; }
+      kmp++;
+      if (ch === p[j]) j++;
+      if (j === p.length) j = fail[j - 1];
+    }
+  });
+  const ac = AC(pats);
+  let s = 0, moves = 0, hits = 0;
+  for (let i = 0; i < text.length; i++){
+    const ch = text[i];
+    while (s && !(ch in ac.goto[s])){ s = ac.fail[s]; moves++; }
+    moves++;
+    s = (ch in ac.goto[s]) ? ac.goto[s][ch] : 0;
+    hits += ac.out[s].length;
+  }
+  return {kmp:kmp, ac:moves, n:text.length, nodes:ac.fail.length, hits:hits};
+}
+
+/* ================================================== 6. streaming stops */
+const CODE_ST = [
+'def feed(self, chunk):            # k stop strings, one automaton',
+'    safe = ""',
+'    for ch in chunk:',
+'        self.buf += ch',
+'        self.state = self.ac.step(self.state, ch)',
+'        if self.ac.out[self.state]:            # a stop string completed',
+'            hit = max(self.ac.out[self.state], key=len)',
+'            safe += self.buf[:len(self.buf) - len(hit)]',
+'            self.buf = ""; self.hit = hit',
+'            return safe',
+'        hold = self.ac.depth[self.state]       # <- the whole trick',
+'        if len(self.buf) > hold:',
+'            safe += self.buf[:len(self.buf) - hold]',
+'            self.buf = self.buf[len(self.buf) - hold:]',
+'    return safe'
+];
+
+const STOPS = ['</s>', '\n\nHuman:', '[END]'];
+const CHUNKS = ['The answer', ' is 42.<', '/', 's> and more'];
+const show = s => s.replace(/\n/g, '\\n');
+
+function streamFrames(){
+  const F = new Frames(), ac = AC(STOPS);
+  let state = 0, buf = '', emitted = '', hit = null;
+
+  const scene = (chunk, extra) => {
+    const o = [];
+    o.push(S.t(.5, 5.7, 'chunk from the model', {c:COL.purpleL, fs:.30, anchor:'start'}));
+    o.push(S.r(.5, 4.9, 8.8, .66, chunk == null ? 'ghost' : 'hot', chunk == null ? '' : JSON.stringify(show(chunk)), {fs:.38}));
+    o.push(S.t(.5, 4.2, 'emitted to the user', {c:COL.tealL, fs:.30, anchor:'start'}));
+    o.push(S.r(.5, 3.4, 8.8, .66, 'ok', JSON.stringify(show(emitted)), {fs:.38}));
+    o.push(S.t(.5, 2.7, 'held back', {c:COL.orangeL, fs:.30, anchor:'start'}));
+    o.push(S.r(.5, 1.9, 4.0, .66, buf ? 'act' : 'ghost', buf ? JSON.stringify(show(buf)) : '""', {fs:.38}));
+    o.push(S.t(5.0, 2.32, 'hold = depth[state] =', {c:COL.purpleL, fs:.32, anchor:'start'}));
+    o.push(S.r(8.3, 1.9, 1.0, .66, 'hot', String(ac.depth[state]), {fs:.42}));
+    if (extra) o.push(extra);
+    return o;
+  };
+  const pans = () => [
+    {lbl:{zh:'stop 字串', en:'stop strings'}, chips:STOPS.map(s => chip(show(s), 'soft'))},
+    {lbl:{zh:'狀態拼出', en:'state spells'}, chips:[chip(state ? JSON.stringify(show(ac.spell[state])) : 'root', 'act')]},
+    {lbl:{zh:'扣住幾個字元', en:'characters held'}, chips:[chip(String(ac.depth[state]), 'hot')]}];
+
+  F.push({shapes:scene(null), panels:pans(), view:VIEW, line:ln(CODE_ST, 'def feed'),
+    msg:{zh:'day 25 的場景回來了：模型一塊一塊吐 token，伺服器要在 stop 字串出現時<b>切乾淨</b>，而且<b>不能先把 stop 字串的開頭送出去</b>。差別是這次有 <b>' + STOPS.length + ' 個</b> stop 字串，不是一個。',
+         en:'Day 25\'s setting returns: the model emits chunks, and the server must cut <b>exactly</b> at a stop string and <b>never leak its opening characters</b>. The difference is that this time there are <b>' + STOPS.length + '</b> stop strings, not one.'}});
+
+  CHUNKS.forEach((chunk, ci) => {
+    let safe = '';
+    for (const ch of chunk){
+      if (hit !== null) break;
+      buf += ch;
+      state = ac.step(state, ch);
+      if (ac.out[state].length){
+        hit = ac.out[state].slice().sort((a, b) => b.length - a.length)[0];
+        safe += buf.slice(0, Math.max(buf.length - hit.length, 0));
+        buf = '';
+        break;
+      }
+      const hold = ac.depth[state];
+      if (buf.length > hold){ safe += buf.slice(0, buf.length - hold); buf = buf.slice(buf.length - hold); }
+    }
+    emitted += safe;
+    if (hit !== null){
+      F.push({shapes:scene(chunk, note(.9, 'stop string ' + JSON.stringify(show(hit)) + ' completed - nothing after it is emitted', COL.red, .36)),
+        panels:pans().concat([{lbl:{zh:'命中', en:'hit'}, chips:[chip(show(hit), 'bad')]}]),
+        view:VIEW, line:ln(CODE_ST, 'if self.ac.out[self.state]'),
+        msg:{zh:'<b>' + show(hit) + '</b> 完成了。因為之前<b>一個字元都沒有多送</b>，這裡的收尾很乾淨：緩衝區去掉 stop 字串本身，剩下的送出，之後的內容全部丟掉。整段過程沒有任何一次回頭掃描。',
+             en:'<b>' + show(hit) + '</b> completed. Because <b>not one character was emitted early</b>, the ending is clean: strip the stop string from the buffer, emit what is left, discard everything after it. At no point did we rescan.'}});
+      return;
+    }
+    F.push({shapes:scene(chunk),
+      panels:pans().concat([{lbl:{zh:'這塊送出', en:'emitted now'}, chips:[chip(JSON.stringify(show(safe)), 'ok')]}]),
+      view:VIEW, line:ln(CODE_ST, 'hold = self.ac.depth'),
+      msg:{zh:'吃完第 ' + (ci + 1) + ' 塊之後，扣住 <b>' + ac.depth[state] + '</b> 個字元' +
+             (buf ? '（' + JSON.stringify(show(buf)) + '，它可能是 ' + JSON.stringify(show(STOPS.filter(s => s.indexOf(buf) === 0)[0] || '')) + ' 的開頭）' : '') +
+             '。天真作法要對<b>每個</b> stop 字串各算一次「目前配到多少」再取最大；automaton 裡這個數字<b>本來就在</b> - 就是 <code>depth[state]</code>，因為狀態拼出的正是尾巴目前配上的最長前綴。',
+           en:'After chunk ' + (ci + 1) + ' we hold back <b>' + ac.depth[state] + '</b> character(s)' +
+             (buf ? ' (' + JSON.stringify(show(buf)) + ', a possible opening of ' + JSON.stringify(show(STOPS.filter(s => s.indexOf(buf) === 0)[0] || '')) + ')' : '') +
+             '. The naive version asks "how much of you currently matches?" of <b>every</b> stop string and takes the maximum; in the automaton that number <b>is already there</b> - it is <code>depth[state]</code>, because the state spells the longest prefix of any pattern the tail matches.'}});
+  });
+
+  const L = 9, cost = {k:2, naive:2 * L * L, ac:L};
+  F.push({shapes:scene(null, note(.9, 'k = 2 stop strings, clipped tail L = 9: ' + cost.naive + ' comparisons per step vs ' + cost.ac, COL.tealL, .34)),
+    panels:[{lbl:{zh:'天真做法 / 每 token', en:'naive per step'}, chips:[chip(String(cost.naive), 'bad')]},
+            {lbl:{zh:'automaton / 每 token', en:'automaton per step'}, chips:[chip(String(cost.ac), 'ok')]},
+            {lbl:{zh:'成本隨 k', en:'scales with k'}, chips:[chip('naive: yes', 'bad'), chip('AC: no', 'ok')]}],
+    view:VIEW, line:ln(CODE_ST, 'return safe'),
+    msg:{zh:'誠實的結論：sglang <b>沒有</b>用 Aho-Corasick，而它是對的。它把要重驗的尾巴裁到 <code>stop_str_max_len + 1</code>，然後每個 stop 字串各做一次子字串搜尋 - k = 2 時大約 ' + cost.naive + ' 次字元比較，跟一次 forward pass 相比根本是雜訊。automaton 真正划算的地方是 <b>k 很大</b>的時候：上千條的 guardrail、禁詞、PII 清單。',
+         en:'The honest conclusion: sglang does <b>not</b> use Aho-Corasick, and that is the right call. It clips the tail it re-checks to <code>stop_str_max_len + 1</code> and runs one substring search per stop string - about ' + cost.naive + ' character comparisons per step at k = 2, which is noise next to a forward pass. The automaton earns its keep when <b>k is large</b>: guardrail, banned-phrase and PII lists with thousands of entries.'}});
+  return F.list;
+}
+
+/* ================================================================ 7. LC */
+const CODE_LC = [
+'class StreamChecker:                 # LC 1032, letters arrive forever',
+'    def __init__(self, words):',
+'        self.ac = AhoCorasick(words); self.state = 0',
+'    def query(self, letter):',
+'        self.state = self.ac.step(self.state, letter)',
+'        return bool(self.ac.out[self.state])   # O(1) amortised, O(1) state',
+'',
+'def longest_dup_substring(s):        # LC 1044, exactly this time',
+'    sa = suffix_array(s)',
+'    lcp = lcp_kasai(s, sa)',
+'    k = max(range(len(lcp)), key=lambda i: lcp[i])',
+'    return s[sa[k]:sa[k] + lcp[k]]   # no hashing, no collisions'
+];
+
+function lcFrames(v){
+  const F = new Frames();
+  if (!v){
+    const words = ['cd', 'f', 'kl'], stream = 'abcdefg', ac = AC(words), P = trieLayout(ac);
+    let state = 0;
+    F.push({shapes:trieShapes(ac, P, {0:'act'}, {fails:ac.order}).concat([
+        S.t(mid2, .5, 'stream: ' + stream.split('').join(' '), {c:COL.tealL, fs:.38})]),
+      view:VIEW, line:ln(CODE_LC, 'class StreamChecker'),
+      panels:[{lbl:{zh:'字典', en:'words'}, chips:words.map(w => chip(w))},
+              {lbl:{zh:'保存的狀態', en:'state stored'}, chips:[chip('1 integer', 'ok')]}],
+      msg:{zh:'LC 1032：字母<b>一個一個永遠地</b>來，每次要回答「目前的結尾是不是某個字典字」。常見解法是存一個越長越長的 buffer，每次再往回走 - 那是每次查詢 O(最長字長)，而且 buffer 會一直長。',
+           en:'LC 1032: letters arrive <b>one at a time, forever</b>, and each query asks whether the stream now ends with a dictionary word. The usual answer keeps an ever-growing buffer and re-walks it - O(longest word) per query, with a buffer that never shrinks.'}});
+    for (let i = 0; i < stream.length; i++){
+      const prev = state;
+      state = ac.step(state, stream[i]);
+      const yes = ac.out[state].length > 0;
+      const st = {}; st[state] = yes ? 'ok' : 'hot'; if (prev !== state) st[prev] = 'soft';
+      F.push({shapes:trieShapes(ac, P, st, {fails:ac.order}).concat([
+          S.t(mid2, .5, 'stream: ' + stream.slice(0, i + 1).split('').join(' '), {c:COL.tealL, fs:.38}),
+          note(1.05, 'query(' + JSON.stringify(stream[i]) + ') -> ' + yes, yes ? COL.orangeL : COL.grey, .36)]),
+        view:VIEW, line:ln(CODE_LC, 'self.state = self.ac.step'),
+        panels:[{lbl:{zh:'查詢', en:'query'}, chips:[chip(stream[i], 'hot')]},
+                {lbl:{zh:'回傳', en:'returns'}, chips:[chip(String(yes), yes ? 'ok' : '')]},
+                {lbl:{zh:'狀態', en:'state'}, chips:[chip(state ? ac.spell[state] : 'root', 'act')]}],
+        msg:{zh:'query(' + JSON.stringify(stream[i]) + ')：狀態走一步變成 <b>' + (state ? ac.spell[state] : 'root') + '</b>，回傳 <b>' + yes + '</b>。' +
+               (yes ? ' out[state] 非空，代表有字典字剛好在這裡結束。' : '') +
+               ' 整個物件<b>只存一個整數</b> - 不存 buffer，也不存歷史，因為狀態已經把「還有救的最長後綴」記在裡面了。',
+             en:'query(' + JSON.stringify(stream[i]) + '): one step to state <b>' + (state ? ac.spell[state] : 'root') + '</b>, returning <b>' + yes + '</b>.' +
+               (yes ? ' out[state] is non-empty, so a dictionary word ends exactly here.' : '') +
+               ' The whole object stores <b>one integer</b> - no buffer, no history, because the state already remembers the longest suffix that is still alive.'}});
+    }
+    return F.list;
+  }
+  const s = 'banana', sa = suffixArray(s), lcp = lcpKasai(s, sa);
+  const best = lcp.indexOf(Math.max.apply(null, lcp));
+  const rows = hi => {
+    const o = [];
+    sa.forEach((p, i) => {
+      const y = 5.0 - i * .78;
+      o.push(S.r(1.3, y, .7, .62, i === hi || i === hi - 1 ? 'hot' : 'idle', String(p), {fs:.34}));
+      o.push(S.r(2.2, y, .7, .62, i === hi ? 'ok' : 'soft', String(lcp[i]), {fs:.34}));
+      o.push(S.t(3.25, y + .31, s.slice(p), {c:COL.pale, fs:.42, anchor:'start'}));
+    });
+    o.push(S.t(1.65, 5.8, 'sa[i]', {c:COL.purpleL, fs:.30}));
+    o.push(S.t(2.55, 5.8, 'lcp[i]', {c:COL.tealL, fs:.30}));
+    return o;
+  };
+  F.push({shapes:rows(-1), view:VIEW, line:ln(CODE_LC, 'def longest_dup_substring'),
+    panels:[{lbl:{zh:'day 25 的解法', en:'day 25 solution'},
+             chips:[chip('binary search + rolling hash', 'soft'), chip('needs a verify step', 'bad')]}],
+    msg:{zh:'LC 1044「最長重複子字串」day 25 解過：二分搜長度 + Rabin-Karp 雜湊。那個解法<b>本質上可能出錯</b> - 兩個不同子字串可以撞同一個 hash，靠最後那個逐字元 verify 才救回來。',
+         en:'Day 25 already solved LC 1044 with binary search over the length plus a Rabin-Karp hash. That solution <b>can be wrong in principle</b> - two different substrings can collide on a hash, and only the final character-by-character verify keeps it honest.'}});
+  F.push({shapes:rows(best).concat([note(.5, 'answer = ' + JSON.stringify(s.slice(sa[best], sa[best] + lcp[best])), COL.orangeL, .40)]),
+    view:VIEW, line:ln(CODE_LC, 'k = max(range(len(lcp))'),
+    panels:[{lbl:{zh:'lcp', en:'lcp'}, chips:lcp.map((x, i) => chip(String(x), i === best ? 'ok' : ''))},
+            {lbl:{zh:'答案', en:'answer'}, chips:[chip(s.slice(sa[best], sa[best] + lcp[best]), 'ok')]},
+            {lbl:{zh:'隨機性', en:'randomness'}, chips:[chip('none', 'ok')]}],
+    msg:{zh:'同一題用 suffix array 只有一行：<b>lcp 最大的那一格</b>。沒有 hash、沒有機率、沒有 verify - 因為排序後的相鄰後綴已經把所有重複都排在一起了。代價是建表的 O(n log n) 前處理；換來的是<b>精確</b>，以及同一份索引可以繼續回答其他問題。',
+         en:'With a suffix array the same problem is one line: <b>the largest lcp entry</b>. No hash, no probability, no verify - sorting has already placed every repeat next to its twin. The price is the O(n log n) preprocessing; what you buy is <b>exactness</b>, and one index that keeps answering other questions.'}});
+  return F.list;
+}
+
+/* ===================================================================== */
+const DAY_META = {
+  title:{zh:'Day 26 - Suffix Array + LCP 與 Aho-Corasick', en:'Day 26 - Suffix array + LCP, and Aho-Corasick'},
+  sub:{zh:'把整份文字前處理一次，之後所有查詢都便宜；把一整本字典編成一台自動機，一遍掃完。',
+       en:'Preprocess the text once and every later query is cheap; compile a whole dictionary into one automaton and scan the text once.'},
+  tabs:[
+    {id:'sa', label:{zh:'1. 建 suffix array', en:'1. building the array'},
+     stage:{zh:'banana 的後綴排序 - prefix doubling', en:'sorting the suffixes of banana - prefix doubling'},
+     view:VIEW, idea:{zh:'把字元換成排名，一輪比較長度就加倍：log n 輪解決。',
+                      en:'Replace characters by ranks and double the compared length each round: log n rounds.'},
+     legend:['hot', 'act', 'ok'], code:CODE_SA, build:saFrames},
+    {id:'lcp', label:{zh:'2. LCP 與 Kasai', en:'2. LCP and Kasai'},
+     stage:{zh:'依文字順序走，h 每步最多掉一格', en:'walking in text order, h drops by at most one'},
+     view:VIEW, idea:{zh:'相鄰後綴共用多長？O(n) 就能全部算完，最大值就是最長重複子字串。',
+                      en:'How much do neighbours share? All of it in O(n), and the maximum is the longest repeat.'},
+     legend:['hot', 'act', 'ok'], code:CODE_LCP, build:lcpFrames},
+    {id:'query', label:{zh:'3. 查詢：兩次二分', en:'3. query: two binary searches'},
+     stage:{zh:'在排序好的後綴上二分搜尋', en:'binary searching the sorted suffixes'},
+     view:VIEW, variants:[{zh:'ana（找得到）', en:'ana (found)'}, {zh:'x（找不到）', en:'x (missing)'}],
+     idea:{zh:'文字前處理一次，之後每個 pattern 只要 O(m log n)，答案永遠是一段連續區間。',
+           en:'Preprocess the text once; each pattern then costs O(m log n) and the answer is always one contiguous range.'},
+     legend:['hot', 'soft', 'ok', 'bad'], code:CODE_Q, build:queryFrames},
+    {id:'dedup', label:{zh:'4. 語料去重（naive 會壞）', en:'4. corpus dedup (the naive version breaks)'},
+     stage:{zh:'找出所有重複區塊', en:'finding every repeated block'},
+     view:VIEW, variants:[{zh:'沒有 left-diverse 過濾', en:'without the left-diverse test'},
+                          {zh:'加上 left-diverse', en:'with the left-diverse test'}],
+     idea:{zh:'重複區塊 = lcp 連續大於門檻的一段；但沒有 left-diverse 過濾，位移副本會淹沒報表。',
+           en:'A repeat is a run of lcp above a threshold - but without the left-diverse test, shifted copies swamp the report.'},
+     legend:['hot', 'soft', 'ok', 'bad'], code:CODE_DD, build:dedupFrames},
+    {id:'ac', label:{zh:'5. Aho-Corasick', en:'5. Aho-Corasick'},
+     stage:{zh:'trie + fail link = 多模式自動機', en:'trie + fail links = a multi-pattern automaton'},
+     view:VIEW, variants:[{zh:'建 fail link', en:'building the fail links'}, {zh:'比對 ushers', en:'matching ushers'}],
+     idea:{zh:'fail link 就是 KMP failure function 長在樹上；成本與 pattern 個數無關。',
+           en:'A fail link is KMP\'s failure function grown on a tree; the cost does not depend on how many patterns there are.'},
+     legend:['hot', 'act', 'ok', 'ghost'], code:CODE_AC, build:acFrames},
+    {id:'stream', label:{zh:'6. 串流多重 stop', en:'6. streaming, k stop strings'},
+     stage:{zh:'要扣住幾個字元？depth[state]', en:'how many characters to hold back? depth[state]'},
+     view:VIEW, idea:{zh:'k 個 stop 字串的 hold-back 是<b>一個整數</b>：目前狀態的深度。',
+                      en:'The hold-back for k stop strings is a <b>single integer</b>: the depth of the current state.'},
+     legend:['hot', 'act', 'ok', 'bad'], code:CODE_ST, build:streamFrames},
+    {id:'lc', label:{zh:'7. LeetCode', en:'7. LeetCode'},
+     stage:{zh:'1032 stream checker / 1044 最長重複子字串', en:'1032 stream checker / 1044 longest duplicate substring'},
+     view:VIEW, variants:[{zh:'1032 StreamChecker', en:'1032 StreamChecker'},
+                          {zh:'1044 精確解', en:'1044, exactly'}],
+     idea:{zh:'一個整數就是全部狀態；而 day 25 靠雜湊猜的答案，這裡直接讀出來。',
+           en:'One integer is the entire state; and the answer day 25 hashed for is simply read off the array.'},
+     legend:['hot', 'act', 'ok'], code:CODE_LC, build:lcFrames}
+  ]
+};
+
+</script>
+<script>
+/* =========================================================================
+   100 Days of Python - shared demo engine
+   palette: teal/blue-green base, purple pointers, orange "current step"
+   ========================================================================= */
+const T = {
+  title:{zh:DAY_META.title.zh, en:DAY_META.title.en},
+  sub:{zh:DAY_META.sub.zh, en:DAY_META.sub.en},
+  play:{zh:'▶ 播放', en:'▶ Play'}, pause:{zh:'❚❚ 暫停', en:'❚❚ Pause'},
+  speed:{zh:'速度', en:'Speed'}, state:{zh:'演算法狀態', en:'Algorithm state'},
+  code:{zh:'程式碼', en:'Code'}, idea:{zh:'重點', en:'The idea'}
+};
+let LANG = 'zh';
+const tr = o => (o == null ? '' : (typeof o === 'string' ? o : (o[LANG] != null ? o[LANG] : o.en)));
+const $ = id => document.getElementById(id);
+
+function setLang(l){
+  LANG = l;
+  document.documentElement.lang = l === 'zh' ? 'zh-Hant' : 'en';
+  $('btn-zh').classList.toggle('on', l === 'zh');
+  $('btn-en').classList.toggle('on', l === 'en');
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.getAttribute('data-i18n');
+    if (T[k]) el.textContent = tr(T[k]);
+  });
+  buildTabs(); render();
+}
+
+/* --------------------------------------------------------------- palette */
+const STY = {
+  idle :{fill:'#07293a', stroke:'#0a6b74', text:'#dff2f5', w:.045, glow:0},
+  soft :{fill:'#052330', stroke:'#0a6b74', text:'#a8c8d0', w:.035, glow:0},
+  hot  :{fill:'#3a2109', stroke:'#ff9736', text:'#ffbe6b', w:.075, glow:.65},
+  act  :{fill:'#241542', stroke:'#9d6bff', text:'#c7a6ff', w:.070, glow:.55},
+  ok   :{fill:'#08414a', stroke:'#3fe0dd', text:'#d9ffff', w:.070, glow:.5},
+  done :{fill:'#062430', stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0},
+  bad  :{fill:'#3a0d0d', stroke:'#ff5c5c', text:'#ff9a9a', w:.070, glow:.4},
+  ghost:{fill:'none',    stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0, dash:'.12 .10'}
+};
+const COL = {teal:'#12b3b8', tealL:'#3fe0dd', purple:'#9d6bff', purpleL:'#c7a6ff',
+             orange:'#ff9736', orangeL:'#ffbe6b', red:'#ff5c5c', grey:'#8fa3ac',
+             pale:'#dff2f5', white:'#ffffff'};
+const LEGEND = {
+  hot:[COL.orange, {zh:'目前這一步', en:'current step'}],
+  act:[COL.purple, {zh:'指標 / 走訪位置', en:'pointer / cursor'}],
+  ok:[COL.tealL,  {zh:'完成 / 結果', en:'done / result'}],
+  bad:[COL.red,   {zh:'失敗 / 要避開的寫法', en:'failure / the wrong way'}],
+  done:['#2f5661', {zh:'已處理完', en:'already done'}],
+  soft:['#0a6b74', {zh:'其他元素', en:'other items'}],
+  idle:['#0a6b74', {zh:'尚未處理', en:'untouched'}],
+  ghost:['#123f4d', {zh:'尚未處理', en:'not yet reached'}]
+};
+const leg = (...keys) => keys.map(k => LEGEND[k]);
+
+/* ---------------------------------------------------------- frame buffer */
+function Frames(){
+  this.list = [];
+  this.push = (o) => this.list.push({
+    shapes:JSON.parse(JSON.stringify(o.shapes || [])),
+    panels:JSON.parse(JSON.stringify(o.panels || [])),
+    view:(o.view || null), line:(o.line == null ? 0 : o.line), msg:o.msg
+  });
+}
+/* shape helpers - engines call these, the renderer just draws */
+const S = {
+  r:(x, y, w, h, s, lab, o) => Object.assign({t:'r', x:x, y:y, w:w, h:h, s:s || 'idle', lab:lab}, o || {}),
+  c:(x, y, r, s, lab, o) => Object.assign({t:'c', x:x, y:y, r:r, s:s || 'idle', lab:lab}, o || {}),
+  e:(x1, y1, x2, y2, o) => Object.assign({t:'e', x1:x1, y1:y1, x2:x2, y2:y2}, o || {}),
+  t:(x, y, s, o) => Object.assign({t:'t', x:x, y:y, s:s}, o || {})
+};
+/* a labelled row of array cells; returns shapes */
+function cellRow(vals, x0, y, w, h, opt){
+  opt = opt || {};
+  const out = [], st = opt.states || {};
+  vals.forEach((v, i) => {
+    out.push(S.r(x0 + i * w, y, w - (opt.gap == null ? .06 : opt.gap), h, st[i] || 'idle',
+                 v == null ? '' : String(v), {fs:opt.fs || h * .52}));
+    if (opt.index !== false)
+      out.push(S.t(x0 + i * w + (w - .06) / 2, y + h + (opt.ilift || .34),
+                   opt.labels ? opt.labels[i] : String(i),
+                   {c:st[i] && st[i] !== 'idle' ? COL.orangeL : COL.grey, fs:opt.ifs || .30}));
+  });
+  if (opt.title) out.push(S.t(x0 - .22, y + h * .62, opt.title, {c:COL.tealL, fs:.32, anchor:'end'}));
+  return out;
+}
+/* binary-tree layout from a heap-style array (index 0 = root, 2i+1 / 2i+2) */
+function heapTreeShapes(arr, x0, y0, w, rowH, states, opt){
+  opt = opt || {};
+  const n = arr.length, out = [], R = opt.r || .34;
+  const depth = i => Math.floor(Math.log2(i + 1));
+  const maxD = n ? depth(n - 1) : 0;
+  const px = i => {
+    const d = depth(i), first = Math.pow(2, d) - 1, k = i - first;
+    const slots = Math.pow(2, d), span = w;
+    return x0 + span * (k + .5) / slots;
+  };
+  const py = i => y0 + depth(i) * rowH;
+  for (let i = 1; i < n; i++){
+    if (arr[i] == null) continue;
+    const p = Math.floor((i - 1) / 2);
+    out.push(S.e(px(p), py(p), px(i), py(i), {pad:R + .04,
+      s:(states && (states[i] === 'hot' || states[i] === 'act')) ? states[i] : 'idle'}));
+  }
+  for (let i = 0; i < n; i++){
+    if (arr[i] == null) continue;
+    out.push(S.c(px(i), py(i), R, (states && states[i]) || 'idle', String(arr[i]), {fs:R * .95}));
+    if (opt.showIndex)
+      out.push(S.t(px(i), py(i) + R + .34, String(i), {c:COL.grey, fs:.26}));
+  }
+  return out;
+}
+
+/* -------------------------------------------------------------- renderer */
+const svgNS = 'http://www.w3.org/2000/svg';
+const mk = (tag, a) => { const e = document.createElementNS(svgNS, tag);
+  for (const k in a) e.setAttribute(k, a[k]); return e; };
+const clear = svg => { while (svg.firstChild) svg.removeChild(svg.firstChild); };
+
+function defs(svg){
+  const d = mk('defs', {});
+  const f = mk('filter', {id:'glow', x:'-70%', y:'-70%', width:'240%', height:'240%'});
+  f.appendChild(mk('feGaussianBlur', {stdDeviation:'.055', result:'b'}));
+  const m = mk('feMerge', {});
+  m.appendChild(mk('feMergeNode', {in:'b'}));
+  m.appendChild(mk('feMergeNode', {in:'SourceGraphic'}));
+  f.appendChild(m); d.appendChild(f);
+  Object.keys(STY).forEach(k => {
+    const mk2 = mk('marker', {id:'ar-' + k, viewBox:'0 0 10 10', refX:'8.5', refY:'5',
+      markerWidth:'5.2', markerHeight:'5.2', orient:'auto-start-reverse'});
+    mk2.appendChild(mk('path', {d:'M 0 1 L 9 5 L 0 9 z', fill:STY[k].stroke}));
+    d.appendChild(mk2);
+  });
+  svg.appendChild(d);
+}
+
+function drawShape(svg, sh){
+  const st = STY[sh.s || 'idle'];
+  if (sh.t === 'e'){
+    let {x1, y1, x2, y2} = sh;
+    if (sh.pad){
+      const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+      x1 += dx / L * sh.pad; y1 += dy / L * sh.pad;
+      x2 -= dx / L * sh.pad; y2 -= dy / L * sh.pad;
+    }
+    const a = {x1:x1.toFixed(3), y1:y1.toFixed(3), x2:x2.toFixed(3), y2:y2.toFixed(3),
+      stroke:st.stroke, 'stroke-width':(sh.w || st.w || .05), 'stroke-linecap':'round',
+      opacity:(sh.o == null ? (sh.s && sh.s !== 'idle' ? 1 : .75) : sh.o)};
+    if (sh.dash || st.dash) a['stroke-dasharray'] = sh.dash || st.dash;
+    if (sh.arrow !== false) a['marker-end'] = 'url(#ar-' + (sh.s || 'idle') + ')';
+    svg.appendChild(mk('line', a));
+    if (sh.lab != null)
+      svg.appendChild(txt((x1 + x2) / 2 + (sh.lx || 0), (y1 + y2) / 2 + (sh.ly || -.16),
+        tr(sh.lab), st.stroke, sh.fs || .30, 'middle'));
+    return;
+  }
+  if (sh.t === 't'){
+    svg.appendChild(txt(sh.x, sh.y, tr(sh.s), sh.c || COL.pale, sh.fs || .32,
+      sh.anchor || 'middle', sh.o));
+    return;
+  }
+  let node;
+  if (sh.t === 'c'){
+    node = mk('circle', {cx:sh.x.toFixed(3), cy:sh.y.toFixed(3), r:sh.r.toFixed(3),
+      fill:st.fill, stroke:st.stroke, 'stroke-width':st.w});
+  } else {
+    node = mk('rect', {x:sh.x.toFixed(3), y:sh.y.toFixed(3), width:sh.w.toFixed(3),
+      height:sh.h.toFixed(3), rx:(sh.rx == null ? .09 : sh.rx), fill:st.fill,
+      stroke:st.stroke, 'stroke-width':st.w});
+  }
+  if (st.dash || sh.dash) node.setAttribute('stroke-dasharray', sh.dash || st.dash);
+  if (st.glow) node.setAttribute('filter', 'url(#glow)');
+  if (sh.o != null) node.setAttribute('opacity', sh.o);
+  svg.appendChild(node);
+  const cx = sh.t === 'c' ? sh.x : sh.x + sh.w / 2;
+  const cy = sh.t === 'c' ? sh.y : sh.y + sh.h / 2;
+  if (sh.lab != null && sh.lab !== '')
+    svg.appendChild(txt(cx + (sh.dx || 0), cy + (sh.fs || .40) * .35, tr(sh.lab), st.text,
+      sh.fs || .40, 'middle'));
+  if (sh.sub != null)
+    svg.appendChild(txt(cx, cy + (sh.t === 'c' ? sh.r : sh.h) + .34, tr(sh.sub),
+      sh.subc || COL.grey, sh.subfs || .28, 'middle'));
+  if (sh.top != null)
+    svg.appendChild(txt(cx, cy - (sh.t === 'c' ? sh.r : sh.h / 2) - .22, tr(sh.top),
+      sh.topc || COL.purpleL, sh.topfs || .28, 'middle'));
+}
+function txt(x, y, s, c, fs, anchor, o){
+  const t = mk('text', {x:(+x).toFixed(3), y:(+y).toFixed(3), 'text-anchor':anchor || 'middle',
+    fill:c, 'font-size':(+fs).toFixed(3)});
+  if (o != null) t.setAttribute('opacity', o);
+  t.textContent = s;
+  return t;
+}
+
+function renderStage(frame){
+  const svg = $('stage');
+  clear(svg); defs(svg);
+  const v = frame.view || curTab().view || [10, 6.4];
+  svg.setAttribute('viewBox', '0 0 ' + v[0] + ' ' + v[1]);
+  (frame.shapes || []).forEach(sh => drawShape(svg, sh));
+}
+
+function drawPanels(frame){
+  const box = $('panels'); box.innerHTML = '';
+  (frame.panels || []).forEach(p => {
+    const d = document.createElement('div'); d.className = 'panel';
+    const l = document.createElement('div'); l.className = 'lbl'; l.textContent = tr(p.lbl);
+    const c = document.createElement('div'); c.className = 'chips';
+    (p.chips.length ? p.chips : [{t:'—', cls:'empty'}]).forEach(ch => {
+      const s = document.createElement('span');
+      s.className = 'chip ' + (ch.cls || ''); s.textContent = ch.t; c.appendChild(s);
+    });
+    d.appendChild(l); d.appendChild(c); box.appendChild(d);
+  });
+}
+function drawCode(frame){
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  $('code').innerHTML = curTab().code.map((ln, i) => {
+    const h = esc(ln).replace(/(#.*)$/, '<span class="cm">$1</span>');
+    return '<span class="ln' + (i === frame.line ? ' on' : '') + '">' + (h || ' ') + '</span>';
+  }).join('');
+}
+function drawLegend(){
+  const keys = curTab().legend || ['hot', 'act', 'ok', 'idle'];
+  $('legend').innerHTML = keys.map(k => {
+    const [c, txt] = Array.isArray(k) ? k : LEGEND[k];
+    return '<span><i style="background:' + c + '"></i>' + tr(txt) + '</span>';
+  }).join('');
+}
+
+let tabIx = 0, varIx = 0, frames = [], cur = 0, timer = null;
+const TABS = DAY_META.tabs;
+const curTab = () => TABS[tabIx];
+
+function render(){
+  if (!frames.length) return;
+  cur = Math.max(0, Math.min(cur, frames.length - 1));
+  const f = frames[cur];
+  $('stage-title').textContent = tr(curTab().stage);
+  renderStage(f); drawPanels(f); drawCode(f); drawLegend();
+  $('narr').innerHTML = tr(f.msg);
+  $('idea').innerHTML = tr(curTab().idea);
+  $('stepno').textContent = (cur + 1) + ' / ' + frames.length;
+  $('prev').disabled = cur === 0;
+  $('next').disabled = cur === frames.length - 1;
+}
+function buildTabs(){
+  $('tabs').innerHTML = '';
+  TABS.forEach((t, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(t.label);
+    if (i === tabIx) b.classList.add('on');
+    b.onclick = () => { tabIx = i; varIx = 0; load(); };
+    $('tabs').appendChild(b);
+  });
+  const ex = $('extra'); ex.innerHTML = '';
+  const vs = curTab().variants;
+  if (vs) vs.forEach((v, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(v);
+    if (i === varIx) b.classList.add('on');
+    b.onclick = () => { varIx = i; load(); };
+    ex.appendChild(b);
+  });
+}
+function load(){
+  stop();
+  frames = curTab().build(varIx) || [];
+  cur = 0; buildTabs(); render();
+}
+function step(d){ stop(); cur += d; render(); }
+function reset(){ stop(); cur = 0; render(); }
+function stop(){ if (timer){ clearInterval(timer); timer = null; $('play').textContent = tr(T.play); } }
+function togglePlay(){
+  if (timer){ stop(); return; }
+  if (cur >= frames.length - 1) cur = 0;
+  $('play').textContent = tr(T.pause);
+  timer = setInterval(() => {
+    if (cur >= frames.length - 1){ stop(); return; }
+    cur++; render();
+  }, Number($('speed').value));
+}
+$('speed').addEventListener('input', () => { if (timer){ stop(); togglePlay(); } });
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight'){ step(1); e.preventDefault(); }
+  else if (e.key === 'ArrowLeft'){ step(-1); e.preventDefault(); }
+  else if (e.key === ' '){ togglePlay(); e.preventDefault(); }
+});
+setLang('zh');
+load();
+
+</script>
+</body>
+</html>

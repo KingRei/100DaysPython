@@ -1,4 +1,4 @@
-# Selection and top-k - you never had to sort
+# Selection and top-k - quickselect and heaps, without sorting first
 
 More details in:
 https://medium.com/100-days-of-python

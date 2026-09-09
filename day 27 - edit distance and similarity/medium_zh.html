@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 27 — 編輯距離與相似度：Levenshtein、Jaccard、MinHash</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 27 — 編輯距離與相似度：Levenshtein、Jaccard、MinHash</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2027%20-%20edit%20distance%20and%20similarity">day 27 on GitHub</a></p>
+<p><em>100 Days of Python - day 27</em></p>
+<p>一千萬份文件要去重，就是 5 × 10¹³ 個 pair。就算一個 pair 只花一微秒，也要跑一年以上。所以真正的問題從來不是「怎麼把兩份文件比得更快」，而是「怎麼讓大部分的 pair 根本不用比」。今天兩件事都要講：精確但昂貴的那個答案，還有讓 pair 數量消失的那個 sketch。</p>
+<p>前三天問的都是精確問題。Trie 回答「這是不是某個前綴」，KMP 回答「這個 pattern 有沒有出現」，suffix array 回答「哪一段一字不差地重複了」。但真實的文字不配合：使用者打成 <code>recieve</code>、ASR 模型漏掉一個字、兩個爬下來的網頁只差一條 cookie 橫幅 — 這些全都是<strong>接近</strong>的匹配，而精確結構會一致回報「不匹配」。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2027%20-%20edit%20distance%20and%20similarity/imgs/day27_1.png">
+<h2>Levenshtein：三個前驅，每一個都是一種操作</h2>
+<p>精確的答案是<strong>編輯距離</strong>：把一個字串變成另一個所需的最少單字元刪除、插入、替換次數。令 <code>d[i][j]</code> 是前綴 <code>a[:i]</code> 和 <code>b[:j]</code> 之間的距離，那麼走進這一格的路徑只可能來自三個地方，而每一個都對應一種有名字的操作：</p>
+<pre><code>d[i][j] = min(d[i-1][j]   + 1,                    # delete a[i-1]
+              d[i][j-1]   + 1,                    # insert b[j-1]
+              d[i-1][j-1] + (a[i-1] != b[j-1]))   # substitute, or match for free</code></pre>
+<p>第一列和第一行是 base case — 把一個前綴變成空字串，每個字元要刪一次 — 答案在右下角。<code>kitten</code> 到 <code>sitting</code> 填滿一張 7 × 8 的表，結果是 3。</p>
+<h2>那個數字通常是比較沒用的那一半</h2>
+<p><code>min</code> 把「是哪個前驅贏的」丟掉了，而那正是使用者會看到的部分。從右下角往回走，每一格重新測那三個候選，這張表就變成一份<strong>編輯腳本</strong>：把 <code>k</code> 換成 <code>s</code>、把 <code>e</code> 換成 <code>i</code>、插入 <code>g</code>。拼字檢查要靠它才能解釋自己在做什麼，diff 工具印的就是它，ASR 的錯誤分析報告更是整份都由它組成。</p>
+<p>如果不需要腳本，整張表就是浪費。第 <code>i</code> 列只會讀第 <code>i-1</code> 列，所以兩列就夠了：</p>
+<pre><code>prev = list(range(m + 1))
+for i in range(1, n + 1):
+    cur = [i] + [0] * m
+    for j in range(1, m + 1):
+        cur[j] = min(prev[j] + 1, cur[j-1] + 1, prev[j-1] + (a[i-1] != b[j-1]))
+    prev = cur</code></pre>
+<p>記憶體從 <code>O(nm)</code> 掉到 <code>O(min(n, m))</code>（把兩個參數交換一下，讓比較短的字串當列的索引），代價就是上面那件事：表沒了，就沒有東西可以往回走。Hirschberg 演算法用分治法把腳本在線性空間裡買回來，代價是大約兩倍的時間。{距離、腳本、線性空間} 這三樣，你挑兩樣，第三樣要付錢。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2027%20-%20edit%20distance%20and%20similarity/imgs/day27_2.png">
+<h2>有上界 k 時，大部分的表格根本不可能有答案</h2>
+<p>真正會改變常數的優化不是改程式，是<strong>改問題</strong>。拼字修正、fuzzy join、去重過濾器幾乎從來不問「這兩個差多遠」，它們問的是「這兩個是不是在 <code>k</code> 以內」。<code>k</code> 一旦固定，任何偏離主對角線超過 <code>k</code> 格的路徑就已經花掉超過 <code>k</code> 次操作了，所以只有 <code>max(0, i-k) &lt;= j &lt;= min(m, i+k)</code> 這條帶狀區域可能裝著答案。寬度 <code>2k+1</code>，工作量是 <code>O(k · n)</code>。</p>
+<p>實務上出力最多的是兩個守門條件。長度差是距離的下界，所以 <code>abs(n - m) &gt; k</code> 連一格都不用填就能回答；而如果某一列的每一格都已經超過 <code>k</code>，後面的列不可能再降回來，迴圈可以直接早退。在一對相差 3 個替換的 132 字元字串上，<code>k = 3</code> 只填了 17424 格裡的 912 格（5.2%），<code>k = 1</code> 填到 152 格就放棄，長度差 5 的那一對則是 0 格。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2027%20-%20edit%20distance%20and%20similarity/imgs/day27_3.png">
+<h2>同一個遞迴式，換成字詞；再拿掉替換</h2>
+<p>這個遞迴式並不知道自己在比字元。餵它 word token，距離就變成 <strong>word error rate</strong>，ASR 的標準指標：編輯距離除以 reference 的長度，而 backtrace 會把它拆成替換、刪除、插入三種。我的例子是 <code>(2S + 1D + 0I) / 8 = 0.375</code>，而那份拆解才是錯誤分析真正在看的東西 — 一個大量刪字的系統，跟一個大量替換的系統，問題完全不一樣。</p>
+<p>拿掉一個分支就變成另一個經典題。不准替換的話，最省的對齊方式就是保留<strong>最長共同子序列</strong>、其他全部編輯掉：<code>distance = n + m - 2 · LCS</code>。這就是為什麼 <code>diff</code> 把一行的修改顯示成一次刪除加一次新增，而不是「修改」— 替換根本不在它的字彙裡。</p>
+<h2>Jaccard：把文件變成集合，才能做 sketch</h2>
+<p>到目前為止全都是<strong>每一對</strong> <code>O(nm)</code>，而 pair 的數量才是敵人。要 scale，需要的是可以被<strong>索引</strong>的相似度，不只是算得快的相似度。</p>
+<p>把每份文件切成重疊的 <code>k</code> 字 <strong>shingle</strong>，然後把它當成這些 shingle 的集合。shingle 內部的順序保留了，shingle 之間的順序丟掉了，文件變成一個集合 — 而這正是重點，因為集合有便宜的固定大小 sketch，字串沒有。</p>
+<pre><code>J = len(A &amp; B) / len(A | B)</code></pre>
+<p>在我的語料上，換掉一個片語的文件是 0.773，多接一個子句的是 0.830，完全無關的是 0.000。不過還是 <code>n(n-1)/2</code> 次比較：8 份文件是 28 次，一千萬份是 5 × 10¹³ 次。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2027%20-%20edit%20distance%20and%20similarity/imgs/day27_4.png">
+<h2>MinHash：碰撞本身就是估計值</h2>
+<p>把集合裡每個元素都 hash 過，只留最小值。對兩個集合來說，<code>A ∪ B</code> 裡最小的那個 hash 值落在 <code>A ∩ B</code> 裡的機率剛好是 <code>|A ∩ B| / |A ∪ B|</code>，而兩邊的 min-hash 相等也<strong>正好</strong>是在這種情況 — 所以 <code>P(equal) = J</code>，不多不少。用 <code>K</code> 個獨立的 hash function 做 <code>K</code> 次，相同 slot 的比例就是 Jaccard 的無偏估計，標準誤大約是 <code>sqrt(J(1-J)/K)</code>。</p>
+<p>於是不管文件多長，它現在就是 <code>K</code> 個整數，比較是 <code>O(K)</code>。精度照老規矩四倍換一半：真值 <code>J = 0.773</code> 的那一對，<code>K = 16</code> 估 0.688、<code>K = 64</code> 估 0.828、<code>K = 256</code> 估 0.766、<code>K = 1024</code> 估 0.771；所有 pair 的平均誤差則隨 <code>K</code> 從 16 → 64 → 256 而 0.083 → 0.038 → 0.017。</p>
+<p>有個坑一定要講明白，因為它在單一台機器上會通過所有測試，然後在 production 爆掉：<strong>Python 內建的 <code>hash()</code> 對 <code>str</code> 是每個 process 隨機化的</strong>。今天寫進資料庫的簽章，明天算出來的對不上，而任何跑在單一 process 裡的測試都不會告訴你。用有 seed 的 <code>hashlib</code>：</p>
+<pre><code>def _hash(item, seed):
+    h = hashlib.blake2b(item.encode(), digest_size=8,
+                        key=seed.to_bytes(8, &#x27;little&#x27;))
+    return int.from_bytes(h.digest(), &#x27;little&#x27;)</code></pre>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2027%20-%20edit%20distance%20and%20similarity/imgs/day27_5.png">
+<h2>LSH：把「比對所有 pair」變成「看同一個桶子」</h2>
+<p>MinHash 把每次比較變成 <code>O(K)</code>，但還是有 <code>n(n-1)/2</code> 次。Locality-sensitive hashing 直接把 pair 本身拿掉：把 <code>K</code> 個 slot 切成 <code>b</code> 個 band、每個 band <code>r</code> 列，每個 band 各自 hash，只要<strong>任何一個</strong> band 完全相同就把這兩份文件列為候選。一個 band 相同的機率是 <code>J^r</code>，所以</p>
+<pre><code>P(candidate) = 1 - (1 - J^r)^b</code></pre>
+<p>這是一條 S 曲線，陡峭處大約落在 <code>(1/b)^(1/r)</code>。這就是設計旋鈕：<code>b = 32, r = 4</code> 門檻大約 0.42，<code>b = 16, r = 8</code> 大約 0.71，<code>b = 8, r = 16</code> 大約 0.88。把它調到你在意的相似度稍微下面一點，曲線就會幫你過濾 — 中間那組在 <code>J = 0.3</code> 只有 0.001 的機率被撈出來，在 <code>J = 0.8</code> 則是 0.947。</p>
+<p>而讓這整套敢上線的關鍵是：<strong>LSH 是過濾器，不是答案。</strong>它只負責提名候選，接著在那少數幾對上算精確的 Jaccard，所以 false positive 只會多花一點點工，不會算錯。在我那個 8 份文件的語料上，整條 pipeline 只驗證 4 對而不是 28 對（14.3% 的工作量），結果跟暴力法完全一樣。放大到語料規模，這個比例就是「這個工作跑得完」跟「跑不完」的差別 — 這也是為什麼 MinHash-LSH 是 C4、RefinedWeb 這類資料集標準的去重步驟。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2027%20-%20edit%20distance%20and%20similarity/imgs/day27_6.png">
+<h2>LeetCode</h2>
+<p><strong>LC 72（Edit Distance）</strong>就是那張表，原封不動。面試的價值在於能把三個前驅講成三種<strong>操作</strong>，然後主動提出 rolling row 版本，並且說清楚它失去了什麼。</p>
+<p><strong>LC 1143（Longest Common Subsequence）</strong>是同一張表拿掉替換分支。緊接在 72 後面解，遞迴式的結構就看得見了：拿掉一個分支，就是另一個演算法。</p>
+<p><strong>LC 161（One Edit Distance）</strong>才是有趣的那題，因為正確答案根本不建表：</p>
+<pre><code>def is_one_edit_distance(s, t):
+    if len(s) &gt; len(t):
+        s, t = t, s
+    if len(t) - len(s) &gt; 1 or s == t:
+        return False
+    for i in range(len(s)):
+        if s[i] != t[i]:
+            return s[i+1:] == t[i+1:] if len(s) == len(t) else s[i:] == t[i+1:]
+    return len(t) == len(s) + 1</code></pre>
+<p><code>O(n)</code> 時間、<code>O(1)</code> 空間。<code>k</code> 一旦被釘死成 1，通用演算法就是錯的工具 — 這就是有上界的帶狀 DP 推到極限的樣子。</p>
+<h2>這些之後會用在哪</h2>
+<p>編輯距離是所有 alignment 問題的形狀：生物資訊的序列比對就是同一個遞迴式配一張 scoring matrix，dynamic time warping 是換一組 step，ASR 的 beam search rescoring 是再掛上一個語言模型。MinHash 和 LSH 則指向另一邊 — approximate nearest neighbour 檢索：embedding 取代 shingle、cosine 相似度取代 Jaccard，而「便宜過濾、精確驗證」這份同樣的合約會再出現在 HNSW 圖和 IVF/PQ 索引裡。向量資料庫說自己是「近似」的時候，講的就是這個 trade。</p>
+<p>兩條線最後也收在同一個工程紀律上：知道你的過濾器漏掉多少（false negative），然後把活下來的那些精確驗證一次。</p>
+<p>明天：平衡樹一次講完 — AVL、red-black、B-tree。</p>
+<p>程式碼與圖：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2027%20-%20edit%20distance%20and%20similarity">day 27 on GitHub</a></p>
+</body>
+</html>

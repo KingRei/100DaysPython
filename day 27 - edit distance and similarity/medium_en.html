@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Edit distance and similarity: Levenshtein, Jaccard, MinHash</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Edit distance and similarity: Levenshtein, Jaccard, MinHash</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2027%20-%20edit%20distance%20and%20similarity">day 27 on GitHub</a></p>
+<p><em>100 Days of Python - day 27</em></p>
+<p>Deduplicating a corpus of 10 million documents is 5 × 10¹³ pairs. Even at one microsecond per pair that is over a year of compute, so the interesting question is never &quot;how do I compare two documents faster&quot; - it is &quot;how do I avoid comparing most pairs at all&quot;. Today is about both halves: the exact, expensive answer, and the sketch that makes the pair count go away.</p>
+<p>The last three days all asked exact questions. A trie answers &quot;is this a prefix&quot;, KMP answers &quot;does this pattern occur&quot;, a suffix array answers &quot;what repeats verbatim&quot;. Real text does not cooperate with any of them. A user types <code>recieve</code>, an ASR model drops a word, two crawled pages differ only by a cookie banner - and every one of those is a <em>near</em> match that an exact structure reports as no match at all.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2027%20-%20edit%20distance%20and%20similarity/imgs/day27_1.png">
+<h2>Levenshtein: three predecessors, and each one is an operation</h2>
+<p>The exact answer is <strong>edit distance</strong>: the smallest number of single-character deletions, insertions and substitutions that turns one string into the other. Let <code>d[i][j]</code> be the distance between the prefixes <code>a[:i]</code> and <code>b[:j]</code>. Every path into that cell must have come from one of exactly three places, and each one is a named operation:</p>
+<pre><code>d[i][j] = min(d[i-1][j]   + 1,                    # delete a[i-1]
+              d[i][j-1]   + 1,                    # insert b[j-1]
+              d[i-1][j-1] + (a[i-1] != b[j-1]))   # substitute, or match for free</code></pre>
+<p>The first row and column are the base cases - turning a prefix into the empty string costs one deletion per character - and the answer is the bottom-right corner. <code>kitten</code> to <code>sitting</code> fills a 7 × 8 table and comes out at 3.</p>
+<h2>The number is usually the less useful half</h2>
+<p><code>min</code> throws away <em>which</em> predecessor won, and that is the part a user sees. Walk backwards from the corner, re-test the three candidates at each cell, and the table becomes an <strong>edit script</strong>: substitute <code>k</code> with <code>s</code>, substitute <code>e</code> with <code>i</code>, insert <code>g</code>. A spell checker needs that to explain itself, a diff tool prints it, and an ASR error report is made of nothing else.</p>
+<p>If you do not need the script, the table is wasteful. Row <code>i</code> only ever reads row <code>i-1</code>, so two rows suffice:</p>
+<pre><code>prev = list(range(m + 1))
+for i in range(1, n + 1):
+    cur = [i] + [0] * m
+    for j in range(1, m + 1):
+        cur[j] = min(prev[j] + 1, cur[j-1] + 1, prev[j-1] + (a[i-1] != b[j-1]))
+    prev = cur</code></pre>
+<p>Memory drops from <code>O(nm)</code> to <code>O(min(n, m))</code> - swap the arguments so the shorter string indexes the row - and the price is exactly the thing above: with the table gone, there is nothing to walk backwards through. Hirschberg&#x27;s algorithm buys the script back in linear space by divide-and-conquer, for about twice the time. Pick two of {distance, script, linear space}; the third costs something.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2027%20-%20edit%20distance%20and%20similarity/imgs/day27_2.png">
+<h2>Bounded k: most of the table can never matter</h2>
+<p>The optimisation that actually changes the constant is not a code change, it is a <em>question</em> change. Spelling correction, fuzzy joins and dedup filters almost never ask &quot;how far apart are these&quot;. They ask &quot;are these within <code>k</code>&quot;. Once <code>k</code> is fixed, any path that strays more than <code>k</code> cells from the main diagonal has already spent more than <code>k</code> operations, so only the band <code>max(0, i-k) &lt;= j &lt;= min(m, i+k)</code> can hold the answer. Width <code>2k+1</code>, so the work is <code>O(k · n)</code>.</p>
+<p>Two guards do most of the work in practice. Length difference is a lower bound on the distance, so <code>abs(n - m) &gt; k</code> is answered before a single cell is filled. And if every cell in a row already exceeds <code>k</code>, no later row can come back under it, so the loop exits early. On a 132-character pair that differs by 3 substitutions, <code>k = 3</code> fills 912 cells out of 17424 - 5.2% of the table - <code>k = 1</code> gives up after 152, and a pair whose lengths differ by 5 is rejected with 0 cells filled.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2027%20-%20edit%20distance%20and%20similarity/imgs/day27_3.png">
+<h2>The same recurrence over words, and without substitution</h2>
+<p>Nothing in that recurrence knows it is comparing characters. Feed it word tokens and the distance becomes <strong>word error rate</strong>, the standard ASR metric: edit distance divided by the length of the reference, with the backtrace splitting it into substitutions, deletions and insertions. My example scores <code>(2S + 1D + 0I) / 8 = 0.375</code>, and the breakdown is the part an error analysis lives on - a system that mostly deletes has a very different problem from one that mostly substitutes.</p>
+<p>Delete one branch and you get a different classic. Forbid substitution, and the cheapest alignment is to keep the <strong>longest common subsequence</strong> and edit everything else: <code>distance = n + m - 2 · LCS</code>. That is why <code>diff</code> shows a changed line as a deletion plus an insertion rather than as a modification - substitution is not in its vocabulary.</p>
+<h2>Jaccard: make a document a set, so it can be sketched</h2>
+<p>Everything so far is <code>O(nm)</code> <strong>per pair</strong>, and the pair count is the enemy. Scaling needs a similarity that can be <em>indexed</em>, not merely computed quickly.</p>
+<p>Cut each document into overlapping <code>k</code>-word <strong>shingles</strong> and treat it as the set of them. Order inside a shingle is preserved, order between shingles is thrown away, and the document becomes a set - which is the whole point, because sets have cheap fixed-size sketches and strings do not.</p>
+<pre><code>J = len(A &amp; B) / len(A | B)</code></pre>
+<p>On my corpus, a document with one phrase swapped scores 0.773, one with a clause appended 0.830, an unrelated one 0.000. Still <code>n(n-1)/2</code> comparisons, though: 8 documents is 28, 10 million is 5 × 10¹³.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2027%20-%20edit%20distance%20and%20similarity/imgs/day27_4.png">
+<h2>MinHash: collisions are the estimate</h2>
+<p>Hash every element of a set and keep the minimum. For two sets, the smallest hash across <code>A ∪ B</code> lands in <code>A ∩ B</code> with probability exactly <code>|A ∩ B| / |A ∪ B|</code>, and their min-hashes agree in precisely that case - so <code>P(equal) = J</code>, on the nose. Do it with <code>K</code> independent hash functions and the fraction of agreeing slots is an unbiased estimate of the Jaccard, with standard error about <code>sqrt(J(1-J)/K)</code>.</p>
+<p>A document of any length is now <code>K</code> integers, and a comparison is <code>O(K)</code> no matter how long the documents were. Accuracy improves at the usual quarter-rate: on a pair with true <code>J = 0.773</code>, <code>K = 16</code> estimates 0.688, <code>K = 64</code> gives 0.828, <code>K = 256</code> gives 0.766, <code>K = 1024</code> gives 0.771 - and the mean error across all pairs falls 0.083 → 0.038 → 0.017 as <code>K</code> goes 16 → 64 → 256.</p>
+<p>One trap deserves to be said out loud, because it passes every test on one machine and then breaks in production: <strong>Python&#x27;s built-in <code>hash()</code> on <code>str</code> is randomised per process</strong>. Signatures written today will not match signatures computed tomorrow, and nothing that runs in a single process will ever show you that. Use a seeded <code>hashlib</code> hash:</p>
+<pre><code>def _hash(item, seed):
+    h = hashlib.blake2b(item.encode(), digest_size=8,
+                        key=seed.to_bytes(8, &#x27;little&#x27;))
+    return int.from_bytes(h.digest(), &#x27;little&#x27;)</code></pre>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2027%20-%20edit%20distance%20and%20similarity/imgs/day27_5.png">
+<h2>LSH: turning &quot;compare all pairs&quot; into &quot;look in a bucket&quot;</h2>
+<p>MinHash made each comparison <code>O(K)</code>, but there are still <code>n(n-1)/2</code> of them. Locality-sensitive hashing removes the pairs themselves. Split the <code>K</code> slots into <code>b</code> bands of <code>r</code> rows, hash each band, and call two documents candidates if <strong>any</strong> band matches exactly. A band matches with probability <code>J^r</code>, so</p>
+<pre><code>P(candidate) = 1 - (1 - J^r)^b</code></pre>
+<p>which is an S-curve whose steep part sits near <code>(1/b)^(1/r)</code>. That is the design knob: <code>b = 32, r = 4</code> puts the threshold near 0.42, <code>b = 16, r = 8</code> near 0.71, <code>b = 8, r = 16</code> near 0.88. Choose it just under the similarity you care about and the curve does the filtering for you - the middle setting fires with probability 0.001 at <code>J = 0.3</code> and 0.947 at <code>J = 0.8</code>.</p>
+<p>The point that makes this safe to deploy: <strong>LSH is a filter, not an answer.</strong> It proposes candidates, and the exact Jaccard is then computed on those few pairs, so a false positive costs a little work and nothing else. On my 8-document corpus the pipeline verifies 4 pairs instead of 28 - 14.3% of the work - and returns exactly what brute force returns. At corpus scale that ratio is the difference between a job that finishes and one that does not, which is why MinHash-LSH is the standard dedup pass behind datasets like C4 and RefinedWeb.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2027%20-%20edit%20distance%20and%20similarity/imgs/day27_6.png">
+<h2>The LeetCode problems</h2>
+<p><strong>LC 72 (Edit Distance)</strong> is the table, unchanged. The interview value is in naming the three predecessors as <em>operations</em>, then offering the rolling-row version and saying out loud what it loses.</p>
+<p><strong>LC 1143 (Longest Common Subsequence)</strong> is the same table with the substitution branch deleted. Solving it right after 72 makes the structure visible: one branch removed, one different algorithm.</p>
+<p><strong>LC 161 (One Edit Distance)</strong> is the interesting one, because the right answer builds no table at all:</p>
+<pre><code>def is_one_edit_distance(s, t):
+    if len(s) &gt; len(t):
+        s, t = t, s
+    if len(t) - len(s) &gt; 1 or s == t:
+        return False
+    for i in range(len(s)):
+        if s[i] != t[i]:
+            return s[i+1:] == t[i+1:] if len(s) == len(t) else s[i:] == t[i+1:]
+    return len(t) == len(s) + 1</code></pre>
+<p><code>O(n)</code> time, <code>O(1)</code> space. The general algorithm is the wrong tool once <code>k</code> is nailed down to 1 - the bounded-band idea taken to its limit.</p>
+<h2>Why this matters later</h2>
+<p>Edit distance is the shape of every alignment problem: sequence alignment in bioinformatics is the same recurrence with a scoring matrix, dynamic time warping is it with a different step set, and beam-search rescoring in ASR is it with a language model bolted on. MinHash and LSH point the other way - toward approximate nearest neighbour search, where embeddings replace shingles, cosine similarity replaces Jaccard, and the same &quot;cheap filter, exact verify&quot; contract shows up in HNSW graphs and IVF/PQ indexes. When a vector database says it is &quot;approximate&quot;, this is the trade it is describing.</p>
+<p>Both stories also converge on the same engineering discipline: know what your filter&#x27;s false-negative rate is, and verify the survivors exactly.</p>
+<p>Tomorrow: balanced trees - AVL, red-black and B-tree, all in one day.</p>
+<p>Code and diagrams: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2027%20-%20edit%20distance%20and%20similarity">day 27 on GitHub</a></p>
+</body>
+</html>

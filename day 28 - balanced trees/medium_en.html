@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Balanced trees in one go: AVL, red-black and the B-tree</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Balanced trees in one go: AVL, red-black and the B-tree</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2028%20-%20balanced%20trees">day 28 on GitHub</a></p>
+<p><em>100 Days of Python - day 28</em></p>
+<p>Insert the numbers 1 to 100000 into a plain binary search tree, in order, and the tree you get is 99999 levels deep. Every key goes to the right of the previous one; there is no branching at all. The <code>O(log n)</code> you were promised is now <code>O(n)</code>, and the input that caused it - already sorted data - is the single most common input in the world.</p>
+<p>That is the whole reason balanced trees exist, and today I want to do all three of the classic ones at once, because they are not three unrelated data structures. They are three answers to the same question, and once you see the shared skeleton the differences stop being trivia and start being engineering decisions you can actually make.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2028%20-%20balanced%20trees/imgs/day28_1.png">
+<p>On 2047 keys the numbers make the point better than prose does. Sorted input: height 2046, and an average lookup costs 1024 comparisons. Shuffled input: height 22, average lookup 12.62. Perfectly balanced: height 10, average lookup exactly 10.0. The random case is fine, which is exactly what makes this dangerous - the failure mode is not &quot;sometimes slow&quot;, it is &quot;fine in testing, quadratic in production&quot;.</p>
+<h2>The one primitive: rotation</h2>
+<p>Every self-balancing binary tree is built on a single operation, and it is worth staring at until it is obvious, because everything afterwards is bookkeeping around it.</p>
+<pre><code>def rotate_right(y):
+    x = y.left
+    y.left = x.right      # B changes parent - the only subtree that moves
+    x.right = y
+    update_height(y)      # y is now the lower node: update it FIRST
+    update_height(x)
+    return x</code></pre>
+<p>Read the shape in order: <code>A x B y C</code>. Before the rotation, <code>y</code> is on top. Afterwards, <code>x</code> is on top. And the in-order reading is still <code>A x B y C</code> - unchanged.</p>
+<p>That is the entire trick. <strong>A rotation changes the height without changing the sorted order.</strong> The search property survives for free, one side gets a level shallower and the other a level deeper, and only one subtree (<code>B</code>) changes parent, so the cost is three pointer writes and <code>O(1)</code> time.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2028%20-%20balanced%20trees/imgs/day28_2.png">
+<p>The one line people get wrong is the order of the two <code>update_height</code> calls. After the rotation <code>y</code> sits <em>below</em> <code>x</code>, so <code>y</code>&#x27;s height has to be recomputed before <code>x</code> reads it. Swap those two lines and every height above the rotation is quietly wrong - the tree is still a perfectly valid BST, it just silently stops being balanced. No exception, no failing assert, just gradually worse performance. I have lost an hour to that exact bug.</p>
+<h2>AVL: measure the height, keep it tight</h2>
+<p>An AVL tree stores a height in every node and enforces one rule everywhere:</p>
+<pre><code>| height(left) - height(right) | &lt;= 1</code></pre>
+<p>After an insert you walk back up the path you came down, and the first node that breaks the rule gets repaired. There are exactly four shapes, and they are the reason people find AVL fiddly - but the rule that picks between them is one line.</p>
+<p><code>LL</code> and <code>RR</code> are straight paths: the new key went left-left, or right-right. One rotation fixes them. <code>LR</code> and <code>RL</code> bend: left, then right. For those, a single rotation is useless - it just produces the mirror image of the same imbalance. So you rotate the <em>child</em> first to straighten the path, which turns it into an <code>LL</code>, and then rotate the parent.</p>
+<pre><code>def avl_rebalance(n):
+    update_height(n)
+    bf = balance_factor(n)              # height(left) - height(right)
+    if bf &gt; 1:                          # left heavy
+        if balance_factor(n.left) &lt; 0:  # ... but the child leans right: LR
+            n.left = rotate_left(n.left)
+        return rotate_right(n)
+    if bf &lt; -1:                         # right heavy
+        if balance_factor(n.right) &gt; 0: # ... but the child leans left: RL
+            n.right = rotate_right(n.right)
+        return rotate_left(n)
+    return n</code></pre>
+<p><strong>The sign of the child&#x27;s balance factor is what decides single versus double.</strong> Same sign as the parent means the path is straight; opposite sign means it bends. That is the whole case analysis, and once you phrase it that way you never have to memorise four diagrams again.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2028%20-%20balanced%20trees/imgs/day28_3.png">
+<p>There is a nice asymmetry between insert and delete that is worth knowing for interviews. An insert rebalances <strong>at most one node</strong>: the rotation restores that subtree to exactly the height it had before the insert, so nothing above it can possibly be affected. A delete can <em>shorten</em> a subtree, which can unbalance its parent, which can unbalance its parent - so the repairs cascade, potentially all the way to the root.</p>
+<p>On 100000 sorted keys, AVL comes out 16 levels deep with a mean lookup of 15.72 comparisons. <code>log2(100000)</code> is 16.6, so it is essentially at the theoretical floor. It paid 99983 rotations to get there - almost exactly one per insert, which sounds alarming until you remember that a rotation is three pointer writes and an extra level of depth is a cache miss.</p>
+<h2>Red-black: stop measuring, start colouring</h2>
+<p>A red-black tree never looks at a height. It colours nodes and maintains five properties:</p>
+<ol><li>Every node is red or black.</li><li>The root is black.</li><li>Every leaf (the NIL sentinel) is black.</li><li>A red node has two black children - no two reds in a row.</li><li>Every path from a node down to a leaf contains the same number of black nodes.</li></ol>
+<p>Properties 4 and 5 are the load-bearing pair. Black nodes are spread evenly, and reds cannot be adjacent, so the longest root-to-leaf path is at most twice the shortest, which gives <code>height &lt;= 2·log2(n + 1)</code>. <strong>Balance is a side effect of the colour rules</strong>, not something the code ever computes - and that indirection is exactly why red-black is looser than AVL.</p>
+<p>Insertion paints the new node red. Red cannot change any path&#x27;s black count, so property 5 is safe by construction; the only thing that can break is property 4. The fixup has three cases:</p>
+<ul><li><strong>Case 1, red uncle.</strong> Paint the parent and uncle black, the grandparent red. No rotation at all - just recolouring. The black height through the grandparent is unchanged, but the grandparent is now red, so the same violation reappears <strong>two levels up</strong> and the loop continues. This is the case that iterates.</li><li><strong>Case 2, black uncle, node on the inside.</strong> Exactly the AVL <code>LR</code> shape. One rotation straightens the zig-zag, turning it into case 3.</li><li><strong>Case 3, black uncle, straight path.</strong> Recolour the parent black and the grandparent red, rotate the grandparent once. The subtree root is black again, so <strong>the loop ends here.</strong></li></ul>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2028%20-%20balanced%20trees/imgs/day28_4.png">
+<p>Because cases 2 and 3 both terminate the loop, and case 1 does no rotations at all, an insert costs <strong>at most 2 rotations</strong> and a delete <strong>at most 3</strong>, regardless of tree size. I measured it over 4095 random inserts and 2000 random deletes: red-black&#x27;s worst single operation used 2 rotations for an insert and 3 for a delete. AVL&#x27;s worst used 2 and 5.</p>
+<h2>So which one</h2>
+<p>On 100000 sorted keys:</p>
+<pre><code>           height  mean lookup  rotations  recolourings
+---------  ------  -----------  ---------  ------------
+AVL        16      15.72        99983      -
+red-black  30      16.09        99969      499846</code></pre>
+<p>On 100000 shuffled keys they converge almost completely: height 19 for both, 15.95 against 16.03 comparisons, 69892 rotations against 58398.</p>
+<p>Both are <code>O(log n)</code>. The difference lives entirely in the constants and the worst case. AVL is shorter, so lookups are faster. Red-black is taller, but it does fewer structural writes - most of its repairs are recolourings, which are a bit flip rather than a pointer write - and it has a <strong>hard per-operation bound</strong>.</p>
+<p>That bound is why the Linux kernel&#x27;s CFS scheduler, <code>epoll</code>, the ext3 directory index, <code>std::map</code> and Java&#x27;s <code>TreeMap</code> are all red-black and not AVL. A scheduler does not care about one extra comparison per lookup; it cares enormously about no single operation ever taking unbounded time. Reads dominate and writes are rare, pick AVL. Writes are frequent and latency must be predictable, pick red-black.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2028%20-%20balanced%20trees/imgs/day28_5.png">
+<h2>The B-tree: change the cost model, change the shape</h2>
+<p>Everything above quietly assumes that comparisons are expensive and pointer hops are free. On a disk, or an SSD, that assumption is backwards. A random read costs tens of thousands of cycles, and <strong>reading 16 bytes costs exactly the same as reading a full 4096-byte page</strong>.</p>
+<p>If you are going to pay for a whole page anyway, fill it with keys. That is the entire idea of a B-tree: a node <em>is</em> a page. With minimum degree <code>t</code>, every node except the root holds between <code>t - 1</code> and <code>2t - 1</code> keys.</p>
+<pre><code>def degree_for_page(page_bytes, entry_bytes):
+    return max(2, (page_bytes // entry_bytes) // 2)
+
+degree_for_page(4096, 16)   # -&gt; 128, so up to 255 keys per node</code></pre>
+<p>The consequences are dramatic. One million keys fit in a tree of <strong>height 2</strong> with 7874 nodes, and a lookup reads <strong>3 pages</strong>. A binary tree over the same keys would be about 20 levels deep - potentially 20 random reads.</p>
+<p>Insertion never rotates. Descending toward a leaf, any full child is <strong>split on the way down</strong>, and its median key moves up into the parent:</p>
+<pre><code>parent.keys.insert(i, median)          # median goes UP
+parent.children.insert(i + 1, right)</code></pre>
+<p>Splitting <em>before</em> descending is the clever part: it guarantees the parent always has room, so a split can never propagate back upward and one downward pass is enough. And when the root itself is full, it splits into a brand-new root - which is the only way a B-tree ever gets taller. It <strong>grows upward at the root, never downward at the leaves</strong>, which is precisely why all leaves stay at exactly the same depth, forever, with no rebalancing rule needed.</p>
+<p>With <code>t = 2</code> and keys 1 through 10 inserted in order you end up with a root of <code>[4]</code>, height 2, 8 nodes and 5 splits. Sorted input - the catastrophic case for a plain BST - is a complete non-event here.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2028%20-%20balanced%20trees/imgs/day28_6.png">
+<h2>LeetCode 110 and 1382</h2>
+<p><strong>110, Balanced Binary Tree</strong>, asks whether a tree satisfies the AVL invariant. The naive answer calls a <code>height()</code> helper at every node, recomputing the same heights over and over, and is <code>O(n²)</code>. The good answer makes one post-order recursion return <strong>both</strong> the height and the verdict, using <code>-1</code> as a failure sentinel:</p>
+<pre><code>def is_balanced(root):
+    def h(n):
+        if n is None: return 0
+        l = h(n.left)
+        if l &lt; 0: return -1              # already failed, stop early
+        r = h(n.right)
+        if r &lt; 0: return -1
+        if abs(l - r) &gt; 1: return -1
+        return 1 + max(l, r)
+    return h(root) &gt;= 0</code></pre>
+<p><code>-1</code> works as a sentinel precisely because a real height is always non-negative. Once a subtree reports failure, every level above just forwards it without looking further: one pass, <code>O(n)</code>, early exit built in. The same &quot;overload the return value&quot; move solves tree diameter and maximum path sum. Note also that the space is <code>O(h)</code> for the recursion stack - which is itself an argument for caring about height, since a degenerate tree does not merely search slowly, it blows the stack.</p>
+<p><strong>1382, Balance a Binary Search Tree</strong>, hands you an already-skewed BST and asks you to fix it after the fact. Two steps: flatten with an in-order walk, which is sorted by definition, then rebuild by always taking the middle element as the root (which is LeetCode 108 on its own). The two halves differ in size by at most one, so the height is forced down to <code>ceil(log2(n + 1))</code>. A chain of 63 nodes goes from height 62 to height 5, with the key set untouched.</p>
+<p>The price is <code>O(n)</code> extra space for that array. If you cannot spend it, the <strong>Day-Stout-Warren</strong> algorithm rotates the whole tree into a right-leaning vine and then back into balance in <code>O(1)</code> space - built out of the very same rotation primitive from the top of this article.</p>
+<h2>Why this matters later</h2>
+<p>Rotations and the in-order invariant come back the moment a tree carries aggregate data rather than just keys: an interval tree stores a subtree maximum in every node, and a rotation has to recompute it in exactly the same &quot;lower node first&quot; order as <code>update_height</code>. Segment trees and Fenwick trees drop rotations entirely and get their balance from the <em>index arithmetic</em> instead, which is the same trade the B-tree makes - fix the shape up front and you never have to repair it. And the B-tree itself is not a historical curiosity: it is the on-disk index in PostgreSQL, SQLite, MySQL&#x27;s InnoDB and essentially every filesystem, and its LSM-tree rival makes exactly one different assumption about which is more expensive, reads or writes.</p>
+<p>Tomorrow: keeping a running answer over ranges, and why a tree with no pointers at all can beat one with them.</p>
+<p>The full runnable module, notebook, figures and an interactive walkthrough are in <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2028%20-%20balanced%20trees">day 28 on GitHub</a>.</p>
+</body>
+</html>

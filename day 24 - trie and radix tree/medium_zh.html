@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
-<title>Day 24 — 把共用的前綴只存一次的那棵樹</title>
+<title>Day 24 — Trie 與 Radix Tree：把共用前綴只存一次</title>
 <style>
 body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
          font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
@@ -26,7 +26,7 @@ li     { margin: .3em 0; }
 </style>
 </head>
 <body>
-<h1>Day 24 — 把共用的前綴只存一次的那棵樹</h1>
+<h1>Day 24 — Trie 與 Radix Tree：把共用前綴只存一次</h1>
 <p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2024%20-%20trie%20and%20radix%20tree">day 24 on GitHub</a></p>
 <p><em>100 Days of Python - day 24</em></p>
 <p>hash set 可以告訴你 <code>rubicon</code> 在不在字典裡，但它沒辦法告訴你 <code>rubicon</code>、<code>rubicundus</code>、<code>ruber</code> 這三個字開頭是一樣的 —— 因為 hash 就是設計來把這個資訊銷毀掉的。如果你真正想問的是「這些字串之間有什麼共通的地方」，你需要一個會 <strong>把前綴留下來</strong>的結構，那個結構就是 trie。</p>

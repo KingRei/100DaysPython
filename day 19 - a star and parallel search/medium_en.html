@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Dijkstra with a guess</title>
+<title>A*: heuristic shortest-path search, and what parallel search changes</title>
 <style>
 body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
          font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
@@ -26,7 +26,7 @@ li     { margin: .3em 0; }
 </style>
 </head>
 <body>
-<h1>Dijkstra with a guess</h1>
+<h1>A*: heuristic shortest-path search, and what parallel search changes</h1>
 <p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2019%20-%20a%20star%20and%20parallel%20search">day 19 on GitHub</a></p>
 <p><em>100 Days of Python - day 19</em></p>
 <p>Yesterday&#x27;s Dijkstra is a fair algorithm. It never assumes, never speculates, and expands whichever cell is cheapest so far - wherever that cell happens to be on the map, including directly behind you. On a route from one side of a city to the other, that fairness means combing through half the suburbs before the first useful road appears.</p>

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>The line that makes Dijkstra wrong</title>
+<title>Bellman-Ford, SPFA and Floyd-Warshall: shortest paths with negative weights</title>
 <style>
 body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
          font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
@@ -26,7 +26,7 @@ li     { margin: .3em 0; }
 </style>
 </head>
 <body>
-<h1>The line that makes Dijkstra wrong</h1>
+<h1>Bellman-Ford, SPFA and Floyd-Warshall: shortest paths with negative weights</h1>
 <p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2017%20-%20bellman%20ford%20and%20floyd%20warshall">day 17 on GitHub</a></p>
 <p><em>100 Days of Python - day 17</em></p>
 <p>Yesterday&#x27;s <code>heap_greedy</code> skeleton had one sentence of justification hidden in it: <em>any other route to this vertex has to pass through something still in the heap, whose distance is already at least as large, and adding more edges only makes it longer.</em> Every guarantee Dijkstra offers rests on that sentence, and the sentence rests on one assumption - that adding an edge never makes a path shorter.</p>

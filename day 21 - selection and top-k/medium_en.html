@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Selection and top-k - you never had to sort</title>
+<title>Selection and top-k: quickselect and heaps, without sorting first</title>
 <style>
 body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
          font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
@@ -26,7 +26,7 @@ li     { margin: .3em 0; }
 </style>
 </head>
 <body>
-<h1>Selection and top-k - you never had to sort</h1>
+<h1>Selection and top-k: quickselect and heaps, without sorting first</h1>
 <p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2021%20-%20selection%20and%20top-k">day 21 on GitHub</a></p>
 <p><em>100 Days of Python - day 21</em></p>
 <p>Every token an LLM produces goes through a top-k. The model emits a score for each of a hundred thousand-odd vocabulary entries, and something has to pick the best few before sampling. That kernel runs more often than almost anything else in the stack, so it has been optimised hard - and when I read the two implementations I use most, flashinfer&#x27;s <code>topk.cuh</code> and SGLang&#x27;s <code>topk_impl.cuh</code>, what surprised me was where the difficulty had gone. Almost none of it is in the selection. It is in who resets a counter, and who wins a tie.</p>

@@ -49,15 +49,15 @@
 | Day | 主題 | 備註 |
 |---|---|---|
 | 24 | Trie 與 Radix / Patricia Tree ✅ | 自動完成 + IP 路由表；longest prefix match；sglang RadixCache 的 split / page 對齊 / leaf-only LRU（RadixAttention 的地基） |
-| 25 | 字串匹配：KMP + Rabin-Karp | failure function、rolling hash |
-| 26 | Suffix Array + LCP 與 Aho-Corasick | 後綴結構與多模式匹配一起講 |
-| 27 | 編輯距離與相似度：Levenshtein、Jaccard、MinHash | 為 Day 66 檢索鋪路 |
+| 25 | 字串匹配：KMP + Rabin-Karp ✅ | failure function、rolling hash |
+| 26 | Suffix Array + LCP 與 Aho-Corasick ✅ | 後綴結構與多模式匹配一起講 |
+| 27 | 編輯距離與相似度：Levenshtein、Jaccard、MinHash ✅ | Levenshtein DP / backtrace / rolling row / bounded-k band、WER、LCS+diff；Jaccard shingles、MinHash、LSH banding；為 Day 66 檢索鋪路 |
 
 ## Part 4 — 進階樹、區間與機率型結構（Day 28–32）
 
 | Day | 主題 | 備註 |
 |---|---|---|
-| 28 | 平衡樹一次講完：AVL、Red-Black、B-Tree | 接 Day 04；旋轉 → 顏色 → 磁碟頁 |
+| 28 | 平衡樹一次講完：AVL、Red-Black、B-Tree ✅ | 接 Day 04；rotation 保中序、AVL 四種 case、紅黑五性質與 insert fixup（插入 ≤2 旋轉／刪除 ≤3）、B-tree 以 page 為節點（4KB→t=128，1e6 keys height 2）；LC 110/108/1382 + DSW |
 | 29 | 區間結構：Segment Tree（lazy）+ Fenwick | 同一類問題的兩種寫法 |
 | 30 | LRU / LFU Cache | LC 146；為 Day 57 KV cache 鋪路 |
 | 31 | Skip List | Redis sorted set；Day 67 HNSW 的地基 |

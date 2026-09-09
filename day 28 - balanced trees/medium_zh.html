@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 28 — 平衡樹一次講完：AVL、Red-Black、B-Tree</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 28 — 平衡樹一次講完：AVL、Red-Black、B-Tree</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2028%20-%20balanced%20trees">day 28 on GitHub</a></p>
+<p><em>100 Days of Python - day 28</em></p>
+<p>把 1 到 100000 照順序插進一棵普通的 binary search tree，你會得到一棵 99999 層深的樹。每一個 key 都掛在前一個的右邊，完全沒有分岔。說好的 <code>O(log n)</code> 變成 <code>O(n)</code>，而造成這件事的輸入 — 已經排序好的資料 — 是全世界最常見的輸入。</p>
+<p>平衡樹就是為了這件事存在的。今天我想把三個經典的一次講完，因為它們並不是三個各自獨立的資料結構，而是<strong>同一個問題的三種答案</strong>。看懂共同的骨架之後，它們之間的差別就不再是考試題目，而是你真的做得出來的工程決策。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2028%20-%20balanced%20trees/imgs/day28_1.png">
+<p>2047 個 key 的實測數字比講道理清楚多了。排序輸入：height 2046，平均查詢要 1024 次比較。打亂輸入：height 22，平均 12.62 次。完美平衡：height 10，平均剛好 10.0。隨機的情況其實沒問題 — 而這正是危險的地方，因為失敗模式不是「有時候比較慢」，而是「測試時好好的，上線變成平方級」。</p>
+<h2>唯一的原始操作：旋轉</h2>
+<p>所有會自我平衡的二元樹都建立在一個操作上，值得盯著看到覺得理所當然為止，因為後面全部都只是繞著它做記帳。</p>
+<pre><code>def rotate_right(y):
+    x = y.left
+    y.left = x.right      # B change parent - the only subtree that moves
+    x.right = y
+    update_height(y)      # y is now the lower node: update it FIRST
+    update_height(x)
+    return x</code></pre>
+<p>照中序讀這個形狀：<code>A x B y C</code>。旋轉前 <code>y</code> 在上面，旋轉後 <code>x</code> 在上面，而中序讀出來還是 <code>A x B y C</code> — 完全沒變。</p>
+<p>這就是全部的訣竅。<strong>旋轉會改變高度，但不會改變排序</strong>。搜尋性質自動成立，一邊淺一層、另一邊深一層，而且只有一棵子樹（<code>B</code>）換了 parent，所以成本是三個指標寫入、<code>O(1)</code> 時間。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2028%20-%20balanced%20trees/imgs/day28_2.png">
+<p>最容易寫錯的一行是那兩個 <code>update_height</code> 的順序。旋轉之後 <code>y</code> 跑到 <code>x</code> <strong>下面</strong>，所以必須先重算 <code>y</code> 的高度，<code>x</code> 才讀得到正確的值。把這兩行對調，旋轉點以上每一個高度都會悄悄錯掉 — 這棵樹仍然是完全合法的 BST，只是安靜地不再平衡。不會拋例外、不會有 assert 失敗，只有慢慢變差的效能。我在這個 bug 上耗掉過一小時。</p>
+<h2>AVL：量高度，而且抓得很緊</h2>
+<p>AVL 樹在每個節點存一個高度，並且在每個節點上強制一條規則：</p>
+<pre><code>| height(left) - height(right) | &lt;= 1</code></pre>
+<p>插入之後沿著剛剛走下來的路徑往回走，<strong>第一個</strong>違反規則的節點就地修好。剛好有四種形狀，這也是大家覺得 AVL 麻煩的原因 — 但決定用哪一種的規則只有一行。</p>
+<p><code>LL</code> 和 <code>RR</code> 是直的路徑：新的 key 走了左左，或右右。一次旋轉就修好。<code>LR</code> 和 <code>RL</code> 是彎的：先左再右。這兩種情況下單次旋轉完全沒用 — 轉完只會得到同一個問題的鏡像。所以要<strong>先旋轉子節點</strong>把路徑拉直，變成 <code>LL</code>，再旋轉父節點。</p>
+<pre><code>def avl_rebalance(n):
+    update_height(n)
+    bf = balance_factor(n)              # height(left) - height(right)
+    if bf &gt; 1:                          # left heavy
+        if balance_factor(n.left) &lt; 0:  # ... but the child leans right: LR
+            n.left = rotate_left(n.left)
+        return rotate_right(n)
+    if bf &lt; -1:                         # right heavy
+        if balance_factor(n.right) &gt; 0: # ... but the child leans left: RL
+            n.right = rotate_right(n.right)
+        return rotate_left(n)
+    return n</code></pre>
+<p><strong>決定單旋還是雙旋的，是子節點 balance factor 的正負號。</strong>跟父節點同號代表路徑是直的，異號代表路徑是彎的。整個 case 分析就這樣，用這個角度講完之後，你再也不需要背那四張圖。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2028%20-%20balanced%20trees/imgs/day28_3.png">
+<p>插入和刪除之間有一個很漂亮的不對稱，面試值得知道。插入<strong>最多只修一個節點</strong>：旋轉會把那棵子樹的高度還原成插入前的樣子，所以上面不可能受影響。刪除則會讓子樹<strong>變矮</strong>，變矮就可能讓父節點失衡，父節點失衡又可能讓它的父節點失衡 — 修補會一路連鎖，最壞一路到根。</p>
+<p>十萬個排序 key 的實測：AVL 高度 16，平均查詢 15.72 次比較。<code>log2(100000)</code> 是 16.6，所以基本上就是理論下限。代價是 99983 次旋轉，幾乎每次插入都轉一次 — 聽起來很嚇人，但想一下：一次旋轉是三個指標寫入，多一層深度是一次 cache miss。</p>
+<h2>紅黑樹：不量高度，改成塗顏色</h2>
+<p>紅黑樹從頭到尾沒看過高度。它塗顏色，並維持五條性質：</p>
+<ol><li>每個節點不是紅就是黑。</li><li>根是黑的。</li><li>每個葉子（NIL 哨兵）是黑的。</li><li>紅節點的兩個小孩都是黑的 — 紅色不能連續。</li><li>從任一節點到其後代葉子的每條路徑，經過的黑節點數目相同。</li></ol>
+<p>真正在承重的是第 4 和第 5 條。黑節點平均分布、紅節點不能相鄰，於是最長路徑最多是最短路徑的兩倍，得到 <code>height &lt;= 2·log2(n + 1)</code>。<strong>平衡是顏色規則的副產品</strong>，程式從來沒有算過它 — 而這一層間接性正是紅黑樹比 AVL 鬆的原因。</p>
+<p>插入時新節點一律塗紅。紅色不會改變任何路徑的黑色數量，所以性質 5 天生成立；唯一可能壞掉的是性質 4。修補分三個 case：</p>
+<ul><li><strong>case 1：叔叔是紅的。</strong>父親和叔叔塗黑、祖父塗紅。<strong>完全沒有旋轉</strong>，只有換色。經過祖父的黑高沒變，但祖父現在是紅的，所以同一個違規<strong>往上跳兩層</strong>又出現，迴圈繼續。這是唯一會迭代的 case。</li><li><strong>case 2：叔叔是黑的，新節點在內側。</strong>跟 AVL 的 <code>LR</code> 一模一樣。旋轉一次把之字形拉直，變成 case 3。</li><li><strong>case 3：叔叔是黑的，路徑是直的。</strong>父親塗黑、祖父塗紅，對祖父旋轉一次。子樹的根又變黑了，所以<strong>迴圈立刻結束</strong>。</li></ul>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2028%20-%20balanced%20trees/imgs/day28_4.png">
+<p>因為 case 2 和 case 3 都會終止迴圈，而 case 1 根本不旋轉，所以一次插入<strong>最多 2 次旋轉</strong>、一次刪除<strong>最多 3 次</strong>，不管樹多大。我用 4095 次隨機插入加 2000 次隨機刪除量過：紅黑樹最壞的單次操作是插入 2 次、刪除 3 次旋轉；AVL 最壞是 2 次和 5 次。</p>
+<h2>那到底要選哪一個</h2>
+<p>十萬個排序 key：</p>
+<pre><code>           height  平均查詢  旋轉   換色
+---------  ------  --------  -----  ------
+AVL        16      15.72     99983  -
+red-black  30      16.09     99969  499846</code></pre>
+<p>十萬個打亂的 key，兩者幾乎完全收斂：高度都是 19，比較次數 15.95 對 16.03，旋轉 69892 對 58398。</p>
+<p>兩個都是 <code>O(log n)</code>。差別完全落在<strong>常數和最壞情況</strong>。AVL 比較矮，所以查詢快。紅黑樹高一點，但結構性寫入比較少 — 它大部分的修補是換色，換色只是翻一個 bit，不是寫指標 — 而且它有<strong>每次操作的硬上界</strong>。</p>
+<p>這個上界就是為什麼 Linux kernel 的 CFS scheduler、<code>epoll</code>、ext3 的目錄索引、<code>std::map</code> 和 Java 的 <code>TreeMap</code> 用的全是紅黑樹而不是 AVL。scheduler 完全不在乎每次查詢多比一次，但非常在乎「絕對不能有某一次操作突然變很久」。<strong>讀多寫少選 AVL，寫得頻繁而且延遲要可預測就選紅黑樹。</strong></p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2028%20-%20balanced%20trees/imgs/day28_5.png">
+<h2>B-tree：換掉成本模型，形狀就跟著換</h2>
+<p>上面全部都默默假設「比較很貴、跳指標免費」。在硬碟或 SSD 上，這個假設是反的。一次隨機讀取要好幾萬個 cycle，而且<strong>讀 16 byte 和讀一整個 4096 byte 的 page 一樣貴</strong>。</p>
+<p>既然一次都要付一整頁的錢，那就<strong>把一整頁塞滿 key</strong>。這就是 B-tree 的全部想法：一個節點<strong>就是</strong>一個 page。取最小分支度 <code>t</code>，除了根以外每個節點裝 <code>t - 1</code> 到 <code>2t - 1</code> 個 key。</p>
+<pre><code>def degree_for_page(page_bytes, entry_bytes):
+    return max(2, (page_bytes // entry_bytes) // 2)
+
+degree_for_page(4096, 16)   # -&gt; 128, so up to 255 keys per node</code></pre>
+<p>後果非常戲劇性。一百萬個 key 只需要一棵<strong>高度 2</strong> 的樹、共 7874 個節點，一次查詢<strong>讀 3 個 page</strong>。同樣的 key 放進二元樹大約 20 層深 — 也就是可能 20 次隨機讀取。</p>
+<p>插入完全不旋轉。往葉子下降的途中，遇到滿的子節點就<strong>當場分裂</strong>，中位數升到父節點：</p>
+<pre><code>parent.keys.insert(i, median)          # median goes UP
+parent.children.insert(i + 1, right)</code></pre>
+<p>「<strong>先分裂再下降</strong>」是最巧妙的地方：它保證父節點永遠有空位，所以分裂絕對不會往上傳染，一趟往下走就結束。而當根自己滿了，它會分裂出一個全新的根 — 這是 B-tree 唯一會長高的方式。它<strong>從根往上長，不從葉子往下長</strong>，這正是為什麼所有葉子永遠停在同一層，而且完全不需要任何再平衡規則。</p>
+<p><code>t = 2</code>、照順序插 1 到 10，得到的是根 <code>[4]</code>、高度 2、8 個節點、5 次分裂。排序輸入 — 對普通 BST 是災難的那個 case — 在這裡完全不算一回事。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2028%20-%20balanced%20trees/imgs/day28_6.png">
+<h2>LeetCode 110 與 1382</h2>
+<p><strong>110 Balanced Binary Tree</strong> 問這棵樹符不符合 AVL 的不變式。天真的寫法是在每個節點各叫一次 <code>height()</code>，把同樣的高度重算無數次，那是 <code>O(n²)</code>。好的寫法是讓同一次後序遞迴<strong>同時</strong>回傳高度和答案，用 <code>-1</code> 當失敗哨兵：</p>
+<pre><code>def is_balanced(root):
+    def h(n):
+        if n is None: return 0
+        l = h(n.left)
+        if l &lt; 0: return -1              # already failed, stop early
+        r = h(n.right)
+        if r &lt; 0: return -1
+        if abs(l - r) &gt; 1: return -1
+        return 1 + max(l, r)
+    return h(root) &gt;= 0</code></pre>
+<p><code>-1</code> 之所以能當哨兵，就是因為真正的高度永遠非負。一旦某棵子樹回報失敗，上面每一層都直接往上傳、不再往下看：一趟走完、<code>O(n)</code>、而且自帶提早結束。同樣這招「把回傳值多塞一個意義」也能解樹的直徑和最大路徑和。另外注意空間是遞迴堆疊的 <code>O(h)</code> — <strong>這本身就是我們該在乎高度的理由</strong>：一棵退化的樹不只查詢慢，它會直接把堆疊爆掉。</p>
+<p><strong>1382 Balance a Binary Search Tree</strong> 給你一棵已經歪掉的 BST，要你事後救回來。兩步：先用中序走訪攤平（BST 的中序天生就是排序好的），再重建時每次取<strong>正中間</strong>當根（這一半就是 LeetCode 108）。左右兩半的元素個數最多差一個，所以高度被壓到 <code>ceil(log2(n + 1))</code>。一條 63 個節點的鏈，高度從 62 掉到 5，key 一個都沒動。</p>
+<p>代價是那個陣列的 <code>O(n)</code> 額外空間。如果連這個都不能花，還有 <strong>Day-Stout-Warren</strong> 演算法：先把整棵樹旋轉成一條向右的藤蔓，再轉回平衡，<code>O(1)</code> 空間 — 而且用的就是本文開頭那個一模一樣的旋轉。</p>
+<h2>這些東西後面會用到</h2>
+<p>旋轉和中序不變式，在樹除了 key 之外還帶著聚合資料的那一刻就會回來：interval tree 在每個節點存子樹的最大值，旋轉時必須用跟 <code>update_height</code> 完全相同的「先算下面那個」順序重算它。Segment tree 和 Fenwick tree 則乾脆不要旋轉，改用<strong>索引的算術</strong>直接得到平衡 — 這其實跟 B-tree 做的是同一筆交易：形狀先固定好，就永遠不用修。而 B-tree 本身也不是歷史文物，它就是 PostgreSQL、SQLite、MySQL InnoDB 和幾乎每個檔案系統的磁碟索引；它的對手 LSM-tree 只差在對「讀貴還是寫貴」做了相反的假設。</p>
+<p>明天：怎麼對一段區間持續維護一個答案，以及為什麼一棵完全沒有指標的樹，可以贏過有指標的那棵。</p>
+<p>完整可執行的模組、notebook、圖檔和互動式演示都在 <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2028%20-%20balanced%20trees">day 28 on GitHub</a>。</p>
+</body>
+</html>

@@ -1,0 +1,1220 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 28 - Balanced trees in one go - AVL, red-black, B-tree / 平衡樹一次講完：AVL、Red-Black、B-Tree</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='2' y='2' width='28' height='28' rx='7' fill='%23062434'/><circle cx='11' cy='12' r='4' fill='%2312b3b8'/><circle cx='21' cy='12' r='4' fill='%239d6bff'/><circle cx='16' cy='22' r='4' fill='%23ff9736'/></svg>">
+<style>
+:root{
+  --bg0:#04121c; --bg1:#062434; --card:rgba(6,36,52,.72);
+  --teal:#12b3b8; --teal-d:#0a6b74; --teal-l:#3fe0dd;
+  --purple:#9d6bff; --purple-d:#241542; --purple-l:#c7a6ff;
+  --orange:#ff9736; --orange-d:#3a2109; --orange-l:#ffbe6b;
+  --red:#ff5c5c; --grey:#8fa3ac; --pale:#dff2f5; --white:#ffffff;
+  --serif:"Latin Modern Roman","Liberation Serif",Georgia,"Times New Roman",serif;
+  --mono:"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:
+    radial-gradient(900px 520px at 12% -8%,rgba(157,107,255,.20) 0%,rgba(157,107,255,0) 62%),
+    radial-gradient(900px 520px at 88% -4%,rgba(255,151,54,.16) 0%,rgba(255,151,54,0) 60%),
+    radial-gradient(1200px 800px at 50% 30%,#083041 0%,var(--bg1) 45%,var(--bg0) 100%);
+  color:var(--pale); font-family:var(--serif); min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--teal-l)}
+.wrap{max-width:1180px;margin:0 auto;padding:26px 20px 60px}
+header{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-bottom:6px}
+h1{font-size:30px;margin:0;color:var(--white);letter-spacing:.4px;
+   text-shadow:0 0 16px rgba(63,224,221,.35)}
+.day{font-size:13px;letter-spacing:2.4px;text-transform:uppercase;color:var(--orange-l);
+     border:1px solid var(--orange);border-radius:999px;padding:4px 12px;
+     background:rgba(255,151,54,.10)}
+.sub{color:var(--grey);font-size:15px;margin:8px 0 20px;max-width:72ch;line-height:1.6}
+.spacer{flex:1}
+.lang{display:flex;border:1px solid var(--teal-d);border-radius:999px;overflow:hidden}
+.lang button{background:transparent;color:var(--teal-l);border:0;padding:5px 14px;
+  font-family:var(--serif);font-size:14px;cursor:pointer}
+.lang button.on{background:var(--teal);color:#022}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
+.tabs button{
+  background:rgba(6,40,58,.75);border:1px solid rgba(18,179,184,.45);color:var(--pale);
+  padding:9px 16px;border-radius:9px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  transition:.18s}
+.tabs button:hover{border-color:var(--teal-l);color:var(--white)}
+.tabs button.on{background:linear-gradient(135deg,var(--teal) 0%,var(--purple) 140%);
+  border-color:var(--teal-l);color:#03222a;box-shadow:0 0 18px rgba(18,179,184,.30)}
+.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:18px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid rgba(18,179,184,.28);border-radius:13px;
+      padding:14px 16px}
+.card h3{margin:0 0 10px;font-size:14px;letter-spacing:2px;text-transform:uppercase;
+         color:var(--teal-l);font-weight:normal}
+svg.stage{width:100%;height:auto;display:block;touch-action:none}
+svg.stage text{font-family:var(--serif);user-select:none}
+.narr{min-height:52px;margin-top:10px;padding:10px 12px;border-left:3px solid var(--orange);
+      background:rgba(255,151,54,.07);font-size:16px;line-height:1.55;color:var(--white)}
+.narr code{font-family:var(--mono);font-size:14px;color:var(--orange-l)}
+.narr b{color:var(--orange-l);font-weight:normal}
+.ctrl{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
+.ctrl button{background:rgba(6,40,58,.9);border:1px solid var(--teal-d);color:var(--teal-l);
+  border-radius:8px;padding:7px 13px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  min-width:44px;transition:.15s}
+.ctrl button:hover:not(:disabled){background:var(--teal);color:#03222a}
+.ctrl button:disabled{opacity:.35;cursor:default}
+.ctrl .play{min-width:92px;font-weight:bold;border-color:var(--orange);color:var(--orange-l)}
+.ctrl .play:hover{background:var(--orange);color:#2a1400}
+.ctrl input[type=range]{width:120px;accent-color:var(--purple)}
+.stepno{color:var(--grey);font-size:14px;font-family:var(--mono)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;min-height:30px}
+.chip{border:1px solid var(--teal-d);border-radius:6px;padding:3px 9px;font-family:var(--mono);
+      font-size:14px;color:var(--pale);background:rgba(18,179,184,.10)}
+.chip.hot{border-color:var(--orange);color:var(--orange-l);background:rgba(255,151,54,.14)}
+.chip.act{border-color:var(--purple);color:var(--purple-l);background:rgba(157,107,255,.16)}
+.chip.ok{border-color:var(--teal-l);color:var(--teal-l);background:rgba(63,224,221,.12)}
+.chip.dim{border-color:#2f5661;color:var(--grey);background:transparent}
+.chip.bad{border-color:var(--red);color:#ff9a9a;background:rgba(255,92,92,.14)}
+.chip.empty{border-style:dashed;color:var(--grey);border-color:#2f5661}
+.panel+.panel{margin-top:12px}
+.panel .lbl{font-size:13px;letter-spacing:1.6px;text-transform:uppercase;color:var(--grey);
+  margin-bottom:5px}
+pre.code{margin:0;font-family:var(--mono);font-size:13.5px;line-height:1.72;overflow-x:auto;
+  color:#a8c8d0}
+pre.code .ln{display:block;padding:0 8px;border-left:3px solid transparent;white-space:pre}
+pre.code .ln.on{background:rgba(255,151,54,.12);border-left-color:var(--orange);color:var(--white)}
+pre.code .cm{color:#5f7b85;font-style:italic}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:13.5px;color:var(--grey)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;
+  vertical-align:-1px;border:1px solid rgba(255,255,255,.22)}
+.note{font-size:15px;line-height:1.65;color:var(--pale)}
+.note b{color:var(--purple-l);font-weight:normal}
+.note code{font-family:var(--mono);font-size:13.5px;color:var(--teal-l)}
+.toggle-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.toggle-row button{border:1px solid rgba(18,179,184,.45);border-radius:8px;padding:6px 13px;
+  cursor:pointer;font-family:var(--serif);font-size:14px;
+  background:rgba(6,40,58,.75);color:var(--pale)}
+.toggle-row button.on{background:var(--purple);border-color:var(--purple-l);color:#150a2b}
+footer{margin-top:32px;padding-top:16px;border-top:1px solid rgba(18,179,184,.25);
+  color:var(--grey);font-size:14px;display:flex;gap:18px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <span class="day">Day 28</span>
+  <h1 data-i18n="title">平衡樹一次講完：AVL、Red-Black、B-Tree</h1>
+  <span class="spacer"></span>
+  <div class="lang">
+    <button id="btn-zh" class="on" onclick="setLang('zh')">中文</button>
+    <button id="btn-en" onclick="setLang('en')">EN</button>
+  </div>
+</header>
+<p class="sub" data-i18n="sub">二元搜尋樹的效能取決於資料進來的順序，而排序好的 id 會讓它退化成 linked list。三種修法共用同一個動作「旋轉」：AVL 用高度、red-black 用顏色、B-tree 直接把節點放大成一個磁碟頁。</p>
+
+<div class="tabs" id="tabs"></div>
+
+<div class="grid">
+  <div>
+    <div class="card">
+      <h3 id="stage-title"></h3>
+      <svg class="stage" id="stage" viewBox="0 0 10 6.4" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="legend" id="legend"></div>
+      <div class="narr" id="narr"></div>
+      <div class="ctrl">
+        <button onclick="reset()" title="reset">⟲</button>
+        <button id="prev" onclick="step(-1)">◀</button>
+        <button class="play" id="play" onclick="togglePlay()" data-i18n="play">▶ 播放</button>
+        <button id="next" onclick="step(1)">▶</button>
+        <span class="stepno" id="stepno">0 / 0</span>
+        <span class="spacer"></span>
+        <span style="font-size:13px;color:var(--grey)" data-i18n="speed">速度</span>
+        <input type="range" id="speed" min="180" max="1600" step="20" value="820">
+      </div>
+      <div class="toggle-row" id="extra"></div>
+    </div>
+  </div>
+  <div>
+    <div class="card" id="state-card">
+      <h3 data-i18n="state">演算法狀態</h3>
+      <div id="panels"></div>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="code">程式碼</h3>
+      <pre class="code" id="code"></pre>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="idea">重點</h3>
+      <div class="note" id="idea"></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <span>100 Days of Python — Day 28</span>
+  <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2028%20-%20balanced%20trees" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://medium.com/100-days-of-python" target="_blank" rel="noopener">Medium</a>
+</footer>
+</div>
+<script>
+// DAY: 28
+// TITLE_ZH: 平衡樹一次講完：AVL、Red-Black、B-Tree
+// TITLE_EN: Balanced trees in one go - AVL, red-black, B-tree
+// SUB_ZH: 二元搜尋樹的效能取決於資料進來的順序，而排序好的 id 會讓它退化成 linked list。三種修法共用同一個動作「旋轉」：AVL 用高度、red-black 用顏色、B-tree 直接把節點放大成一個磁碟頁。
+// SUB_EN: A BST is only as good as the order its keys arrive in, and sorted ids turn it into a linked list. Three repairs share one primitive - the rotation: AVL counts heights, red-black counts colours, and the B-tree makes a node as big as a disk page.
+// FOLDER: day%2028%20-%20balanced%20trees
+// MEDIUM: https://medium.com/100-days-of-python
+
+const VIEW = [9.8, 6.4];
+const midX = VIEW[0] / 2;
+const ln = (code, frag) => { const i = code.findIndex(l => l.indexOf(frag) >= 0); return i < 0 ? 0 : i; };
+const note = (y, s, c, fs) => S.t(midX, y, s, {c:c || COL.tealL, fs:fs || .32});
+function chip(t, cls){ return {t:t, cls:cls || ''}; }
+
+/* ---- plain BST, ported from balanced_trees.py --------------------------- */
+function bstInsert(root, key){
+  const node = {key:key, left:null, right:null};
+  if (root === null) return node;
+  let cur = root;
+  for (;;){
+    if (key < cur.key){ if (cur.left === null){ cur.left = node; return root; } cur = cur.left; }
+    else if (key > cur.key){ if (cur.right === null){ cur.right = node; return root; } cur = cur.right; }
+    else return root;
+  }
+}
+function heightOf(n){
+  let best = -1; const stack = [[n, 0]];
+  while (stack.length){
+    const [x, d] = stack.pop();
+    if (x === null){ best = Math.max(best, d - 1); continue; }
+    stack.push([x.left, d + 1]); stack.push([x.right, d + 1]);
+  }
+  return best;
+}
+function inorderOf(n){
+  const out = [], stack = [];
+  let cur = n;
+  while (stack.length || cur !== null){
+    while (cur !== null){ stack.push(cur); cur = cur.left; }
+    cur = stack.pop(); out.push(cur.key); cur = cur.right;
+  }
+  return out;
+}
+function searchCost(root, key){
+  let cur = root, steps = 0;
+  while (cur !== null){ steps++; if (key === cur.key) return steps; cur = key < cur.key ? cur.left : cur.right; }
+  return steps;
+}
+function meanCost(root, keys){
+  let t = 0; keys.forEach(k => { t += searchCost(root, k); });
+  return t / keys.length;
+}
+function clone(n){
+  if (n === null) return null;
+  return {key:n.key, colour:n.colour, left:clone(n.left), right:clone(n.right)};
+}
+
+/* ---- drawing a tree ------------------------------------------------------ */
+function slots(node, depth, out, slot){
+  if (node === null) return;
+  slots(node.left, depth + 1, out, slot);
+  out.push({key:node.key, node:node, slot:slot.n++, depth:depth});
+  slots(node.right, depth + 1, out, slot);
+}
+/* states: {key -> style}; opt {x0, y0, dx, dy, r, fs, redKeys} */
+function treeShapes(root, opt){
+  opt = opt || {};
+  const st = opt.states || {};
+  const list = [];
+  slots(root, 0, list, {n:0});
+  if (!list.length) return [];
+  const maxSlot = Math.max.apply(null, list.map(o => o.slot));
+  const dx = opt.dx || Math.min(0.95, (opt.width || 8.2) / Math.max(1, maxSlot));
+  const dy = opt.dy || 0.95;
+  const x0 = opt.x0 == null ? (midX - maxSlot * dx / 2) : opt.x0;
+  const y0 = opt.y0 == null ? 1.15 : opt.y0;
+  const r = opt.r || 0.30;
+  const pos = {};
+  list.forEach(o => { pos[o.key] = [x0 + o.slot * dx, y0 + o.depth * dy]; });
+  const out = [];
+  list.forEach(o => {
+    [o.node.left, o.node.right].forEach(c => {
+      if (c) out.push(S.e(pos[o.key][0], pos[o.key][1], pos[c.key][0], pos[c.key][1],
+                          {s:'soft', pad:r + .02, arrow:false, w:.045}));
+    });
+  });
+  list.forEach(o => {
+    let style = st[o.key] || (o.node.colour === 'R' ? 'bad' : 'idle');
+    if (opt.plain) style = st[o.key] || 'idle';
+    out.push(S.c(pos[o.key][0], pos[o.key][1], r, style, String(o.key), {fs:opt.fs || .34}));
+  });
+  return {shapes:out, pos:pos};
+}
+const tree = (root, opt) => treeShapes(root, opt).shapes;
+
+/* ---- AVL, ported from balanced_trees.py --------------------------------- */
+const H = n => (n === null ? -1 : n.h);
+function upd(n){ n.h = 1 + Math.max(H(n.left), H(n.right)); }
+const bf = n => H(n.left) - H(n.right);
+function rotR(y){ const x = y.left; y.left = x.right; x.right = y; upd(y); upd(x); return x; }
+function rotL(x){ const y = x.right; x.right = y.left; y.left = x; upd(x); upd(y); return y; }
+function avlNode(k){ return {key:k, left:null, right:null, h:0}; }
+/* returns {root, events:[{kind, at, tree}]} - the frames come from real runs */
+function avlInsertRec(root, key, ev){
+  if (root === null) return avlNode(key);
+  if (key < root.key) root.left = avlInsertRec(root.left, key, ev);
+  else if (key > root.key) root.right = avlInsertRec(root.right, key, ev);
+  else return root;
+  upd(root);
+  const b = bf(root);
+  if (b > 1){
+    if (bf(root.left) < 0){ ev.push({kind:'double', at:root.key, first:root.left.key, dir:'LR'}); root.left = rotL(root.left); }
+    else ev.push({kind:'single', at:root.key, dir:'LL'});
+    return rotR(root);
+  }
+  if (b < -1){
+    if (bf(root.right) > 0){ ev.push({kind:'double', at:root.key, first:root.right.key, dir:'RL'}); root.right = rotR(root.right); }
+    else ev.push({kind:'single', at:root.key, dir:'RR'});
+    return rotL(root);
+  }
+  return root;
+}
+
+/* ---- red-black (insert only; delete lives in the .py) ------------------- */
+function rbNode(k){ return {key:k, colour:'R', left:null, right:null, parent:null}; }
+function RB(){
+  this.root = null;
+  this.rot = 0; this.recol = 0;
+}
+RB.prototype.rotateLeft = function(x){
+  const y = x.right; x.right = y.left;
+  if (y.left) y.left.parent = x;
+  y.parent = x.parent;
+  if (!x.parent) this.root = y; else if (x === x.parent.left) x.parent.left = y; else x.parent.right = y;
+  y.left = x; x.parent = y; this.rot++;
+};
+RB.prototype.rotateRight = function(y){
+  const x = y.left; y.left = x.right;
+  if (x.right) x.right.parent = y;
+  x.parent = y.parent;
+  if (!y.parent) this.root = x; else if (y === y.parent.right) y.parent.right = x; else y.parent.left = x;
+  x.right = y; y.parent = x; this.rot++;
+};
+RB.prototype.insert = function(key, ev){
+  const z = rbNode(key);
+  let parent = null, cur = this.root;
+  while (cur){ parent = cur; if (key < cur.key) cur = cur.left; else if (key > cur.key) cur = cur.right; else return; }
+  z.parent = parent;
+  if (!parent) this.root = z; else if (key < parent.key) parent.left = z; else parent.right = z;
+  if (ev) ev.push({kind:'added', key:key, snap:clone(this.root)});
+  this.fixup(z, ev);
+};
+RB.prototype.fixup = function(z, ev){
+  while (z.parent && z.parent.colour === 'R'){
+    const gp = z.parent.parent;
+    const left = z.parent === gp.left;
+    const uncle = left ? gp.right : gp.left;
+    if (uncle && uncle.colour === 'R'){
+      z.parent.colour = 'B'; uncle.colour = 'B'; gp.colour = 'R'; this.recol += 3;
+      if (ev) ev.push({kind:'case1', key:z.key, gp:gp.key, snap:clone(this.root)});
+      z = gp;
+    } else {
+      if (left && z === z.parent.right){ z = z.parent; this.rotateLeft(z); if (ev) ev.push({kind:'case2', key:z.key, snap:clone(this.root)}); }
+      else if (!left && z === z.parent.left){ z = z.parent; this.rotateRight(z); if (ev) ev.push({kind:'case2', key:z.key, snap:clone(this.root)}); }
+      z.parent.colour = 'B'; gp.colour = 'R'; this.recol += 2;
+      if (left) this.rotateRight(gp); else this.rotateLeft(gp);
+      if (ev) ev.push({kind:'case3', key:z.key, gp:gp.key, snap:clone(this.root)});
+    }
+  }
+  if (this.root.colour === 'R'){ this.root.colour = 'B'; this.recol++;
+    if (ev) ev.push({kind:'root', key:this.root.key, snap:clone(this.root)}); }
+};
+function rbHeight(n){
+  if (!n) return -1;
+  return 1 + Math.max(rbHeight(n.left), rbHeight(n.right));
+}
+
+/* ---- B-tree ------------------------------------------------------------- */
+function btNode(leaf){ return {keys:[], children:[], leaf:leaf}; }
+function BT(t){ this.t = t; this.root = btNode(true); this.splits = 0; }
+BT.prototype.insert = function(key, ev){
+  let root = this.root;
+  if (root.keys.length === 2 * this.t - 1){
+    const nu = btNode(false);
+    nu.children.push(root);
+    this.root = nu;
+    this.splitChild(nu, 0, ev, true);
+    root = nu;
+  }
+  this.insertNonFull(root, key, ev);
+};
+BT.prototype.splitChild = function(parent, i, ev, atRoot){
+  const t = this.t, full = parent.children[i], right = btNode(full.leaf);
+  const median = full.keys[t - 1];
+  right.keys = full.keys.slice(t);
+  full.keys = full.keys.slice(0, t - 1);
+  if (!full.leaf){ right.children = full.children.slice(t); full.children = full.children.slice(0, t); }
+  parent.keys.splice(i, 0, median);
+  parent.children.splice(i + 1, 0, right);
+  this.splits++;
+  if (ev) ev.push({kind:'split', median:median, atRoot:!!atRoot, snap:btClone(this.root)});
+};
+BT.prototype.insertNonFull = function(node, key, ev){
+  for (;;){
+    let i = node.keys.length - 1;
+    if (node.leaf){
+      while (i >= 0 && key < node.keys[i]) i--;
+      if (i >= 0 && node.keys[i] === key) return;
+      node.keys.splice(i + 1, 0, key);
+      if (ev) ev.push({kind:'placed', key:key, snap:btClone(this.root)});
+      return;
+    }
+    while (i >= 0 && key < node.keys[i]) i--;
+    i++;
+    if (node.children[i].keys.length === 2 * this.t - 1){
+      this.splitChild(node, i, ev, false);
+      if (key > node.keys[i]) i++;
+      else if (key === node.keys[i]) return;
+    }
+    node = node.children[i];
+  }
+};
+function btClone(n){ return {keys:n.keys.slice(), leaf:n.leaf, children:n.children.map(btClone)}; }
+function btHeight(n){ let h = 0; while (!n.leaf){ n = n.children[0]; h++; } return h; }
+function btCount(n){ let c = 1; n.children.forEach(x => { c += btCount(x); }); return c; }
+
+/* B-tree drawing: rows of key-boxes, one row per level */
+function btShapes(root, opt){
+  opt = opt || {};
+  const rows = [];
+  let level = [root], d = 0;
+  while (level.length){
+    rows.push(level);
+    const next = [];
+    level.forEach(n => n.children.forEach(c => next.push(c)));
+    level = next; d++;
+  }
+  const out = [];
+  const y0 = opt.y0 == null ? 1.10 : opt.y0, dy = opt.dy || 1.30, h = 0.62;
+  const cw = 0.60;
+  rows.forEach((row, ri) => {
+    const widths = row.map(n => Math.max(1, n.keys.length) * cw);
+    const gap = 0.42;
+    const total = widths.reduce((a, b) => a + b, 0) + gap * (row.length - 1);
+    let x = midX - total / 2;
+    row.forEach((n, ni) => {
+      const st = (opt.hot && opt.hot.indexOf(n) >= 0) ? 'hot' : (opt.states && opt.states[n.keys.join(',')]) || 'idle';
+      n.keys.forEach((k, ki) => {
+        out.push(S.r(x + ki * cw, y0 + ri * dy, cw - .06, h,
+                     (opt.hotKey != null && k === opt.hotKey) ? 'hot' : st, String(k), {fs:.30}));
+      });
+      if (!n.keys.length) out.push(S.r(x, y0 + ri * dy, cw - .06, h, 'ghost', '', {}));
+      x += widths[ni] + gap;
+    });
+  });
+  return out;
+}
+
+/* ======================= tab 1: why a BST degenerates ==================== */
+const CODE_BST = [
+'def bst_insert(root, key):',
+'    node = Node(key)',
+'    if root is None:',
+'        return node',
+'    cur = root',
+'    while True:',
+'        if key < cur.key:',
+'            if cur.left is None:',
+'                cur.left = node',
+'                return root',
+'            cur = cur.left',
+'        else:',
+'            if cur.right is None:',
+'                cur.right = node',
+'                return root',
+'            cur = cur.right'
+];
+
+function bstFrames(){
+  const F = new Frames();
+  const keys = [1, 2, 3, 4, 5, 6, 7];
+  let root = null;
+  const pan = (t, note2) => [
+    {lbl:{zh:'已插入', en:'inserted'}, chips:inorderOf(t).map(k => chip(String(k), 'ok'))},
+    {lbl:{zh:'高度', en:'height'}, chips:[chip(String(heightOf(t)), heightOf(t) > 2 ? 'bad' : 'ok')]},
+    {lbl:{zh:'最壞查詢（比較次數）', en:'worst lookup (comparisons)'}, chips:[chip(String(heightOf(t) + 1), 'act')]}
+  ];
+  keys.forEach((k, i) => {
+    root = bstInsert(root, k);
+    const st = {}; st[k] = 'hot';
+    F.push({shapes:tree(root, {states:st, plain:true, y0:.95, dy:.80}),
+      panels:pan(root), view:VIEW, line:ln(CODE_BST, 'cur = cur.right'),
+      msg:i === 0
+        ? {zh:'先插入 <b>1</b>。到目前為止一切正常 - 問題不在程式碼，程式碼是對的；問題在<b>資料進來的順序</b>。',
+           en:'Insert <b>1</b>. Nothing is wrong yet - and nothing will be wrong with the code either. The problem is the <b>order the keys arrive in</b>.'}
+        : {zh:'插入 <b>' + k + '</b>：它比路上每一個節點都大，所以每次都往右走，最後掛在最右邊。樹的高度變成 <b>' + heightOf(root) + '</b>，而不是 log₂(' + (i + 1) + ') ≈ ' + Math.round(Math.log2(i + 1) * 10) / 10 + '。',
+           en:'Insert <b>' + k + '</b>: it is larger than every node on the way, so the walk always goes right and it hangs off the far right. The height is now <b>' + heightOf(root) + '</b> instead of log2(' + (i + 1) + ') ≈ ' + Math.round(Math.log2(i + 1) * 10) / 10 + '.'}});
+  });
+  const bal = (function build(lo, hi){
+    if (lo > hi) return null;
+    const mid = (lo + hi) >> 1;
+    const n = {key:keys[mid], left:build(lo, mid - 1), right:build(mid + 1, hi)};
+    return n;
+  })(0, keys.length - 1);
+  const okAll = {}; keys.forEach(k => { okAll[k] = 'ok'; });
+  F.push({shapes:tree(bal, {states:okAll, plain:true, y0:1.15, dy:1.05, dx:.95}),
+    panels:pan(bal), view:VIEW, line:ln(CODE_BST, 'def bst_insert'),
+    msg:{zh:'同樣七個 key，換一種形狀：高度從 <b>6</b> 掉到 <b>2</b>，最壞查詢從 7 次比較變成 3 次。<b>樹沒有壞掉，只是形狀不對</b>，而形狀是插入順序決定的。',
+         en:'The same seven keys in a different shape: the height drops from <b>6</b> to <b>2</b> and the worst lookup from 7 comparisons to 3. <b>The tree is not broken, it is the wrong shape</b> - and the shape was decided by the insertion order.'}});
+
+  const big = [];
+  for (let i = 1; i <= 2047; i++) big.push(i);
+  let chain = null;
+  for (let i = 1; i <= 2047; i++) chain = bstInsert(chain, i);
+  F.push({shapes:[
+      S.t(midX, 2.00, {zh:'2047 個排序好的 key', en:'2047 keys, already sorted'}, {c:COL.orangeL, fs:.40}),
+      S.t(midX, 2.85, {zh:'height 2046　　平均查詢 1024.00 次比較',
+                       en:'height 2046      mean lookup 1024.00 comparisons'}, {c:COL.red, fs:.36}),
+      S.t(midX, 3.75, {zh:'同樣 2047 個 key，平衡之後', en:'the same 2047 keys, balanced'}, {c:COL.tealL, fs:.40}),
+      S.t(midX, 4.60, {zh:'height 10　　平均查詢 10.00 次比較',
+                       en:'height 10        mean lookup 10.00 comparisons'}, {c:COL.tealL, fs:.36})],
+    panels:[{lbl:{zh:'代價', en:'the cost'}, chips:[chip('1024 vs 10', 'bad')]}],
+    view:VIEW, line:ln(CODE_BST, 'cur = cur.right'),
+    msg:{zh:'放大到 2047 個 key，差距是 <b>100 倍</b>。而「排序好的 key」不是刁鑽的測資，是最常見的情況：自增 id、時間戳、還原一份備份。所以樹必須<b>自己維持形狀</b>。',
+         en:'At 2047 keys the gap is <b>100x</b>. And sorted keys are not an adversarial test case - they are the common case: auto-increment ids, timestamps, a restored backup. So the tree has to <b>keep its own shape</b>.'}});
+  return F.list;
+}
+
+/* ======================= tab 2: the rotation ============================== */
+const CODE_ROT = [
+'def rotate_right(y):',
+'    x = y.left',
+'    y.left = x.right      # B changes parent',
+'    x.right = y',
+'    update_height(y)      # the lower node first',
+'    update_height(x)',
+'    return x              # x is the new subtree root'
+];
+
+function rotFrames(){
+  const F = new Frames();
+  const y = avlNode(20);
+  y.left = avlNode(10); y.right = avlNode(30);
+  y.left.left = avlNode(5); y.left.right = avlNode(15);
+  [y.left.left, y.left.right, y.right, y.left, y].forEach(upd);
+  const before = inorderOf(y);
+  const opt = {y0:1.25, dy:1.15, dx:1.10, plain:true};
+  const seqTxt = s => S.t(midX, 5.55, s.join('   '), {c:COL.tealL, fs:.38});
+
+  F.push({shapes:tree(y, Object.assign({states:{20:'act', 10:'hot'}}, opt)).concat(
+      [seqTxt(before), S.t(midX, 6.05, {zh:'中序讀出來的順序', en:'the in-order reading'}, {c:COL.grey, fs:.30})]),
+    panels:[{lbl:{zh:'子樹根', en:'subtree root'}, chips:[chip('20', 'act')]},
+            {lbl:{zh:'左孩子', en:'left child'}, chips:[chip('10', 'hot')]}],
+    view:VIEW, line:ln(CODE_ROT, 'def rotate_right'),
+    msg:{zh:'旋轉是三種平衡樹<b>共用的唯一動作</b>。要做的事只有一件：把左孩子 <b>10</b> 提上來當根，把 <b>20</b> 壓下去當右孩子。',
+         en:'The rotation is the <b>one move all three balanced trees share</b>. It does exactly one thing: lift the left child <b>10</b> up to be the root and push <b>20</b> down to be its right child.'}});
+
+  F.push({shapes:tree(y, Object.assign({states:{20:'act', 10:'hot', 15:'ok'}}, opt)).concat([seqTxt(before)]),
+    panels:[{lbl:{zh:'要搬家的子樹', en:'the subtree that moves'}, chips:[chip('15', 'ok')]}],
+    view:VIEW, line:ln(CODE_ROT, 'y.left = x.right'),
+    msg:{zh:'只有一棵子樹會換父親：<b>15</b>（也就是 x 的右子樹）。它比 10 大、比 20 小，所以它從「10 的右邊」搬到「20 的左邊」- 兩個位置代表的區間是同一個。',
+         en:'Exactly one subtree changes parent: <b>15</b>, the right child of x. It is larger than 10 and smaller than 20, so it moves from "right of 10" to "left of 20" - two slots that stand for the same interval.'}});
+
+  const x = rotR(y);
+  F.push({shapes:tree(x, Object.assign({states:{10:'hot', 20:'act', 15:'ok'}}, opt)).concat(
+      [seqTxt(inorderOf(x)), S.t(midX, 6.05, {zh:'完全一樣', en:'identical'}, {c:COL.tealL, fs:.30})]),
+    panels:[{lbl:{zh:'新的根', en:'new root'}, chips:[chip('10', 'hot')]},
+            {lbl:{zh:'中序不變', en:'order preserved'}, chips:[chip(String(before.join(',') === inorderOf(x).join(',')), 'ok')]}],
+    view:VIEW, line:ln(CODE_ROT, 'return x'),
+    msg:{zh:'旋轉之後<b>中序讀出來一模一樣</b>，所以搜尋性質完全沒有被破壞 - 這就是為什麼可以放心地拿它來改形狀。左邊少一層、右邊多一層，代價是三個指標。',
+         en:'After the rotation the <b>in-order reading is unchanged</b>, so the search property survives untouched - which is why it is safe to use it to reshape the tree. The left side loses a level, the right side gains one, and the whole thing costs three pointer writes.'}});
+
+  F.push({shapes:tree(x, Object.assign({states:{10:'ok'}}, opt)).concat(
+      [S.t(midX, 5.60, {zh:'update_height(y) 一定要先做：y 的孩子換過了',
+                        en:'update_height(y) must come first: y is the node whose children changed'}, {c:COL.orangeL, fs:.32})]),
+    panels:[{lbl:{zh:'h(10)', en:'h(10)'}, chips:[chip(String(x.h), 'ok')]},
+            {lbl:{zh:'h(20)', en:'h(20)'}, chips:[chip(String(x.right.h), 'ok')]}],
+    view:VIEW, line:ln(CODE_ROT, 'update_height(y)'),
+    msg:{zh:'唯一容易寫錯的地方：<b>更新高度的順序</b>。y 現在在下面，它的高度必須先算好，x 的高度才會對。順序寫反了，樹還是對的，但高度是錯的，之後的平衡判斷全部歪掉。',
+         en:'The one place this is easy to get wrong: <b>the order of the height updates</b>. y is now the lower node, so its height has to be recomputed first or x gets a stale value. Swap the two lines and the tree is still a valid BST, but every balance decision after it is made on wrong numbers.'}});
+  return F.list;
+}
+
+/* ======================= tab 3: AVL ====================================== */
+const CODE_AVL = [
+'def avl_rebalance(n):',
+'    update_height(n)',
+'    bf = balance_factor(n)          # h(left) - h(right)',
+'    if bf > 1:                      # left heavy',
+'        if balance_factor(n.left) < 0:',
+'            n.left = rotate_left(n.left)    # LR: straighten first',
+'        return rotate_right(n)',
+'    if bf < -1:                     # right heavy',
+'        if balance_factor(n.right) > 0:',
+'            n.right = rotate_right(n.right) # RL: straighten first',
+'        return rotate_left(n)',
+'    return n'
+];
+
+function avlPanels(root, extra){
+  const p = [
+    {lbl:{zh:'高度', en:'height'}, chips:[chip(String(H(root)), 'ok')]},
+    {lbl:{zh:'根的 balance factor', en:'balance factor of the root'}, chips:[chip(String(bf(root)), Math.abs(bf(root)) > 1 ? 'bad' : 'ok')]},
+    {lbl:{zh:'中序', en:'in order'}, chips:inorderOf(root).map(k => chip(String(k), 'soft'))}
+  ];
+  return extra ? p.concat(extra) : p;
+}
+
+function avlFrames(v){
+  const F = new Frames();
+  const opt = {y0:1.20, dy:1.05, dx:.95, plain:true};
+  if (v === 1){
+    /* the zig-zag case, where one rotation is not enough */
+    let root = null, ev = [];
+    [30, 10].forEach(k => { root = avlInsertRec(root, k, ev); });
+    F.push({shapes:tree(root, Object.assign({states:{30:'idle', 10:'ok'}}, opt)),
+      panels:avlPanels(root), view:VIEW, line:ln(CODE_AVL, 'bf = balance_factor'),
+      msg:{zh:'先看 <b>LL</b> 的鏡像失敗案例。目前 30 的左邊掛著 10，balance factor 是 1，還在容許範圍內。',
+           en:'Start with the case where the simple fix fails. 30 has 10 on its left; the balance factor is 1, still inside the rule.'}});
+    const before = clone(root);
+    ev = [];
+    root = avlInsertRec(root, 20, ev);
+    F.push({shapes:tree(before, Object.assign({states:{30:'bad', 10:'act', 20:'hot'}}, opt)).concat(
+        [note(5.55, {zh:'20 掛在 10 的右邊 → 30 的 bf 變成 2，而且是「左邊的右邊」',
+                     en:'20 lands right of 10 -> bf(30) becomes 2, and the path bends: left, then right'}, COL.orangeL, .32)]),
+      panels:[{lbl:{zh:'bf(30)', en:'bf(30)'}, chips:[chip('2', 'bad')]},
+              {lbl:{zh:'bf(10)', en:'bf(10)'}, chips:[chip('-1', 'act')]}],
+      view:VIEW, line:ln(CODE_AVL, 'if balance_factor(n.left) < 0'),
+      msg:{zh:'關鍵在<b>兩個 balance factor 的符號不同</b>：30 是左重（+2），但它的左孩子 10 是右重（−1）。這種「之」字形直接 rotate_right 沒有用 - 轉完只會變成鏡像的另一邊重。',
+           en:'The tell is that <b>the two balance factors have opposite signs</b>: 30 is left heavy (+2) but its left child 10 is right heavy (-1). A single rotate_right does not help here - it just produces the mirror image of the same problem.'}});
+    F.push({shapes:tree(root, Object.assign({states:{20:'hot', 10:'ok', 30:'ok'}}, opt)).concat(
+        [note(5.55, {zh:'先 rotate_left(10) 把它拉直，再 rotate_right(30)',
+                     en:'rotate_left(10) straightens it, then rotate_right(30)'}, COL.tealL, .32)]),
+      panels:avlPanels(root), view:VIEW, line:ln(CODE_AVL, 'return rotate_right(n)'),
+      msg:{zh:'所以 LR 要<b>兩次旋轉</b>：先對左孩子做一次 rotate_left，把彎的路徑拉成直的，就變回單純的 LL，再 rotate_right。RL 是完全對稱的另一半。四種情況就是這樣來的。',
+           en:'So the LR case needs <b>two rotations</b>: rotate_left on the child first to straighten the bend, which turns it into a plain LL, then rotate_right. RL is the mirror of this. That is where the four cases come from.'}});
+    return F.list;
+  }
+  /* sorted insert 1..7 - a rotation on almost every step */
+  let root = null;
+  let rots = 0;
+  for (let k = 1; k <= 7; k++){
+    const ev = [];
+    root = avlInsertRec(root, k, ev);
+    rots += ev.reduce((a, e) => a + (e.kind === 'double' ? 2 : 1), 0);
+    const st = {}; st[k] = 'hot';
+    if (ev.length) ev.forEach(e => { st[e.at] = 'act'; });
+    F.push({shapes:tree(root, Object.assign({states:st}, opt)),
+      panels:avlPanels(root, [{lbl:{zh:'累計旋轉', en:'rotations so far'}, chips:[chip(String(rots), 'act')]}]),
+      view:VIEW, line:ev.length ? ln(CODE_AVL, 'return rotate_left(n)') : ln(CODE_AVL, 'return n'),
+      msg:ev.length
+        ? {zh:'插入 <b>' + k + '</b> 讓 <b>' + ev[0].at + '</b> 的 balance factor 掉到 −2（' + ev[0].dir + '），一次 rotate_left 就修好，高度回到 <b>' + H(root) + '</b>。注意<b>只修了一個節點</b> - 旋轉之後這棵子樹的高度和插入前一樣，所以往上不用再修。',
+           en:'Inserting <b>' + k + '</b> pushes the balance factor of <b>' + ev[0].at + '</b> to -2 (' + ev[0].dir + '), and one rotate_left repairs it; the height is back to <b>' + H(root) + '</b>. Note that <b>exactly one node was fixed</b> - after the rotation this subtree is as tall as it was before the insert, so nothing above it needs repair.'}
+        : {zh:'插入 <b>' + k + '</b>，沒有任何節點違反 |bf| ≤ 1，什麼都不用做。真正的成本是走回根的那趟<b>檢查</b>，不是旋轉。',
+           en:'Insert <b>' + k + '</b>: nobody violates |bf| <= 1, so nothing happens. The real cost is the <b>walk back to the root to check</b>, not the rotation.'}});
+  }
+  F.push({shapes:[
+      S.t(midX, 1.80, {zh:'100000 個排序好的 key', en:'100000 keys, already sorted'}, {c:COL.orangeL, fs:.40}),
+      S.t(midX, 2.70, {zh:'AVL：height 16　平均查詢 15.72　旋轉 99983 次',
+                       en:'AVL: height 16, mean lookup 15.72, 99983 rotations'}, {c:COL.tealL, fs:.34}),
+      S.t(midX, 3.50, {zh:'未平衡的 BST：height 99999', en:'plain BST: height 99999'}, {c:COL.red, fs:.34}),
+      S.t(midX, 4.55, {zh:'幾乎每次插入都轉一次 - 這正是它應該做的事',
+                       en:'almost one rotation per insert - which is exactly the point'}, {c:COL.grey, fs:.32}),
+      S.t(midX, 5.20, {zh:'一次旋轉是三個指標；一層額外的深度是一次 cache miss',
+                       en:'a rotation is three pointer writes; an extra level is a cache miss'}, {c:COL.tealL, fs:.32})],
+    panels:[{lbl:{zh:'height', en:'height'}, chips:[chip('16', 'ok'), chip('99999', 'bad')]}],
+    view:VIEW, line:ln(CODE_AVL, 'def avl_rebalance'),
+    msg:{zh:'放大到十萬個排序 key：AVL 的高度是 <b>16</b>，log₂(100000) ≈ 16.6，也就是<b>幾乎是理論下限</b>。代價是九萬九千次旋轉，但旋轉便宜、深度貴，這筆交易划算。',
+         en:'At 100000 sorted keys the AVL tree is <b>16</b> levels deep, against a log2 floor of 16.6 - <b>essentially optimal</b>. It paid 99983 rotations for that, but rotations are cheap and depth is expensive, so the trade is a good one.'}});
+  return F.list;
+}
+
+/* ======================= tab 4: red-black =============================== */
+const CODE_RB = [
+'def _insert_fixup(self, z):',
+'    while z.parent.colour == RED:',
+'        gp = z.parent.parent',
+'        uncle = gp.right if z.parent is gp.left else gp.left',
+'        if uncle.colour == RED:          # case 1: recolour only',
+'            z.parent.colour = uncle.colour = BLACK',
+'            gp.colour = RED',
+'            z = gp                       # the problem moves 2 levels up',
+'        else:',
+'            if z is on the inside:       # case 2: straighten',
+'                z = z.parent; self._rotate(z)',
+'            z.parent.colour = BLACK      # case 3: recolour + 1 rotation',
+'            gp.colour = RED',
+'            self._rotate(gp)             # ... and the loop ends here',
+'    self.root.colour = BLACK'
+];
+
+const RB_MSG = {
+  added:  {zh:'新節點一律<b>塗紅</b>。紅色不會改變任何路徑的黑色數量，所以性質 5（每條路徑黑高相同）自動成立；唯一可能壞掉的是性質 4（紅節點不能有紅小孩）。',
+           en:'A new node is always painted <b>red</b>. Red does not change the black count on any path, so property 5 survives for free; the only rule that can break is property 4 - no red node may have a red child.'},
+  case1:  {zh:'<b>case 1：叔叔是紅色</b>。父親和叔叔一起塗黑、祖父塗紅 - 只有換色，<b>沒有旋轉</b>。祖父那條路徑的黑高沒變，但祖父現在是紅的，問題原封不動<b>往上跳兩層</b>，迴圈繼續。',
+           en:'<b>Case 1: the uncle is red.</b> Paint the parent and the uncle black and the grandparent red - <b>recolouring only, no rotation</b>. The black height through the grandparent is unchanged, but the grandparent is now red, so the same violation <b>moves two levels up</b> and the loop continues.'},
+  case2:  {zh:'<b>case 2：叔叔是黑的，而且新節點在「內側」</b>。跟 AVL 的 LR 一模一樣 - 先旋轉一次把之字形拉直，變成 case 3。',
+           en:'<b>Case 2: black uncle, and the new node is on the inside.</b> This is exactly the AVL LR shape - one rotation straightens the zig-zag and turns it into case 3.'},
+  case3:  {zh:'<b>case 3：叔叔是黑的、路徑是直的</b>。父親塗黑、祖父塗紅，然後對祖父旋轉一次。子樹的根現在是黑的，<b>迴圈立刻結束</b> - 所以一次插入最多轉兩下。',
+           en:'<b>Case 3: black uncle, straight path.</b> Paint the parent black, the grandparent red, rotate the grandparent once. The subtree root is black again, so the <b>loop ends immediately</b> - which is why an insert costs at most two rotations.'},
+  root:   {zh:'最後把根塗黑。根從紅變黑會讓<b>每一條</b>路徑的黑高同時 +1，所以性質 5 還是成立，這一步永遠安全。',
+           en:'Finally the root is painted black. Turning the root from red to black adds one to the black height of <b>every</b> path at once, so property 5 still holds - this step is always safe.'}
+};
+
+function rbPanels(t, extra){
+  const p = [
+    {lbl:{zh:'高度', en:'height'}, chips:[chip(String(rbHeight(t.root)), 'ok')]},
+    {lbl:{zh:'旋轉 / 換色', en:'rotations / recolourings'}, chips:[chip(String(t.rot), 'act'), chip(String(t.recol), 'soft')]}
+  ];
+  return extra ? p.concat(extra) : p;
+}
+
+function rbFrames(v){
+  const F = new Frames();
+  const opt = {y0:1.20, dy:1.00, dx:.92};
+  const keys = v === 1 ? [10, 20, 30, 40, 50, 25] : [1, 2, 3, 4, 5, 6, 7];
+  const t = new RB();
+  F.push({shapes:[
+      note(1.70, {zh:'紅黑樹的五條性質', en:'the five red-black properties'}, COL.orangeL, .40),
+      note(2.55, {zh:'1  每個節點不是紅就是黑', en:'1  every node is red or black'}),
+      note(3.10, {zh:'2  根是黑的　　3  葉（NIL）是黑的', en:'2  the root is black    3  the leaves (NIL) are black'}),
+      note(3.65, {zh:'4  紅節點的兩個小孩都是黑的', en:'4  a red node has two black children'}),
+      note(4.20, {zh:'5  從任一節點到其後代葉子，經過的黑節點數目相同', en:'5  every path from a node down to a leaf has the same number of black nodes'}),
+      note(5.15, {zh:'4 + 5 ⇒ 最長路徑 ≤ 最短路徑 × 2 ⇒ height ≤ 2·log₂(n+1)',
+                  en:'4 and 5 together: longest path <= 2x shortest path, so height <= 2*log2(n+1)'}, COL.purpleL, .34)],
+    panels:[], view:VIEW, line:ln(CODE_RB, 'def _insert_fixup'),
+    msg:{zh:'紅黑樹不管高度，它管<b>顏色</b>。性質 4 說紅色不能連續、性質 5 說黑色到處一樣多；兩條合起來，最長的路徑最多是最短路徑的兩倍 - <b>平衡是顏色規則的副產品</b>，這就是它比 AVL 鬆的地方。',
+         en:'A red-black tree never looks at heights - it looks at <b>colours</b>. Property 4 forbids two reds in a row, property 5 makes black counts equal everywhere; together they force the longest path to be at most twice the shortest. <b>Balance falls out of the colour rules</b>, and that looseness is the whole difference from AVL.'}});
+  keys.forEach(k => {
+    const ev = [];
+    t.insert(k, ev);
+    ev.forEach(e => {
+      const st = {}; st[e.key] = 'hot';
+      if (e.gp != null) st[e.gp] = 'act';
+      const extra = e.kind === 'case1'
+        ? [{lbl:{zh:'這一步', en:'this step'}, chips:[chip('case 1', 'soft')]}]
+        : (e.kind === 'case2' || e.kind === 'case3'
+            ? [{lbl:{zh:'這一步', en:'this step'}, chips:[chip(e.kind === 'case2' ? 'case 2' : 'case 3', 'act')]}]
+            : null);
+      F.push({shapes:tree(e.snap, Object.assign({states:st}, opt)),
+        panels:rbPanels(t, extra), view:VIEW,
+        line:ln(CODE_RB, e.kind === 'case1' ? 'if uncle.colour == RED'
+              : e.kind === 'case2' ? 'if z is on the inside'
+              : e.kind === 'case3' ? 'self._rotate(gp)' : 'self.root.colour = BLACK'),
+        msg:e.kind === 'added'
+          ? {zh:'插入 <b>' + e.key + '</b>。' + RB_MSG.added.zh, en:'Insert <b>' + e.key + '</b>. ' + RB_MSG.added.en}
+          : RB_MSG[e.kind]});
+    });
+  });
+  const h = rbHeight(t.root);
+  F.push({shapes:[
+      note(1.75, v === 1 ? {zh:'6 個 key', en:'6 keys'} : {zh:'1..7 排序插入', en:'1..7 inserted in order'}, COL.orangeL, .40),
+      note(2.70, {zh:'高度 ' + h + '　旋轉 ' + t.rot + '　換色 ' + t.recol,
+                  en:'height ' + h + ', ' + t.rot + ' rotations, ' + t.recol + ' recolourings'}, COL.tealL, .36),
+      note(3.70, {zh:'十萬個排序 key：AVL height 16 / 旋轉 99983；RB height 30 / 旋轉 99969',
+                  en:'100000 sorted keys: AVL height 16 with 99983 rotations; RB height 30 with 99969'}, COL.pale, .32),
+      note(4.30, {zh:'RB 高了將近一倍，但換色 499846 次 - 換色不是指標寫入，只是一個 bit',
+                  en:'RB is nearly twice as deep, but 499846 of its repairs were recolourings - a bit flip, not a pointer write'}, COL.grey, .32),
+      note(5.20, {zh:'AVL 為讀優化，紅黑樹為<b>寫的可預測性</b>優化 - 所以 kernel 和 std::map 選它',
+                  en:'AVL optimises reads, red-black optimises <b>predictable writes</b> - which is why kernels and std::map pick it'}, COL.purpleL, .34)],
+    panels:rbPanels(t), view:VIEW, line:ln(CODE_RB, 'self.root.colour = BLACK'),
+    msg:{zh:'兩者的差別不在漸進複雜度（都是 O(log n)），而在<b>常數與最壞情況</b>：AVL 樹比較矮所以查詢快，但每次刪除可能一路旋轉到根；紅黑樹高一點，卻保證插入 ≤ 2 次旋轉、刪除 ≤ 3 次。<b>要延遲可預測，就選紅黑。</b>',
+         en:'The difference is not asymptotic - both are O(log n) - it is in the <b>constants and the worst case</b>. AVL is shorter, so lookups are faster, but a single delete can rotate all the way to the root. Red-black is taller, yet guarantees at most 2 rotations per insert and 3 per delete. <b>If you need predictable latency, you pick red-black.</b>'}});
+  return F.list;
+}
+
+/* ======================= tab 5: B-tree ================================== */
+const CODE_BT = [
+'def _split_child(self, parent, i):',
+'    t, full = self.t, parent.children[i]',
+'    median = full.keys[t - 1]',
+'    right = BTreeNode(leaf=full.leaf)',
+'    right.keys = full.keys[t:]          # upper half moves out',
+'    full.keys = full.keys[:t - 1]       # lower half stays',
+'    if not full.leaf:',
+'        right.children = full.children[t:]',
+'        full.children = full.children[:t]',
+'    parent.keys.insert(i, median)       # median goes UP',
+'    parent.children.insert(i + 1, right)',
+'',
+'# the tree only ever grows at the root, so all leaves stay level'
+];
+
+function btFrames(v){
+  const F = new Frames();
+  if (v === 1){
+    /* the cost model slide */
+    F.push({shapes:[
+        note(1.60, {zh:'一個 4096 byte 的 disk page，一個 key + pointer 16 byte',
+                    en:'a 4096-byte disk page, 16 bytes per key + pointer'}, COL.orangeL, .38),
+        note(2.45, {zh:'degree_for_page(4096, 16) = 128 → 每個節點最多 255 個 key',
+                    en:'degree_for_page(4096, 16) = 128 -> up to 255 keys in one node'}, COL.tealL, .34),
+        note(3.35, {zh:'一百萬個 key：height 2，共 7874 個節點',
+                    en:'one million keys: height 2, 7874 nodes in total'}, COL.tealL, .34),
+        note(4.05, {zh:'查一個 key 只讀 3 個 page；二元樹要走大約 20 層',
+                    en:'a lookup reads 3 pages; a binary tree would walk about 20 levels'}, COL.purpleL, .34),
+        note(5.05, {zh:'成本從「比較次數」換成「讀了幾個 page」- 樹的形狀就跟著變',
+                    en:'the unit of cost changes from comparisons to page reads - so the shape of the tree changes too'}, COL.pale, .32)],
+      panels:[{lbl:{zh:'每次查詢讀取的 page', en:'pages read per lookup'}, chips:[chip('3', 'ok'), chip('~20', 'bad')]}],
+      view:VIEW, line:ln(CODE_BT, '# the tree only ever grows'),
+      msg:{zh:'AVL 和紅黑樹都假設「比較很貴、跳指標免費」。在硬碟或 SSD 上這個假設反過來 - 一次隨機讀取要好幾萬個 cycle，而<b>讀 16 byte 和讀 4096 byte 一樣貴</b>。既然一次都要讀一整頁，就<b>把一整頁塞滿 key</b>：這就是 B-tree。',
+           en:'AVL and red-black both assume comparisons are expensive and pointer hops are free. On disk that is backwards: a random read costs tens of thousands of cycles, and <b>reading 16 bytes costs the same as reading 4096</b>. If you have to pay for a whole page anyway, <b>fill the whole page with keys</b> - that is a B-tree.'}});
+    return F.list;
+  }
+  const t = new BT(2);
+  for (let k = 1; k <= 10; k++){
+    const ev = [];
+    t.insert(k, ev);
+    ev.forEach(e => {
+      if (e.kind === 'placed'){
+        F.push({shapes:btShapes(e.snap, {hotKey:e.key}),
+          panels:[{lbl:{zh:'高度 / 節點數', en:'height / nodes'}, chips:[chip(String(btHeight(t.root)), 'ok'), chip(String(btCount(t.root)), 'soft')]},
+                  {lbl:{zh:'分裂次數', en:'splits'}, chips:[chip(String(t.splits), 'act')]}],
+          view:VIEW, line:ln(CODE_BT, 'def _split_child'),
+          msg:{zh:'把 <b>' + e.key + '</b> 放進葉子。t = 2，所以每個節點最多裝 3 個 key；還沒滿就只是插進陣列，<b>不動樹的形狀</b>。',
+               en:'Put <b>' + e.key + '</b> into a leaf. With t = 2 a node holds at most 3 keys; while there is room this is just an array insert and <b>the shape of the tree does not change</b>.'}});
+      } else {
+        F.push({shapes:btShapes(e.snap, {hotKey:e.median}),
+          panels:[{lbl:{zh:'升上去的中位數', en:'median promoted'}, chips:[chip(String(e.median), 'hot')]},
+                  {lbl:{zh:'高度 / 節點數', en:'height / nodes'}, chips:[chip(String(btHeight(t.root)), 'ok'), chip(String(btCount(t.root)), 'soft')]}],
+          view:VIEW, line:ln(CODE_BT, 'parent.keys.insert(i, median)'),
+          msg:e.atRoot
+            ? {zh:'根滿了，於是<b>中位數 ' + e.median + ' 升成新的根</b>。這是 B-tree 唯一會長高的方式 - <b>從根往上長</b>，而不是從葉子往下長，所以<b>所有葉子永遠在同一層</b>。',
+               en:'The root was full, so <b>the median ' + e.median + ' becomes a new root</b>. This is the only way a B-tree ever gets taller - it <b>grows upward at the root</b>, never downward at the leaves, which is exactly why <b>all leaves stay at the same depth</b>.'}
+            : {zh:'下降途中發現子節點是滿的，就先分裂：中位數 <b>' + e.median + '</b> 升到父節點，剩下的 key 分成左右兩半。先分裂再往下走，代表<b>父節點一定還有空位</b>，不需要往回走 - 一趟到底。',
+               en:'On the way down we found the child full, so we split it first: the median <b>' + e.median + '</b> moves up into the parent and the rest splits into two halves. Splitting before descending guarantees <b>the parent always has room</b>, so nothing has to be undone on the way back - one pass down, done.'}});
+      }
+    });
+  }
+  F.push({shapes:btShapes(t.root, {}).concat([
+      note(5.60, {zh:'root [4]　height ' + btHeight(t.root) + '　' + btCount(t.root) + ' 個節點　' + t.splits + ' 次分裂',
+                  en:'root [4], height ' + btHeight(t.root) + ', ' + btCount(t.root) + ' nodes, ' + t.splits + ' splits'}, COL.orangeL, .34)]),
+    panels:[{lbl:{zh:'中序', en:'in order'}, chips:[chip('1..10', 'ok')]}],
+    view:VIEW, line:ln(CODE_BT, '# the tree only ever grows'),
+    msg:{zh:'排序插入 1..10 - 對 BST 來說這是最壞情況，對 B-tree 完全無所謂：高度 <b>' + btHeight(t.root) + '</b>，只分裂 <b>' + t.splits + '</b> 次，而且<b>沒有旋轉這個概念</b>。B-tree 靠分裂維持平衡，不靠旋轉。',
+         en:'Inserting 1..10 in order is the worst case for a BST and a non-event for a B-tree: height <b>' + btHeight(t.root) + '</b>, only <b>' + t.splits + '</b> splits, and <b>no rotations at all</b> - the concept does not exist here. A B-tree stays balanced by splitting, not by rotating.'}});
+  return F.list;
+}
+
+/* ======================= tab 6: LeetCode ================================ */
+const CODE_LC = [
+'def is_balanced(root):                 # LC 110',
+'    def h(n):',
+'        if n is None: return 0',
+'        l = h(n.left)',
+'        if l < 0: return -1            # already failed, stop early',
+'        r = h(n.right)',
+'        if r < 0: return -1',
+'        if abs(l - r) > 1: return -1   # -1 is the failure sentinel',
+'        return 1 + max(l, r)',
+'    return h(root) >= 0',
+'',
+'def balance_bst(root):                 # LC 1382',
+'    keys = inorder(root)               # sorted, by definition',
+'    return sorted_array_to_bst(keys)   # middle element as the root'
+];
+
+function lcFrames(v){
+  const F = new Frames();
+  if (v === 1){
+    let ok = null;
+    [3, 2, 4, 1].forEach(k => { ok = bstInsert(ok, k); });
+    let bad = null;
+    [5, 3, 7, 2, 1].forEach(k => { bad = bstInsert(bad, k); });
+    F.push({shapes:tree(ok, {plain:true, y0:1.40, dy:1.10}),
+      panels:[{lbl:{zh:'|h(左) − h(右)|', en:'|h(left) - h(right)|'}, chips:[chip('1', 'ok')]}],
+      view:VIEW, line:ln(CODE_LC, 'return h(root) >= 0'),
+      msg:{zh:'LC 110 問「這棵樹平衡嗎」。天真的寫法是每個節點各叫一次 height() - 那是 <b>O(n²)</b>，因為高度被重複算了無數次。',
+           en:'LC 110 asks whether a tree is balanced. The naive answer calls height() at every node, which is <b>O(n squared)</b> because the same heights get recomputed over and over.'}});
+    F.push({shapes:tree(bad, {plain:true, states:{5:'act', 3:'act', 2:'bad', 1:'bad'}, y0:1.40, dy:1.10}).concat(
+        [note(5.85, {zh:'h(左) = 3、h(右) = 1 → 差 2 → 不平衡',
+                     en:'h(left) = 3, h(right) = 1, difference 2 -> not balanced'}, COL.red, .32)]),
+      panels:[{lbl:{zh:'節點 5', en:'node 5'}, chips:[chip('l=3', 'act'), chip('r=1', 'act'), chip('-1', 'bad')]}],
+      view:VIEW, line:ln(CODE_LC, 'if abs(l - r) > 1'),
+      msg:{zh:'訣竅是<b>讓同一次遞迴同時回傳高度和答案</b>：用 <b>−1</b> 當失敗哨兵。一旦某棵子樹回傳 −1，上面每一層都直接把 −1 往上傳，不再往下看 - 一趟 <b>O(n)</b>，而且<b>提早結束</b>。',
+           en:'The trick is to make one recursion return <b>both the height and the verdict</b>, using <b>-1</b> as a failure sentinel. Once a subtree reports -1 every level above it just forwards -1 without looking further - one pass, <b>O(n)</b>, with early exit built in.'}});
+    F.push({shapes:[
+        note(2.10, {zh:'把「回傳值」多塞一個意義，是樹題最常見的省一趟技巧',
+                    en:'overloading the return value is the standard way to save a pass on tree problems'}, COL.orangeL, .36),
+        note(3.10, {zh:'−1 之所以能當哨兵，是因為真正的高度<b>永遠 ≥ 0</b>',
+                    en:'-1 works as a sentinel precisely because a real height is <b>always >= 0</b>'}, COL.tealL, .34),
+        note(4.20, {zh:'同一招也用在「求直徑」、「求最大路徑和」- 都是一次後序走訪',
+                    en:'the same move solves diameter and maximum path sum - all one post-order walk'}, COL.pale, .32)],
+      panels:[{lbl:{zh:'複雜度', en:'complexity'}, chips:[chip('O(n)', 'ok'), chip('O(h)', 'soft')]}],
+      view:VIEW, line:ln(CODE_LC, 'def h(n)'),
+      msg:{zh:'注意這裡的 <b>O(h)</b> 空間就是遞迴堆疊 - 而<b>這正是為什麼我們在乎高度</b>：一棵退化的樹不只查詢慢，連遞迴都會爆掉。',
+           en:'Note the <b>O(h)</b> space is the recursion stack - and <b>that is exactly why height matters</b>: a degenerate tree is not just slow to search, it will blow the stack.'}});
+    return F.list;
+  }
+  /* LC 1382 */
+  let chain = null;
+  [1, 2, 3, 4, 5, 6, 7].forEach(k => { chain = bstInsert(chain, k); });
+  const keys = inorderOf(chain);
+  F.push({shapes:tree(chain, {plain:true, y0:0.80, dy:0.72, r:.26, fs:.30}),
+    panels:[{lbl:{zh:'高度', en:'height'}, chips:[chip(String(heightOf(chain)), 'bad')]}],
+    view:VIEW, line:ln(CODE_LC, 'def balance_bst'),
+    msg:{zh:'LC 1382 給你一棵已經歪掉的 BST，要求<b>重建成平衡的</b>。這題其實在問：如果當初沒用 AVL，事後還救得回來嗎？',
+         en:'LC 1382 hands you an already-skewed BST and asks you to <b>rebuild it balanced</b>. The real question it is asking: if you did not use an AVL tree at the time, can you still fix it afterwards?'}});
+  F.push({shapes:[S.t(midX, 2.30, {zh:'inorder(root) = ', en:'inorder(root) = '}, {c:COL.tealL, fs:.36})].concat(
+      keys.map((k, i) => S.r(midX - keys.length * .34 + i * .68, 2.85, .60, .60, i === 3 ? 'hot' : 'idle', String(k), {fs:.32}))).concat(
+      [note(4.10, {zh:'中序走訪出來一定是<b>排序好的</b> - 這是 BST 的定義給的',
+                   en:'an in-order walk of a BST is <b>sorted by definition</b> - that is free information'}, COL.pale, .32),
+       note(4.75, {zh:'取正中間的 4 當根，左右兩半各自遞迴',
+                   en:'take the middle element 4 as the root, then recurse on each half'}, COL.orangeL, .34)]),
+    panels:[{lbl:{zh:'中間元素', en:'middle element'}, chips:[chip('4', 'hot')]}],
+    view:VIEW, line:ln(CODE_LC, 'keys = inorder(root)'),
+    msg:{zh:'兩步就好：<b>攤平</b>再<b>重建</b>。攤平得到排序陣列，重建時每次取<b>正中間</b>當根 - 左右兩邊的元素個數最多差一個，所以高度必然是 ⌈log₂(n+1)⌉。',
+         en:'Two steps: <b>flatten</b>, then <b>rebuild</b>. Flattening gives a sorted array, and rebuilding always takes the <b>middle</b> element as the root, so the two halves differ in size by at most one and the height is forced down to ceil(log2(n+1)).'}});
+  const built = (function build(a){
+    if (!a.length) return null;
+    const m = a.length >> 1;
+    const n = {key:a[m], left:build(a.slice(0, m)), right:build(a.slice(m + 1))};
+    return n;
+  })(keys);
+  F.push({shapes:tree(built, {plain:true, states:{4:'ok'}, y0:1.40, dy:1.10}),
+    panels:[{lbl:{zh:'高度', en:'height'}, chips:[chip(String(heightOf(chain)), 'bad'), chip(String(heightOf(built)), 'ok')]},
+            {lbl:{zh:'key 有變嗎', en:'keys changed'}, chips:[chip('no', 'ok')]}],
+    view:VIEW, line:ln(CODE_LC, 'return sorted_array_to_bst'),
+    msg:{zh:'高度從 <b>' + heightOf(chain) + '</b> 掉到 <b>' + heightOf(built) + '</b>，key 一個沒動。代價是 <b>O(n) 額外空間</b>放那個陣列；如果連這都不能給，還有 <b>DSW</b> 演算法 - 先把整棵樹旋轉成一條藤蔓，再轉回平衡，<b>O(1) 空間</b>，用的還是同一個 rotate。',
+         en:'The height drops from <b>' + heightOf(chain) + '</b> to <b>' + heightOf(built) + '</b> and not a single key changed. The price is <b>O(n) extra space</b> for that array; if you cannot spend it, the <b>DSW</b> algorithm rotates the whole tree into a vine and then back into balance in <b>O(1) space</b> - using the very same rotation primitive.'}});
+  return F.list;
+}
+
+/* ======================= metadata ======================================= */
+const DAY_META = {
+  title:{zh:'平衡樹一次講完：AVL、Red-Black、B-Tree', en:'Balanced trees in one go - AVL, red-black, B-tree'},
+  sub:{zh:'旋轉 → 顏色 → 磁碟頁：三種讓樹保持矮的辦法', en:'rotations, then colours, then disk pages - three ways to keep a tree short'},
+  tabs:[
+    {id:'bst', label:{zh:'1. 為什麼要平衡', en:'1. why balance'},
+     stage:{zh:'BST 退化成鏈結串列', en:'a BST degenerating into a linked list'}, view:VIEW,
+     idea:{zh:'BST 的 O(log n) 是<b>假設</b>，不是保證。排序好的資料會讓它變成一條 O(n) 的鏈。',
+           en:'The O(log n) of a BST is an <b>assumption</b>, not a guarantee. Sorted input turns it into an O(n) chain.'},
+     legend:['idle', 'hot', 'bad', 'ok'], code:CODE_BST, build:bstFrames},
+    {id:'rot', label:{zh:'2. 旋轉', en:'2. the rotation'},
+     stage:{zh:'唯一的原始操作', en:'the one primitive'}, view:VIEW,
+     idea:{zh:'旋轉<b>改變高度但不改變中序</b> - 所有平衡樹都建立在這一件事上。',
+           en:'A rotation <b>changes the height but not the in-order sequence</b> - every balanced tree is built on that one fact.'},
+     legend:['idle', 'act', 'hot', 'ok'], code:CODE_ROT, build:rotFrames},
+    {id:'avl', label:{zh:'3. AVL', en:'3. AVL'},
+     stage:{zh:'高度差 ≤ 1', en:'height difference at most 1'}, view:VIEW,
+     variants:[{zh:'排序插入 1..7', en:'insert 1..7 in order'}, {zh:'LR：一次旋轉不夠', en:'LR: one rotation is not enough'}],
+     idea:{zh:'每次插入後沿著路徑往回檢查 balance factor，第一個 |bf| > 1 的節點就地修好。',
+           en:'After each insert, walk back up checking balance factors; the first node with |bf| > 1 is repaired on the spot.'},
+     legend:['idle', 'act', 'hot', 'ok'], code:CODE_AVL, build:avlFrames},
+    {id:'rb', label:{zh:'4. 紅黑樹', en:'4. red-black'},
+     stage:{zh:'用顏色換平衡', en:'colours instead of heights'}, view:VIEW,
+     variants:[{zh:'混合插入', en:'mixed inserts'}, {zh:'排序插入 1..7', en:'insert 1..7 in order'}],
+     idea:{zh:'不量高度，只維持五條顏色規則；平衡是規則的副產品，代價是樹高一倍、寫入更可預測。',
+           en:'No heights are measured - just five colour rules. Balance is a side effect, paid for with twice the depth and bought back as predictable writes.'},
+     legend:['idle', 'bad', 'act', 'hot'], code:CODE_RB, build:rbFrames},
+    {id:'bt', label:{zh:'5. B-tree', en:'5. B-tree'},
+     stage:{zh:'節點就是一個 disk page', en:'a node is a disk page'}, view:VIEW,
+     variants:[{zh:'t = 2，插入 1..10', en:'t = 2, insert 1..10'}, {zh:'4KB page 的算術', en:'the 4KB page arithmetic'}],
+     idea:{zh:'成本單位從「比較」變成「讀了幾個 page」，樹就從瘦高變成矮胖 - 靠分裂而不是旋轉維持平衡。',
+           en:'Change the unit of cost from comparisons to page reads and the tree goes from tall and thin to short and wide - kept balanced by splitting, not rotating.'},
+     legend:['idle', 'hot', 'ok', 'ghost'], code:CODE_BT, build:btFrames},
+    {id:'lc', label:{zh:'6. LeetCode', en:'6. LeetCode'},
+     stage:{zh:'110 平衡判定 / 1382 重建', en:'110 check balance / 1382 rebuild'}, view:VIEW,
+     variants:[{zh:'110 Balanced Binary Tree', en:'110 Balanced Binary Tree'}, {zh:'1382 Balance a BST', en:'1382 Balance a BST'}],
+     idea:{zh:'110 用 −1 哨兵把兩趟併成一趟；1382 攤平再重建，高度直接掉到下限。',
+           en:'110 folds two passes into one with a -1 sentinel; 1382 flattens and rebuilds, dropping the height straight to the floor.'},
+     legend:['idle', 'act', 'hot', 'bad', 'ok'], code:CODE_LC, build:lcFrames}
+  ]
+};
+
+</script>
+<script>
+/* =========================================================================
+   100 Days of Python - shared demo engine
+   palette: teal/blue-green base, purple pointers, orange "current step"
+   ========================================================================= */
+const T = {
+  title:{zh:DAY_META.title.zh, en:DAY_META.title.en},
+  sub:{zh:DAY_META.sub.zh, en:DAY_META.sub.en},
+  play:{zh:'▶ 播放', en:'▶ Play'}, pause:{zh:'❚❚ 暫停', en:'❚❚ Pause'},
+  speed:{zh:'速度', en:'Speed'}, state:{zh:'演算法狀態', en:'Algorithm state'},
+  code:{zh:'程式碼', en:'Code'}, idea:{zh:'重點', en:'The idea'}
+};
+let LANG = 'zh';
+const tr = o => (o == null ? '' : (typeof o === 'string' ? o : (o[LANG] != null ? o[LANG] : o.en)));
+const $ = id => document.getElementById(id);
+
+function setLang(l){
+  LANG = l;
+  document.documentElement.lang = l === 'zh' ? 'zh-Hant' : 'en';
+  $('btn-zh').classList.toggle('on', l === 'zh');
+  $('btn-en').classList.toggle('on', l === 'en');
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.getAttribute('data-i18n');
+    if (T[k]) el.textContent = tr(T[k]);
+  });
+  buildTabs(); render();
+}
+
+/* --------------------------------------------------------------- palette */
+const STY = {
+  idle :{fill:'#07293a', stroke:'#0a6b74', text:'#dff2f5', w:.045, glow:0},
+  soft :{fill:'#052330', stroke:'#0a6b74', text:'#a8c8d0', w:.035, glow:0},
+  hot  :{fill:'#3a2109', stroke:'#ff9736', text:'#ffbe6b', w:.075, glow:.65},
+  act  :{fill:'#241542', stroke:'#9d6bff', text:'#c7a6ff', w:.070, glow:.55},
+  ok   :{fill:'#08414a', stroke:'#3fe0dd', text:'#d9ffff', w:.070, glow:.5},
+  done :{fill:'#062430', stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0},
+  bad  :{fill:'#3a0d0d', stroke:'#ff5c5c', text:'#ff9a9a', w:.070, glow:.4},
+  ghost:{fill:'none',    stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0, dash:'.12 .10'}
+};
+const COL = {teal:'#12b3b8', tealL:'#3fe0dd', purple:'#9d6bff', purpleL:'#c7a6ff',
+             orange:'#ff9736', orangeL:'#ffbe6b', red:'#ff5c5c', grey:'#8fa3ac',
+             pale:'#dff2f5', white:'#ffffff'};
+const LEGEND = {
+  hot:[COL.orange, {zh:'目前這一步', en:'current step'}],
+  act:[COL.purple, {zh:'指標 / 走訪位置', en:'pointer / cursor'}],
+  ok:[COL.tealL,  {zh:'完成 / 結果', en:'done / result'}],
+  bad:[COL.red,   {zh:'失敗 / 要避開的寫法', en:'failure / the wrong way'}],
+  done:['#2f5661', {zh:'已處理完', en:'already done'}],
+  soft:['#0a6b74', {zh:'其他元素', en:'other items'}],
+  idle:['#0a6b74', {zh:'尚未處理', en:'untouched'}],
+  ghost:['#123f4d', {zh:'尚未處理', en:'not yet reached'}]
+};
+const leg = (...keys) => keys.map(k => LEGEND[k]);
+
+/* ---------------------------------------------------------- frame buffer */
+function Frames(){
+  this.list = [];
+  this.push = (o) => this.list.push({
+    shapes:JSON.parse(JSON.stringify(o.shapes || [])),
+    panels:JSON.parse(JSON.stringify(o.panels || [])),
+    view:(o.view || null), line:(o.line == null ? 0 : o.line), msg:o.msg
+  });
+}
+/* shape helpers - engines call these, the renderer just draws */
+const S = {
+  r:(x, y, w, h, s, lab, o) => Object.assign({t:'r', x:x, y:y, w:w, h:h, s:s || 'idle', lab:lab}, o || {}),
+  c:(x, y, r, s, lab, o) => Object.assign({t:'c', x:x, y:y, r:r, s:s || 'idle', lab:lab}, o || {}),
+  e:(x1, y1, x2, y2, o) => Object.assign({t:'e', x1:x1, y1:y1, x2:x2, y2:y2}, o || {}),
+  t:(x, y, s, o) => Object.assign({t:'t', x:x, y:y, s:s}, o || {})
+};
+/* a labelled row of array cells; returns shapes */
+function cellRow(vals, x0, y, w, h, opt){
+  opt = opt || {};
+  const out = [], st = opt.states || {};
+  vals.forEach((v, i) => {
+    out.push(S.r(x0 + i * w, y, w - (opt.gap == null ? .06 : opt.gap), h, st[i] || 'idle',
+                 v == null ? '' : String(v), {fs:opt.fs || h * .52}));
+    if (opt.index !== false)
+      out.push(S.t(x0 + i * w + (w - .06) / 2, y + h + (opt.ilift || .34),
+                   opt.labels ? opt.labels[i] : String(i),
+                   {c:st[i] && st[i] !== 'idle' ? COL.orangeL : COL.grey, fs:opt.ifs || .30}));
+  });
+  if (opt.title) out.push(S.t(x0 - .22, y + h * .62, opt.title, {c:COL.tealL, fs:.32, anchor:'end'}));
+  return out;
+}
+/* binary-tree layout from a heap-style array (index 0 = root, 2i+1 / 2i+2) */
+function heapTreeShapes(arr, x0, y0, w, rowH, states, opt){
+  opt = opt || {};
+  const n = arr.length, out = [], R = opt.r || .34;
+  const depth = i => Math.floor(Math.log2(i + 1));
+  const maxD = n ? depth(n - 1) : 0;
+  const px = i => {
+    const d = depth(i), first = Math.pow(2, d) - 1, k = i - first;
+    const slots = Math.pow(2, d), span = w;
+    return x0 + span * (k + .5) / slots;
+  };
+  const py = i => y0 + depth(i) * rowH;
+  for (let i = 1; i < n; i++){
+    if (arr[i] == null) continue;
+    const p = Math.floor((i - 1) / 2);
+    out.push(S.e(px(p), py(p), px(i), py(i), {pad:R + .04,
+      s:(states && (states[i] === 'hot' || states[i] === 'act')) ? states[i] : 'idle'}));
+  }
+  for (let i = 0; i < n; i++){
+    if (arr[i] == null) continue;
+    out.push(S.c(px(i), py(i), R, (states && states[i]) || 'idle', String(arr[i]), {fs:R * .95}));
+    if (opt.showIndex)
+      out.push(S.t(px(i), py(i) + R + .34, String(i), {c:COL.grey, fs:.26}));
+  }
+  return out;
+}
+
+/* -------------------------------------------------------------- renderer */
+const svgNS = 'http://www.w3.org/2000/svg';
+const mk = (tag, a) => { const e = document.createElementNS(svgNS, tag);
+  for (const k in a) e.setAttribute(k, a[k]); return e; };
+const clear = svg => { while (svg.firstChild) svg.removeChild(svg.firstChild); };
+
+function defs(svg){
+  const d = mk('defs', {});
+  const f = mk('filter', {id:'glow', x:'-70%', y:'-70%', width:'240%', height:'240%'});
+  f.appendChild(mk('feGaussianBlur', {stdDeviation:'.055', result:'b'}));
+  const m = mk('feMerge', {});
+  m.appendChild(mk('feMergeNode', {in:'b'}));
+  m.appendChild(mk('feMergeNode', {in:'SourceGraphic'}));
+  f.appendChild(m); d.appendChild(f);
+  Object.keys(STY).forEach(k => {
+    const mk2 = mk('marker', {id:'ar-' + k, viewBox:'0 0 10 10', refX:'8.5', refY:'5',
+      markerWidth:'5.2', markerHeight:'5.2', orient:'auto-start-reverse'});
+    mk2.appendChild(mk('path', {d:'M 0 1 L 9 5 L 0 9 z', fill:STY[k].stroke}));
+    d.appendChild(mk2);
+  });
+  svg.appendChild(d);
+}
+
+function drawShape(svg, sh){
+  const st = STY[sh.s || 'idle'];
+  if (sh.t === 'e'){
+    let {x1, y1, x2, y2} = sh;
+    if (sh.pad){
+      const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+      x1 += dx / L * sh.pad; y1 += dy / L * sh.pad;
+      x2 -= dx / L * sh.pad; y2 -= dy / L * sh.pad;
+    }
+    const a = {x1:x1.toFixed(3), y1:y1.toFixed(3), x2:x2.toFixed(3), y2:y2.toFixed(3),
+      stroke:st.stroke, 'stroke-width':(sh.w || st.w || .05), 'stroke-linecap':'round',
+      opacity:(sh.o == null ? (sh.s && sh.s !== 'idle' ? 1 : .75) : sh.o)};
+    if (sh.dash || st.dash) a['stroke-dasharray'] = sh.dash || st.dash;
+    if (sh.arrow !== false) a['marker-end'] = 'url(#ar-' + (sh.s || 'idle') + ')';
+    svg.appendChild(mk('line', a));
+    if (sh.lab != null)
+      svg.appendChild(txt((x1 + x2) / 2 + (sh.lx || 0), (y1 + y2) / 2 + (sh.ly || -.16),
+        tr(sh.lab), st.stroke, sh.fs || .30, 'middle'));
+    return;
+  }
+  if (sh.t === 't'){
+    svg.appendChild(txt(sh.x, sh.y, tr(sh.s), sh.c || COL.pale, sh.fs || .32,
+      sh.anchor || 'middle', sh.o));
+    return;
+  }
+  let node;
+  if (sh.t === 'c'){
+    node = mk('circle', {cx:sh.x.toFixed(3), cy:sh.y.toFixed(3), r:sh.r.toFixed(3),
+      fill:st.fill, stroke:st.stroke, 'stroke-width':st.w});
+  } else {
+    node = mk('rect', {x:sh.x.toFixed(3), y:sh.y.toFixed(3), width:sh.w.toFixed(3),
+      height:sh.h.toFixed(3), rx:(sh.rx == null ? .09 : sh.rx), fill:st.fill,
+      stroke:st.stroke, 'stroke-width':st.w});
+  }
+  if (st.dash || sh.dash) node.setAttribute('stroke-dasharray', sh.dash || st.dash);
+  if (st.glow) node.setAttribute('filter', 'url(#glow)');
+  if (sh.o != null) node.setAttribute('opacity', sh.o);
+  svg.appendChild(node);
+  const cx = sh.t === 'c' ? sh.x : sh.x + sh.w / 2;
+  const cy = sh.t === 'c' ? sh.y : sh.y + sh.h / 2;
+  if (sh.lab != null && sh.lab !== '')
+    svg.appendChild(txt(cx + (sh.dx || 0), cy + (sh.fs || .40) * .35, tr(sh.lab), st.text,
+      sh.fs || .40, 'middle'));
+  if (sh.sub != null)
+    svg.appendChild(txt(cx, cy + (sh.t === 'c' ? sh.r : sh.h) + .34, tr(sh.sub),
+      sh.subc || COL.grey, sh.subfs || .28, 'middle'));
+  if (sh.top != null)
+    svg.appendChild(txt(cx, cy - (sh.t === 'c' ? sh.r : sh.h / 2) - .22, tr(sh.top),
+      sh.topc || COL.purpleL, sh.topfs || .28, 'middle'));
+}
+function txt(x, y, s, c, fs, anchor, o){
+  const t = mk('text', {x:(+x).toFixed(3), y:(+y).toFixed(3), 'text-anchor':anchor || 'middle',
+    fill:c, 'font-size':(+fs).toFixed(3)});
+  if (o != null) t.setAttribute('opacity', o);
+  t.textContent = s;
+  return t;
+}
+
+function renderStage(frame){
+  const svg = $('stage');
+  clear(svg); defs(svg);
+  const v = frame.view || curTab().view || [10, 6.4];
+  svg.setAttribute('viewBox', '0 0 ' + v[0] + ' ' + v[1]);
+  (frame.shapes || []).forEach(sh => drawShape(svg, sh));
+}
+
+function drawPanels(frame){
+  const box = $('panels'); box.innerHTML = '';
+  (frame.panels || []).forEach(p => {
+    const d = document.createElement('div'); d.className = 'panel';
+    const l = document.createElement('div'); l.className = 'lbl'; l.textContent = tr(p.lbl);
+    const c = document.createElement('div'); c.className = 'chips';
+    (p.chips.length ? p.chips : [{t:'—', cls:'empty'}]).forEach(ch => {
+      const s = document.createElement('span');
+      s.className = 'chip ' + (ch.cls || ''); s.textContent = ch.t; c.appendChild(s);
+    });
+    d.appendChild(l); d.appendChild(c); box.appendChild(d);
+  });
+}
+function drawCode(frame){
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  $('code').innerHTML = curTab().code.map((ln, i) => {
+    const h = esc(ln).replace(/(#.*)$/, '<span class="cm">$1</span>');
+    return '<span class="ln' + (i === frame.line ? ' on' : '') + '">' + (h || ' ') + '</span>';
+  }).join('');
+}
+function drawLegend(){
+  const keys = curTab().legend || ['hot', 'act', 'ok', 'idle'];
+  $('legend').innerHTML = keys.map(k => {
+    const [c, txt] = Array.isArray(k) ? k : LEGEND[k];
+    return '<span><i style="background:' + c + '"></i>' + tr(txt) + '</span>';
+  }).join('');
+}
+
+let tabIx = 0, varIx = 0, frames = [], cur = 0, timer = null;
+const TABS = DAY_META.tabs;
+const curTab = () => TABS[tabIx];
+
+function render(){
+  if (!frames.length) return;
+  cur = Math.max(0, Math.min(cur, frames.length - 1));
+  const f = frames[cur];
+  $('stage-title').textContent = tr(curTab().stage);
+  renderStage(f); drawPanels(f); drawCode(f); drawLegend();
+  $('narr').innerHTML = tr(f.msg);
+  $('idea').innerHTML = tr(curTab().idea);
+  $('stepno').textContent = (cur + 1) + ' / ' + frames.length;
+  $('prev').disabled = cur === 0;
+  $('next').disabled = cur === frames.length - 1;
+}
+function buildTabs(){
+  $('tabs').innerHTML = '';
+  TABS.forEach((t, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(t.label);
+    if (i === tabIx) b.classList.add('on');
+    b.onclick = () => { tabIx = i; varIx = 0; load(); };
+    $('tabs').appendChild(b);
+  });
+  const ex = $('extra'); ex.innerHTML = '';
+  const vs = curTab().variants;
+  if (vs) vs.forEach((v, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(v);
+    if (i === varIx) b.classList.add('on');
+    b.onclick = () => { varIx = i; load(); };
+    ex.appendChild(b);
+  });
+}
+function load(){
+  stop();
+  frames = curTab().build(varIx) || [];
+  cur = 0; buildTabs(); render();
+}
+function step(d){ stop(); cur += d; render(); }
+function reset(){ stop(); cur = 0; render(); }
+function stop(){ if (timer){ clearInterval(timer); timer = null; $('play').textContent = tr(T.play); } }
+function togglePlay(){
+  if (timer){ stop(); return; }
+  if (cur >= frames.length - 1) cur = 0;
+  $('play').textContent = tr(T.pause);
+  timer = setInterval(() => {
+    if (cur >= frames.length - 1){ stop(); return; }
+    cur++; render();
+  }, Number($('speed').value));
+}
+$('speed').addEventListener('input', () => { if (timer){ stop(); togglePlay(); } });
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight'){ step(1); e.preventDefault(); }
+  else if (e.key === 'ArrowLeft'){ step(-1); e.preventDefault(); }
+  else if (e.key === ' '){ togglePlay(); e.preventDefault(); }
+});
+setLang('zh');
+load();
+
+</script>
+</body>
+</html>
