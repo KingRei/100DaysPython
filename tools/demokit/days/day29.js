@@ -1,0 +1,731 @@
+// DAY: 29
+// TITLE_ZH: 區間結構：Segment Tree 與 Fenwick Tree
+// TITLE_EN: Segment tree and Fenwick tree - range queries under updates
+// SUB_ZH: 陣列上的兩件事：改一格、問一段的總和。分開看都是一行；要同時快，才有今天這兩種資料結構。Segment tree 把區間切成整棵子樹，Fenwick tree 乾脆把樹丟掉，只留 i & -i 蘊含的東西。
+// SUB_EN: Two operations on an array: write one cell, and sum a slice. Either alone is a one-liner; wanting both to be fast is what creates today's structures. A segment tree cuts a range into whole subtrees; a Fenwick tree throws the tree away and keeps only what i & -i implies.
+// FOLDER: day%2029%20-%20segment%20tree%20and%20fenwick
+// MEDIUM: https://medium.com/100-days-of-python
+
+const VIEW = [9.8, 6.4];
+const midX = VIEW[0] / 2;
+const ln = (code, frag) => { const i = code.findIndex(l => l.indexOf(frag) >= 0); return i < 0 ? 0 : i; };
+function chip(t, cls){ return {t:t, cls:cls || ''}; }
+
+/* ---- ports of range_structures.py -------------------------------------- */
+function segBuild(data){
+  const n = data.length, t = new Array(2 * n).fill(0);
+  for (let i = 0; i < n; i++) t[n + i] = data[i];
+  for (let k = n - 1; k >= 1; k--) t[k] = t[2 * k] + t[2 * k + 1];
+  return {n:n, t:t};
+}
+function segUpdate(st, i, v){
+  let k = i + st.n;
+  st.t[k] = v;
+  for (k >>= 1; k >= 1; k >>= 1) st.t[k] = st.t[2 * k] + st.t[2 * k + 1];
+}
+/* the query, recorded step by step: every cursor move becomes an event */
+function segQuerySteps(st, l, r){
+  const ev = [];
+  let lo = l + st.n, hi = r + st.n, resL = 0, resR = 0;
+  ev.push({kind:'start', l:lo, r:hi, resL:resL, resR:resR});
+  while (lo < hi){
+    if (lo & 1){ resL += st.t[lo]; ev.push({kind:'takeL', node:lo, resL:resL, resR:resR, l:lo, r:hi}); lo += 1; }
+    if (hi & 1){ hi -= 1; resR += st.t[hi]; ev.push({kind:'takeR', node:hi, resL:resL, resR:resR, l:lo, r:hi}); }
+    lo >>= 1; hi >>= 1;
+    ev.push({kind:'climb', l:lo, r:hi, resL:resL, resR:resR});
+  }
+  ev.push({kind:'done', total:resL + resR});
+  return ev;
+}
+/* which leaves does node k cover, in a 2n layout over n leaves? */
+function segSpan(n, k){
+  let lo = k, hi = k + 1;
+  while (lo < n){ lo *= 2; hi *= 2; }
+  return [lo - n, hi - n];
+}
+function lowbit(i){ return i & -i; }
+function fenBuild(data){
+  const n = data.length, t = new Array(n + 1).fill(0);
+  for (let i = 0; i < n; i++) t[i + 1] = data[i];
+  for (let i = 1; i <= n; i++){ const j = i + lowbit(i); if (j <= n) t[j] += t[i]; }
+  return {n:n, t:t};
+}
+function fenPrefixWalk(f, i){ const w = []; while (i > 0){ w.push(i); i -= lowbit(i); } return w; }
+function fenAddWalk(f, i){ const w = []; while (i <= f.n){ w.push(i); i += lowbit(i); } return w; }
+function bits(i, width){ let s = i.toString(2); while (s.length < width) s = '0' + s; return s; }
+
+/* ======================================================= 1. why it is hard */
+const CODE_WHY = [
+  'class PlainArray:                 # O(1) update, O(n) query',
+  '    def update(self, i, v):',
+  '        self.a[i] = v',
+  '',
+  '    def range_sum(self, l, r):',
+  '        return sum(self.a[l:r])   # touches r - l cells',
+  '',
+  'class PrefixSum:                  # O(1) query, O(n) update',
+  '    def range_sum(self, l, r):',
+  '        return self.p[r] - self.p[l]',
+  '',
+  '    def update(self, i, v):',
+  '        self.a[i] = v',
+  '        for k in range(i + 1, len(self.a) + 1):',
+  '            self.p[k] = self.p[k - 1] + self.a[k - 1]'
+];
+
+function whyFrames(){
+  const F = new Frames();
+  const a = [3, 1, 4, 1, 5, 9, 2, 6];
+  const pre = [0];
+  a.forEach(v => pre.push(pre[pre.length - 1] + v));
+  const W = .78, X0 = 1.55, YA = 1.35, YP = 3.55;
+
+  const rows = (stA, stP, pvals) => cellRow(a, X0, YA, W, .70, {states:stA, title:{zh:'a', en:'a'}})
+    .concat(cellRow(pvals || pre.slice(1), X0, YP, W, .70,
+            {states:stP, index:false, title:{zh:'prefix', en:'prefix'}}));
+
+  /* --- the scan --- */
+  let run = 0;
+  for (let i = 1; i < 7; i++){
+    run += a[i];
+    const stA = {}; for (let k = 1; k < i; k++) stA[k] = 'done';
+    stA[i] = 'hot';
+    F.push({shapes:rows(stA, {}), view:VIEW, line:ln(CODE_WHY, 'sum(self.a[l:r])'),
+      panels:[{lbl:{zh:'累加', en:'running sum'}, chips:[chip(String(run), 'ok')]},
+              {lbl:{zh:'讀過幾格', en:'cells touched'}, chips:[chip(String(i), 'hot')]}],
+      msg:i === 1
+        ? {zh:'先用最笨的辦法算 <b>sum(a[1:7])</b>：從 a[1] 開始一格一格加。改一格是 O(1)，但這個迴圈是 <b>O(n)</b>。',
+           en:'Start with the dumb answer to <b>sum(a[1:7])</b>: walk the slice one cell at a time. Writing a cell is O(1), but this loop is <b>O(n)</b>.'}
+        : {zh:'再加 a[' + i + '] = ' + a[i] + '，累加變成 <b>' + run + '</b>。n = 10⁶ 的時候，這一句就是一百萬次加法 - 而且<b>每次查詢都要重來</b>。',
+           en:'Add a[' + i + '] = ' + a[i] + ', the running sum is <b>' + run + '</b>. At n = 10^6 this single line is a million additions - and it starts from scratch on <b>every</b> query.'}});
+  }
+
+  /* --- prefix sums answer instantly --- */
+  F.push({shapes:rows({}, {6:'ok', 0:'act'}), view:VIEW, line:ln(CODE_WHY, 'self.p[r] - self.p[l]'),
+    panels:[{lbl:{zh:'查詢', en:'query'}, chips:[chip('p[7] - p[1] = ' + (pre[7] - pre[1]), 'ok')]},
+            {lbl:{zh:'讀過幾格', en:'cells touched'}, chips:[chip('2', 'ok')]}],
+    msg:{zh:'換成 prefix sum：<b>p[r] − p[l]</b>，兩次讀取就好，查詢變成 <b>O(1)</b>。看起來問題解決了 - 直到有人要寫入。',
+         en:'Switch to prefix sums: <b>p[r] - p[l]</b>, two reads, the query is now <b>O(1)</b>. Problem solved - right up until somebody writes.'}});
+
+  /* --- and then a write destroys them --- */
+  const pv = pre.slice(1);
+  F.push({shapes:rows({2:'hot'}, {}), view:VIEW, line:ln(CODE_WHY, 'self.a[i] = v'),
+    panels:[{lbl:{zh:'寫入', en:'write'}, chips:[chip('a[2] = 7', 'hot')]}],
+    msg:{zh:'把 <b>a[2]</b> 從 4 改成 7。對陣列本身這是一次寫入，O(1)。',
+         en:'Set <b>a[2]</b> from 4 to 7. For the array itself that is one write, O(1).'}});
+  const a2 = a.slice(); a2[2] = 7;
+  const pv2 = pv.slice();
+  for (let k = 2; k < 8; k++){
+    pv2[k] = pv2[k] + 3;
+    const stP = {}; for (let j = 2; j <= k; j++) stP[j] = 'bad';
+    F.push({shapes:cellRow(a2, X0, YA, W, .70, {states:{2:'hot'}, title:{zh:'a', en:'a'}})
+              .concat(cellRow(pv2, X0, YP, W, .70, {states:stP, index:false, title:{zh:'prefix', en:'prefix'}})),
+      view:VIEW, line:ln(CODE_WHY, 'self.p[k] = self.p[k - 1]'),
+      panels:[{lbl:{zh:'要重算的 prefix', en:'prefixes to rewrite'}, chips:[chip(String(k - 1) + ' / 6', 'bad')]}],
+      msg:{zh:'但 <b>prefix[' + k + ']</b> 裡面含有 a[2]，所以它也錯了。<b>a[2] 之後的每一個 prefix 都要重寫</b> - 一次寫入變成 O(n)。',
+           en:'But <b>prefix[' + k + ']</b> contains a[2], so it is wrong too. <b>Every prefix after a[2] has to be rewritten</b> - one write costs O(n).'}});
+  }
+
+  F.push({shapes:[
+      S.t(midX, 1.35, {zh:'plain array　　update O(1)　　range sum O(n)',
+                       en:'plain array      update O(1)      range sum O(n)'}, {c:COL.orangeL, fs:.38}),
+      S.t(midX, 2.25, {zh:'prefix sums　　update O(n)　　range sum O(1)',
+                       en:'prefix sums      update O(n)      range sum O(1)'}, {c:COL.red, fs:.38}),
+      S.t(midX, 3.35, {zh:'兩個答案是彼此的鏡像 - 各自在一件事上完美，在另一件事上無用',
+                       en:'the two answers are mirror images - each perfect at one job, useless at the other'}, {c:COL.grey, fs:.33}),
+      S.t(midX, 4.35, {zh:'segment tree / Fenwick　　update O(log n)　　range sum O(log n)',
+                       en:'segment tree / Fenwick      update O(log n)      range sum O(log n)'}, {c:COL.tealL, fs:.40})],
+    panels:[{lbl:{zh:'今天的目標', en:'today'}, chips:[chip('O(log n) / O(log n)', 'ok')]}],
+    view:VIEW, line:ln(CODE_WHY, 'class PrefixSum'),
+    msg:{zh:'這才是今天真正的題目：<b>拒絕在兩者之間選一個</b>。兩種結構都把「一整段」拆成 O(log n) 塊已經算好的東西，差別只在拆的方式。',
+         en:'That is the real question today: <b>refuse to choose</b>. Both structures break a range into O(log n) pieces that are already summed - they differ only in how the pieces are chosen.'}});
+  return F.list;
+}
+
+/* ================================================== 2. the segment tree */
+const CODE_SEG = [
+  'class SegmentTree:                       # flat array of size 2n',
+  '    def __init__(self, data):',
+  '        self.n = len(data)',
+  '        self.t = [0] * self.n + list(data)   # leaf i at t[n + i]',
+  '        for k in range(self.n - 1, 0, -1):',
+  '            self.t[k] = self.t[2*k] + self.t[2*k + 1]',
+  '',
+  '    def query(self, l, r):               # half open [l, r)',
+  '        l += self.n; r += self.n',
+  '        res_l = res_r = 0',
+  '        while l < r:',
+  '            if l & 1:                    # l is a right child',
+  '                res_l += self.t[l]; l += 1',
+  '            if r & 1:                    # r-1 is a right child',
+  '                r -= 1; res_r += self.t[r]',
+  '            l >>= 1; r >>= 1',
+  '        return res_l + res_r'
+];
+
+function segShapes(st, states, marks){
+  const arr = st.t.slice(1);
+  const out = heapTreeShapes(arr, .45, 1.05, 8.9, 1.18, states, {r:.30});
+  (marks || []).forEach(m => out.push(m));
+  return out;
+}
+/* map 1-based node id -> 0-based heap index used by heapTreeShapes */
+const hx = k => k - 1;
+
+function segFrames(varIx){
+  const F = new Frames();
+  const data = [3, 1, 4, 1, 5, 9, 2, 6];
+  const st = segBuild(data);
+  const L = varIx === 1 ? 2 : 1, R = varIx === 1 ? 5 : 7;
+
+  /* build */
+  for (let k = st.n - 1; k >= 1; k--){
+    const states = {};
+    for (let j = 0; j < st.n; j++) states[hx(st.n + j)] = 'idle';
+    for (let j = k + 1; j < st.n; j++) states[hx(j)] = 'done';
+    states[hx(k)] = 'hot';
+    states[hx(2 * k)] = 'act'; states[hx(2 * k + 1)] = 'act';
+    const shown = {n:st.n, t:st.t.slice()};
+    for (let j = 1; j < k; j++) shown.t[j] = '';
+    F.push({shapes:segShapes(shown, states), view:VIEW, line:ln(CODE_SEG, 'self.t[2*k] + self.t[2*k + 1]'),
+      panels:[{lbl:{zh:'節點', en:'node'}, chips:[chip('t[' + k + '] = t[' + (2 * k) + '] + t[' + (2 * k + 1) + ']', 'hot')]},
+              {lbl:{zh:'值', en:'value'}, chips:[chip(String(st.t[k]), 'ok')]}],
+      msg:k === st.n - 1
+        ? {zh:'先建樹。葉子放在後半段 <b>t[n + i]</b>，內部節點 k 就是它兩個小孩的和。整棵樹只是一個長度 2n 的陣列，<b>沒有指標、沒有遞迴</b>。',
+           en:'Build first. The leaves sit in the second half at <b>t[n + i]</b>, and internal node k is just the sum of its two children. The whole tree is one array of length 2n - <b>no pointers, no recursion</b>.'}
+        : {zh:'由後往前填 <b>t[' + k + '] = ' + st.t[k] + '</b>，涵蓋 a[' + segSpan(st.n, k)[0] + ':' + segSpan(st.n, k)[1] + ']。往上走就是 <b>k >>= 1</b>。',
+           en:'Filling backwards: <b>t[' + k + '] = ' + st.t[k] + '</b>, covering a[' + segSpan(st.n, k)[0] + ':' + segSpan(st.n, k)[1] + ']. Walking up is just <b>k >>= 1</b>.'}});
+  }
+
+  /* query */
+  const ev = segQuerySteps(st, L, R);
+  const taken = [];
+  ev.forEach(e => {
+    const states = {};
+    taken.forEach(k => { states[hx(k)] = 'ok'; });
+    if (e.kind === 'takeL' || e.kind === 'takeR') states[hx(e.node)] = 'ok';
+    if (e.l != null && e.l < 2 * st.n && e.l >= 1) states[hx(e.l)] = states[hx(e.l)] || 'act';
+    if (e.r != null && e.r - 1 >= 1) states[hx(e.r - 1)] = states[hx(e.r - 1)] || 'act';
+    const pan = [
+      {lbl:{zh:'游標 l / r', en:'cursors l / r'}, chips:[chip(String(e.l == null ? '-' : e.l), 'act'), chip(String(e.r == null ? '-' : e.r), 'act')]},
+      {lbl:{zh:'已取節點', en:'nodes taken'}, chips:taken.map(k => chip('t' + k, 'ok'))},
+      {lbl:{zh:'res_l + res_r', en:'res_l + res_r'}, chips:[chip(String((e.resL || 0) + ' + ' + (e.resR || 0)), 'ok')]}
+    ];
+    let msg, line = ln(CODE_SEG, 'l >>= 1; r >>= 1');
+    if (e.kind === 'start'){
+      line = ln(CODE_SEG, 'l += self.n; r += self.n');
+      msg = {zh:'查詢 <b>sum(a[' + L + ':' + R + '])</b>。兩個游標直接從葉子開始：l = ' + L + ' + n = <b>' + e.l + '</b>，r = ' + R + ' + n = <b>' + e.r + '</b>，然後一起往上爬。',
+             en:'Query <b>sum(a[' + L + ':' + R + '])</b>. Both cursors start at the leaves: l = ' + L + ' + n = <b>' + e.l + '</b>, r = ' + R + ' + n = <b>' + e.r + '</b>, and then climb together.'};
+    } else if (e.kind === 'takeL'){
+      line = ln(CODE_SEG, 'res_l += self.t[l]');
+      const sp = segSpan(st.n, e.node);
+      msg = {zh:'<b>t[' + e.node + '] 是右小孩</b>（l 是奇數），所以它的父節點裡有一半不在區間內 - 不能整塊拿。把 t[' + e.node + '] = ' + st.t[e.node] + '（a[' + sp[0] + ':' + sp[1] + ']）收下，l 往右移一格。',
+             en:'<b>t[' + e.node + '] is a right child</b> (l is odd), so half of its parent lies outside the range - the parent cannot be taken whole. Take t[' + e.node + '] = ' + st.t[e.node] + ' (a[' + sp[0] + ':' + sp[1] + ']) and step l right.'};
+      taken.push(e.node);
+    } else if (e.kind === 'takeR'){
+      line = ln(CODE_SEG, 'r -= 1; res_r += self.t[r]');
+      const sp = segSpan(st.n, e.node);
+      msg = {zh:'右邊同理：<b>t[' + e.node + ']</b> = ' + st.t[e.node] + '（a[' + sp[0] + ':' + sp[1] + ']）是區間裡的最後一整塊，收下之後 r 也往內縮。',
+             en:'Symmetrically on the right: <b>t[' + e.node + ']</b> = ' + st.t[e.node] + ' (a[' + sp[0] + ':' + sp[1] + ']) is the last whole block inside the range; take it and pull r inwards.'};
+      taken.push(e.node);
+    } else if (e.kind === 'climb'){
+      msg = {zh:'兩個游標各自往上一層（<b>l >>= 1, r >>= 1</b>）。每一層最多只會有一個「左邊界」和一個「右邊界」需要單獨拿，所以<b>每層最多 2 個節點</b>。',
+             en:'Both cursors move up one level (<b>l >>= 1, r >>= 1</b>). On any level at most one node is a partial left edge and one a partial right edge, so <b>at most 2 nodes per level</b>.'};
+    } else {
+      line = ln(CODE_SEG, 'return res_l + res_r');
+      msg = {zh:'答案 <b>' + e.total + '</b>，只讀了 <b>' + taken.length + '</b> 個節點。這些節點的區間<b>兩兩不相交、聯集剛好是 a[' + L + ':' + R + ']</b> - 這就是 canonical cover，大小不超過 2·log₂(n)。',
+             en:'The answer is <b>' + e.total + '</b>, from just <b>' + taken.length + '</b> nodes. Their ranges are <b>disjoint and their union is exactly a[' + L + ':' + R + ']</b> - the canonical cover, never larger than 2*log2(n).'};
+    }
+    F.push({shapes:segShapes(st, states), view:VIEW, line:line, panels:pan, msg:msg});
+  });
+  return F.list;
+}
+
+/* ===================================================== 3. lazy propagation */
+const CODE_LAZY = [
+  'def _apply(self, node, lo, hi, delta):',
+  '    self.sum[node] += delta * (hi - lo + 1)   # I already know my new sum',
+  '    self.lazy[node] += delta                  # my children do not',
+  '',
+  'def range_add(self, node, lo, hi, l, r, delta):',
+  '    if r < lo or hi < l:          # disjoint - nothing to do',
+  '        return',
+  '    if l <= lo and hi <= r:       # fully covered - STOP HERE',
+  '        self._apply(node, lo, hi, delta)',
+  '        return',
+  '    self._push(node, lo, hi)      # somebody is about to look inside',
+  '    mid = (lo + hi) // 2',
+  '    self.range_add(2*node, lo, mid, l, r, delta)',
+  '    self.range_add(2*node+1, mid+1, hi, l, r, delta)',
+  '    self.sum[node] = self.sum[2*node] + self.sum[2*node+1]'
+];
+
+/* a small recursive lazy tree over 8 leaves, recording every visit */
+function lazyRun(n, l, r, delta, eager){
+  const ev = [], span = {};
+  (function walk(node, lo, hi){
+    span[node] = [lo, hi];
+    if (hi > lo){ const mid = (lo + hi) >> 1; walk(2 * node, lo, mid); walk(2 * node + 1, mid + 1, hi); }
+  })(1, 0, n - 1);
+  (function go(node, lo, hi){
+    if (r < lo || hi < l) { ev.push({kind:'skip', node:node}); return; }
+    if (l <= lo && hi <= r && !eager){ ev.push({kind:'cover', node:node, lo:lo, hi:hi}); return; }
+    if (lo === hi){ ev.push({kind:'leaf', node:node, lo:lo, hi:hi}); return; }
+    ev.push({kind:'down', node:node, lo:lo, hi:hi});
+    const mid = (lo + hi) >> 1;
+    go(2 * node, lo, mid); go(2 * node + 1, mid + 1, hi);
+  })(1, 0, n - 1);
+  return {ev:ev, span:span};
+}
+
+function lazyFrames(varIx){
+  const F = new Frames();
+  const n = 8, l = 2, r = 5, delta = 5;
+  const eager = varIx === 1;
+  const run = lazyRun(n, l, r, delta, eager);
+  const states = {}, tags = {};
+  const seen = [];
+
+  const shapes = () => {
+    const arr = new Array(15).fill('');
+    const out = heapTreeShapes(arr, .45, 1.05, 8.9, 1.18, states, {r:.30});
+    Object.keys(tags).forEach(k => {
+      const idx = hx(Number(k)), d = Math.floor(Math.log2(idx + 1));
+      const first = Math.pow(2, d), kk = idx - (first - 1);
+      const x = .45 + 8.9 * (kk + .5) / first, y = 1.05 + d * 1.18;
+      out.push(S.r(x - .48, y + .40, .96, .40, 'ok', tags[k], {fs:.26}));
+    });
+    Object.keys(run.span).forEach(k => {
+      const idx = hx(Number(k)), d = Math.floor(Math.log2(idx + 1));
+      const first = Math.pow(2, d), kk = idx - (first - 1);
+      const x = .45 + 8.9 * (kk + .5) / first, y = 1.05 + d * 1.18;
+      if (!tags[k]) out.push(S.t(x, y + .58, 'a[' + run.span[k][0] + '..' + run.span[k][1] + ']',
+                                 {c:COL.grey, fs:.22}));
+    });
+    return out;
+  };
+  const pan = () => [
+    {lbl:{zh:'走訪過的節點', en:'nodes visited'}, chips:[chip(String(seen.length), eager ? 'bad' : 'ok')]},
+    {lbl:{zh:'留下的 lazy 標記', en:'lazy tags left'}, chips:[chip(String(Object.keys(tags).length), 'ok')]}
+  ];
+
+  run.ev.forEach(e => {
+    if (e.kind === 'skip'){
+      states[hx(e.node)] = 'done';
+      seen.push(e.node);
+      F.push({shapes:shapes(), panels:pan(), view:VIEW, line:ln(CODE_LAZY, 'if r < lo or hi < l'),
+        msg:{zh:'節點 ' + e.node + ' 的區間和 a[' + l + '..' + r + '] <b>完全不相交</b>，整棵子樹直接跳過。',
+             en:'Node ' + e.node + ' is <b>disjoint</b> from a[' + l + '..' + r + '], so the entire subtree is skipped.'}});
+      return;
+    }
+    seen.push(e.node);
+    if (e.kind === 'down'){
+      states[hx(e.node)] = 'act';
+      F.push({shapes:shapes(), panels:pan(), view:VIEW, line:ln(CODE_LAZY, 'mid = (lo + hi)'),
+        msg:{zh:'節點 ' + e.node + ' 蓋 a[' + e.lo + '..' + e.hi + ']，和更新區間<b>部分重疊</b>，只好往下拆成兩半。',
+             en:'Node ' + e.node + ' covers a[' + e.lo + '..' + e.hi + '] and only <b>partially overlaps</b> the update, so it has to split into halves.'}});
+    } else if (e.kind === 'cover'){
+      states[hx(e.node)] = 'hot';
+      tags[e.node] = '+' + delta + ' lazy';
+      F.push({shapes:shapes(), panels:pan(), view:VIEW, line:ln(CODE_LAZY, 'self._apply(node, lo, hi, delta)'),
+        msg:{zh:'節點 ' + e.node + ' <b>整段都在區間裡</b>，所以它自己就知道新的總和：sum += ' + delta + ' × ' + (e.hi - e.lo + 1) + '。剩下的只要留一張 <b>lazy 便條</b>給小孩，然後<b>停在這裡</b>。',
+             en:'Node ' + e.node + ' is <b>entirely inside</b> the range, so it already knows its new sum: sum += ' + delta + ' * ' + (e.hi - e.lo + 1) + '. All that is left is a <b>lazy note</b> for the children - and then we <b>stop</b>.'}});
+    } else {
+      states[hx(e.node)] = 'bad';
+      F.push({shapes:shapes(), panels:pan(), view:VIEW, line:ln(CODE_LAZY, 'self.sum[node] = self.sum[2*node]'),
+        msg:{zh:'eager 版本沒有「停在這裡」這條規則，所以一路走到葉子 a[' + e.lo + ']。<b>每一片葉子都要碰一次</b>，區間有多長就走多少步。',
+             en:'The eager version has no stop rule, so it walks all the way down to leaf a[' + e.lo + ']. <b>Every leaf gets touched</b> - the cost is the length of the range, not its logarithm.'}});
+    }
+  });
+
+  F.push({shapes:[
+      S.t(midX, 1.45, {zh:'n = 100000，2000 次隨機 range add', en:'n = 100000, 2000 random range adds'}, {c:COL.tealL, fs:.40}),
+      S.t(midX, 2.45, {zh:'eager（走到每一片葉子）　100,775,266 次節點走訪',
+                       en:'eager (down to every leaf)   100,775,266 node visits'}, {c:COL.red, fs:.36}),
+      S.t(midX, 3.35, {zh:'lazy（蓋滿就停）　　　　　　116,963 次',
+                       en:'lazy (stop when covered)     116,963'}, {c:COL.tealL, fs:.36}),
+      S.t(midX, 4.35, {zh:'862 倍，而且只用了 42,681 次 push down',
+                       en:'862x, and only 42,681 pushes down'}, {c:COL.orangeL, fs:.40})],
+    panels:[{lbl:{zh:'差距', en:'gap'}, chips:[chip('862x', 'ok')]}],
+    view:VIEW, line:ln(CODE_LAZY, 'if l <= lo and hi <= r'),
+    msg:{zh:'便條的意思是：<b>更新只在有人真的去看那個小孩的時候才會被套用</b>。同一個念頭 - 「整塊就不要拆」- 從查詢搬到更新，就差了 862 倍。',
+         en:'The note means one thing: <b>an update is applied to a child only when somebody actually looks at that child</b>. The same idea as the query - never split a whole block - moved to the update side, and it is worth 862x.'}});
+  return F.list;
+}
+
+/* ==================================================== 4. the Fenwick tree */
+const CODE_BIT = [
+  'class Fenwick:                    # 1-based inside, 0-based outside',
+  '    def add(self, i, delta):      # a[i] += delta',
+  '        i += 1',
+  '        while i <= self.n:',
+  '            self.t[i] += delta',
+  '            i += i & -i           # climb: add the lowest set bit',
+  '',
+  '    def prefix(self, i):          # sum of a[0:i]',
+  '        s = 0',
+  '        while i > 0:',
+  '            s += self.t[i]',
+  '            i -= i & -i           # peel the lowest set bit',
+  '        return s',
+  '',
+  '    def range_sum(self, l, r):',
+  '        return self.prefix(r) - self.prefix(l)'
+];
+
+function bitFrames(varIx){
+  const F = new Frames();
+  const N = 16;
+  const data = []; for (let i = 1; i <= N; i++) data.push(i);
+  const f = fenBuild(data);
+  const W = .545, X0 = .60, YT = 1.30, H = .62;
+
+  if (varIx === 0){
+    /* the staircase: what does t[i] cover? */
+    for (let i = 1; i <= N; i++){
+      const lb = lowbit(i), lo = i - lb;
+      const st = {};
+      for (let j = lo; j < i; j++) st[j] = 'hot';
+      const bars = [];
+      for (let j = 1; j < i; j++){
+        const l2 = lowbit(j), a0 = j - l2;
+        bars.push(S.r(X0 + a0 * W + .03, 2.55 + (j - 1) * .215, l2 * W - .10, .17, 'done', '', {fs:.16}));
+      }
+      bars.push(S.r(X0 + lo * W + .03, 2.55 + (i - 1) * .215, lb * W - .10, .17, 'ok', '', {fs:.16}));
+      F.push({shapes:cellRow(data, X0, YT, W, H, {states:st, fs:.26, ifs:.22}).concat(bars),
+        view:VIEW, line:ln(CODE_BIT, 'i += i & -i'),
+        panels:[{lbl:{zh:'i / 二進位', en:'i / binary'}, chips:[chip(String(i), 'act'), chip(bits(i, 5), 'act')]},
+                {lbl:{zh:'lowbit(i)', en:'lowbit(i)'}, chips:[chip(String(lb), 'hot')]},
+                {lbl:{zh:'t[i] 蓋住', en:'t[i] covers'}, chips:[chip('a[' + lo + ':' + i + ']', 'ok')]}],
+        msg:i === 1
+          ? {zh:'Fenwick tree 沒有節點也沒有指標，只有一個長度 n+1 的陣列。<b>t[i] 負責的範圍完全由 i 的二進位決定</b>：最低位的 1，也就是 <b>i & -i</b>。',
+             en:'A Fenwick tree has no nodes and no pointers, just an array of length n+1. <b>What t[i] is responsible for is decided entirely by the binary form of i</b>: its lowest set bit, <b>i & -i</b>.'}
+          : {zh:'i = ' + i + ' = ' + bits(i, 5) + '，最低位的 1 是 <b>' + lb + '</b>，所以 t[' + i + '] 存的是 <b>以 ' + i + ' 結尾的 ' + lb + ' 個元素</b>的和：a[' + lo + ':' + i + ']。' + (lb > 1 ? '越多結尾的 0，管的範圍越大。' : '奇數只管自己一格。'),
+             en:'i = ' + i + ' = ' + bits(i, 5) + ', the lowest set bit is <b>' + lb + '</b>, so t[' + i + '] holds the sum of <b>the ' + lb + ' elements ending at ' + i + '</b>: a[' + lo + ':' + i + ']. ' + (lb > 1 ? 'More trailing zeros, wider responsibility.' : 'An odd index owns only itself.')}});
+    }
+    F.push({shapes:[
+        S.t(midX, 1.85, {zh:'n 個計數器，蓋住所有 prefix', en:'n counters cover every prefix'}, {c:COL.tealL, fs:.42}),
+        S.t(midX, 2.85, {zh:'沒有 children 陣列、沒有區間欄位、沒有遞迴 - 樹的形狀藏在索引裡',
+                         en:'no children array, no range fields, no recursion - the tree is hidden in the index'}, {c:COL.grey, fs:.33}),
+        S.t(midX, 3.85, {zh:'記憶體 n + 1，segment tree 是 2n（lazy 版 8n）',
+                         en:'memory n + 1, against 2n for a segment tree (8n for the lazy one)'}, {c:COL.orangeL, fs:.36})],
+      panels:[{lbl:{zh:'記憶體', en:'memory'}, chips:[chip('n+1 vs 2n', 'ok')]}],
+      view:VIEW, line:ln(CODE_BIT, 'class Fenwick'),
+      msg:{zh:'把這 16 條線疊起來看，就是一棵樹 - 只是它從來沒有被存下來。<b>Peter Fenwick 1994 年的論文就叫它 binary indexed tree</b>，兩個名字指的是同一個東西。',
+           en:'Stack those 16 bars and you can see a tree - one that is never stored. <b>Peter Fenwick called it a binary indexed tree in his 1994 paper</b>; the two names are the same structure.'}});
+    return F.list;
+  }
+
+  /* variant 1: the two walks */
+  const target = 13;
+  const down = fenPrefixWalk(f, target);
+  let acc = 0;
+  down.forEach((i, step) => {
+    acc += f.t[i];
+    const lb = lowbit(i), lo = i - lb;
+    const st = {};
+    down.slice(0, step).forEach(j => { for (let q = j - lowbit(j); q < j; q++) st[q] = 'done'; });
+    for (let q = lo; q < i; q++) st[q] = 'hot';
+    F.push({shapes:cellRow(data, X0, YT, W, H, {states:st, fs:.26, ifs:.22}).concat([
+        S.t(midX, 3.15, 'prefix(' + target + ')', {c:COL.tealL, fs:.42}),
+        S.t(midX, 3.95, down.slice(0, step + 1).map(j => bits(j, 4)).join('  ->  '), {c:COL.orangeL, fs:.36}),
+        S.t(midX, 4.65, down.slice(0, step + 1).map(j => 't[' + j + ']').join(' + ') + '  =  ' + acc, {c:COL.pale, fs:.34})]),
+      view:VIEW, line:ln(CODE_BIT, 'i -= i & -i'),
+      panels:[{lbl:{zh:'i', en:'i'}, chips:[chip(String(i), 'act'), chip(bits(i, 4), 'act')]},
+              {lbl:{zh:'讀了幾格', en:'reads'}, chips:[chip(String(step + 1), 'hot')]},
+              {lbl:{zh:'累加', en:'running sum'}, chips:[chip(String(acc), 'ok')]}],
+      msg:{zh:'讀 <b>t[' + i + ']</b>，它蓋住 a[' + lo + ':' + i + ']（' + lb + ' 格）。接著 <b>i -= i & -i</b> 把最低位的 1 剝掉：' + bits(i, 4) + ' → ' + bits(i - lb, 4) + '。剩下的前綴長度剛好接上，<b>不重疊也不漏掉</b>。',
+           en:'Read <b>t[' + i + ']</b>, which covers a[' + lo + ':' + i + '] (' + lb + ' cells). Then <b>i -= i & -i</b> peels the lowest set bit: ' + bits(i, 4) + ' -> ' + bits(i - lb, 4) + '. What remains is exactly the prefix still owed - <b>no overlap, no gap</b>.'}});
+  });
+  F.push({shapes:cellRow(data, X0, YT, W, H, {states:{}, fs:.26, ifs:.22}).concat([
+      S.t(midX, 3.45, {zh:'讀取步數 = popcount(i)', en:'reads = popcount(i)'}, {c:COL.tealL, fs:.42}),
+      S.t(midX, 4.35, {zh:'13 = 1101 → 3 個 1 → 3 步，上限就是 log₂(n)',
+                       en:'13 = 1101 -> three 1 bits -> three steps, bounded by log2(n)'}, {c:COL.pale, fs:.34})]),
+    panels:[{lbl:{zh:'prefix(13)', en:'prefix(13)'}, chips:[chip(String(f.t[13] + f.t[12] + f.t[8]), 'ok')]}],
+    view:VIEW, line:ln(CODE_BIT, 'return s'),
+    msg:{zh:'所以查詢的成本<b>就是索引裡有幾個 1</b>。這不是攤還分析，是一眼看得出來的上界。',
+         en:'So the cost of a query is literally <b>how many 1 bits the index has</b>. Not an amortized argument - a bound you can read off the number.'}});
+
+  const up = fenAddWalk(f, 5);
+  up.forEach((i, step) => {
+    const lb = lowbit(i), lo = i - lb;
+    const st = {};
+    for (let q = lo; q < i; q++) st[q] = 'act';
+    st[4] = 'hot';
+    F.push({shapes:cellRow(data, X0, YT, W, H, {states:st, fs:.26, ifs:.22}).concat([
+        S.t(midX, 3.15, {zh:'add(索引 4, +v)', en:'add(index 4, +v)'}, {c:COL.tealL, fs:.42}),
+        S.t(midX, 3.95, up.slice(0, step + 1).map(j => bits(j, 5)).join('  ->  '), {c:COL.purpleL, fs:.36}),
+        S.t(midX, 4.65, {zh:'要更新的計數器：' + up.slice(0, step + 1).map(j => 't[' + j + ']').join(', '),
+                         en:'counters to update: ' + up.slice(0, step + 1).map(j => 't[' + j + ']').join(', ')}, {c:COL.pale, fs:.34})]),
+      view:VIEW, line:ln(CODE_BIT, 'i += i & -i'),
+      panels:[{lbl:{zh:'i', en:'i'}, chips:[chip(String(i), 'act'), chip(bits(i, 5), 'act')]},
+              {lbl:{zh:'寫了幾格', en:'writes'}, chips:[chip(String(step + 1), 'hot')]}],
+      msg:{zh:'寫入走相反方向：<b>i += i & -i</b>。a[4] 落在 t[' + i + '] 蓋住的 a[' + lo + ':' + i + '] 裡，所以它要跟著改。' + (step === 0 ? '這就是為什麼 add 是「往上爬」而 prefix 是「往下剝」。' : ''),
+           en:'A write walks the other way: <b>i += i & -i</b>. Cell a[4] lies inside a[' + lo + ':' + i + '], which t[' + i + '] owns, so that counter has to change too.' + (step === 0 ? ' That is why add climbs while prefix peels.' : '')}});
+  });
+  F.push({shapes:[
+      S.t(midX, 1.65, {zh:'查詢往下剝，更新往上爬', en:'the query peels down, the update climbs up'}, {c:COL.tealL, fs:.42}),
+      S.t(midX, 2.65, {zh:'兩條路徑剛好在「真的重疊的計數器」上相遇',
+                       en:'the two walks meet at exactly the counters that really overlap'}, {c:COL.pale, fs:.34}),
+      S.t(midX, 3.65, {zh:'range_sum(l, r) = prefix(r) − prefix(l)', en:'range_sum(l, r) = prefix(r) - prefix(l)'}, {c:COL.orangeL, fs:.38}),
+      S.t(midX, 4.55, {zh:'注意這裡用了減法 - 下一頁就是它的代價',
+                       en:'note the subtraction - the next tab is what it costs'}, {c:COL.red, fs:.34})],
+    panels:[{lbl:{zh:'兩邊都是', en:'both are'}, chips:[chip('O(log n)', 'ok')]}],
+    view:VIEW, line:ln(CODE_BIT, 'return self.prefix(r) - self.prefix(l)'),
+    msg:{zh:'六行程式碼、n+1 格記憶體，就換到和 segment tree 一樣的複雜度。代價寫在最後一行：<b>它需要減法</b>。',
+         en:'Six lines and n+1 cells buy the same complexity as a segment tree. The price is written on the last line: <b>it needs subtraction</b>.'}});
+  return F.list;
+}
+
+/* ============================================== 5. what a BIT cannot do */
+const CODE_MIN = [
+  '# a segment tree only ever COMBINES disjoint pieces',
+  'class MinSegmentTree(SegmentTree):',
+  '    def __init__(self, data):',
+  '        super().__init__(data, combine=min, identity=inf)',
+  '',
+  '# a BIT answers a range as prefix(r) - prefix(l): it SUBTRACTS',
+  'class BrokenMinBIT:',
+  '    def update(self, i, v):',
+  '        i += 1',
+  '        while i <= self.n:',
+  '            self.t[i] = min(self.t[i], v)   # can only ever shrink',
+  '            i += i & -i',
+  '',
+  '    def prefix_min(self, i):',
+  '        best = inf',
+  '        while i > 0:',
+  '            best = min(best, self.t[i]); i -= i & -i',
+  '        return best                          # the old value is still in there'
+];
+
+function minFrames(){
+  const F = new Frames();
+  const a = [5, 3, 8, 1];
+  const W = 1.15, X0 = 2.55, Y = 1.55;
+  const bitT = [Infinity, 5, 3, 8, 1];   // 1-based prefix-min BIT after building
+  const show = (vals, st, extra) =>
+    cellRow(vals, X0, Y, W, .80, {states:st, title:{zh:'a', en:'a'}}).concat(extra || []);
+
+  F.push({shapes:show(a, {}), view:VIEW, line:ln(CODE_MIN, 'class BrokenMinBIT'),
+    panels:[{lbl:{zh:'min', en:'min'}, chips:[chip('1', 'ok')]}],
+    msg:{zh:'sum 換成 <b>min</b> 看起來只是換一個運算子。對 segment tree 來說確實如此 - combine 從 + 換成 min，其他一行都不用改。',
+         en:'Swapping sum for <b>min</b> looks like changing one operator. For a segment tree it really is - combine goes from + to min and nothing else moves.'}});
+
+  F.push({shapes:show(a, {3:'hot'}, [
+      S.t(midX, 3.35, {zh:'BIT 把 1 折進了 t[4]（也就是整段 a[0:4] 的 min）',
+                       en:'the BIT folded the 1 into t[4] - the min of the whole of a[0:4]'}, {c:COL.orangeL, fs:.34})]),
+    view:VIEW, line:ln(CODE_MIN, 'self.t[i] = min(self.t[i], v)'),
+    panels:[{lbl:{zh:'t[4]', en:'t[4]'}, chips:[chip('1', 'hot')]}],
+    msg:{zh:'a[3] = 1 進來的時候，BIT 沿著 4 → 8 → … 把 <b>1</b> 折進每一個蓋住它的計數器。到這裡都還沒有問題。',
+         en:'When a[3] = 1 arrived, the BIT climbed 4 -> 8 -> ... folding <b>1</b> into every counter that covers it. Nothing is wrong yet.'}});
+
+  const a2 = [5, 3, 8, 9];
+  F.push({shapes:show(a2, {3:'bad'}, [
+      S.t(midX, 3.35, {zh:'a[3] = 9　　真正的 min 應該變成 3',
+                       en:'a[3] = 9      the true min should now be 3'}, {c:COL.tealL, fs:.36}),
+      S.t(midX, 4.15, {zh:'但 t[4] 只會做 min(t[4], 9) = 1 - <b>它沒有辦法忘記那個 1</b>',
+                       en:'but t[4] can only do min(t[4], 9) = 1 - <b>it has no way to forget the 1</b>'}, {c:COL.red, fs:.34})]),
+    view:VIEW, line:ln(CODE_MIN, 'self.t[i] = min(self.t[i], v)'),
+    panels:[{lbl:{zh:'真正的 min', en:'true min'}, chips:[chip('3', 'ok')]},
+            {lbl:{zh:'prefix-min BIT', en:'prefix-min BIT'}, chips:[chip('1', 'bad')]}],
+    msg:{zh:'現在把 a[3] 改成 9。<b>min 沒有反元素</b>：一旦某個值被折進去，就再也拿不出來。這個 BIT 只能讓值變小，於是它<b>安靜地回報一個已經不存在的答案</b>。',
+         en:'Now set a[3] = 9. <b>min has no inverse</b>: once a value is folded in there is no way to take it back out. This BIT can only ever let values shrink, so it <b>silently reports an answer that no longer exists</b>.'}});
+
+  F.push({shapes:[
+      S.t(midX, 1.45, {zh:'range(l, r) = prefix(r) − prefix(l)', en:'range(l, r) = prefix(r) - prefix(l)'}, {c:COL.orangeL, fs:.44}),
+      S.t(midX, 2.35, {zh:'這個減法要求運算<b>可以被撤銷</b>：sum 可以、xor 可以，min / max / gcd 不行',
+                       en:'that subtraction requires the operation to be <b>undoable</b>: sum yes, xor yes, min / max / gcd no'}, {c:COL.pale, fs:.33}),
+      S.t(midX, 3.55, {zh:'segment tree 從頭到尾只做「合併不相交的塊」，永遠不需要撤銷',
+                       en:'a segment tree only ever combines disjoint pieces - it never needs to undo anything'}, {c:COL.tealL, fs:.34}),
+      S.t(midX, 4.45, {zh:'所以它適用任何 associative 運算：sum、min、max、gcd、矩陣乘法',
+                       en:'so it works for any associative operation: sum, min, max, gcd, matrix product'}, {c:COL.tealL, fs:.34})],
+    panels:[{lbl:{zh:'選哪個', en:'which one'}, chips:[chip('inverse ? BIT : segtree', 'ok')]}],
+    view:VIEW, line:ln(CODE_MIN, 'class MinSegmentTree'),
+    msg:{zh:'這就是兩者真正的分界，不是常數也不是記憶體：<b>問「這個運算能不能被減掉」</b>。能，就用短六行的 BIT；不能，就得用 segment tree。',
+         en:'That, not the constant factor or the memory, is the real dividing line: <b>ask whether the operation can be subtracted away</b>. If it can, take the six-line BIT. If it cannot, you need the segment tree.'}});
+  return F.list;
+}
+
+/* ==================================================== 6. LeetCode */
+const CODE_LC = [
+  '# 307 Range Sum Query - Mutable',
+  'class NumArray:',
+  '    def __init__(self, nums):',
+  '        self.a = list(nums)',
+  '        self.bit = Fenwick(nums)',
+  '    def update(self, i, val):',
+  '        self.bit.add(i, val - self.a[i])   # a BIT stores DELTAS',
+  '        self.a[i] = val',
+  '    def sumRange(self, l, r):',
+  '        return self.bit.range_sum(l, r + 1)',
+  '',
+  '# 315 Count of Smaller Numbers After Self',
+  'def count_smaller(nums):',
+  '    rank = {v: i for i, v in enumerate(sorted(set(nums)))}',
+  '    bit, out = Fenwick(len(rank)), [0] * len(nums)',
+  '    for i in range(len(nums) - 1, -1, -1):   # right to left',
+  '        out[i] = bit.prefix(rank[nums[i]])   # smaller, already seen',
+  '        bit.add(rank[nums[i]], 1)',
+  '    return out',
+  '',
+  '# 370 Range Addition - no tree at all',
+  'def get_modified_array(length, updates):',
+  '    diff = [0] * (length + 1)',
+  '    for l, r, v in updates:',
+  '        diff[l] += v; diff[r + 1] -= v',
+  '    return list(accumulate(diff))[:length]'
+];
+
+function lcFrames(varIx){
+  const F = new Frames();
+  const W = 1.05, X0 = 2.35;
+
+  if (varIx === 0){
+    const a = [1, 3, 5];
+    let f = fenBuild(a);
+    const bitRow = (st) => cellRow(f.t.slice(1), X0 + .60, 3.30, W, .72,
+      {states:st, labels:['t1', 't2', 't3'], ilift:.30});
+    F.push({shapes:cellRow(a, X0 + .60, 1.35, W, .72, {states:{}, title:{zh:'a', en:'a'}}).concat(bitRow({})),
+      view:VIEW, line:ln(CODE_LC, 'self.bit = Fenwick(nums)'),
+      panels:[{lbl:{zh:'sumRange(0, 2)', en:'sumRange(0, 2)'}, chips:[chip('9', 'ok')]}],
+      msg:{zh:'<b>307 Range Sum Query - Mutable</b> 就是今天這個主題的標準題：它故意設計成兩種天真解都活不下來 - 純陣列查詢太慢，prefix sum 更新太慢。',
+           en:'<b>307 Range Sum Query - Mutable</b> is the canonical problem for today, built so that neither naive answer survives: a plain array queries too slowly, a prefix array updates too slowly.'}});
+    F.push({shapes:cellRow([1, 2, 5], X0 + .60, 1.35, W, .72, {states:{1:'hot'}, title:{zh:'a', en:'a'}})
+              .concat(bitRow({1:'hot'})),
+      view:VIEW, line:ln(CODE_LC, 'val - self.a[i]'),
+      panels:[{lbl:{zh:'update(1, 2)', en:'update(1, 2)'}, chips:[chip('delta = 2 - 3 = -1', 'hot')]}],
+      msg:{zh:'面試會踩的細節在這一行：<b>BIT 存的是差值，不是值</b>。所以「把 a[1] 設成 2」要先自己記住舊值，寫成 <b>add(1, 2 − 3)</b>。忘了這件事，整棵樹會慢慢歪掉而且不會報錯。',
+           en:'This is the line interviews are looking for: <b>a BIT stores deltas, not values</b>. So "set a[1] to 2" means keeping the old value yourself and calling <b>add(1, 2 - 3)</b>. Forget it and the tree drifts quietly, without ever raising an error.'}});
+    F.push({shapes:cellRow([1, 2, 5], X0 + .60, 1.35, W, .72, {states:{0:'ok', 1:'ok', 2:'ok'}, title:{zh:'a', en:'a'}})
+              .concat([S.t(midX, 3.55, 'sumRange(0, 2) = prefix(3) - prefix(0) = 8', {c:COL.tealL, fs:.40}),
+                       S.t(midX, 4.45, {zh:'更新與查詢都是 O(log n)，記憶體 n + 1',
+                                        en:'both update and query are O(log n), memory n + 1'}, {c:COL.pale, fs:.34})]),
+      view:VIEW, line:ln(CODE_LC, 'return self.bit.range_sum'),
+      panels:[{lbl:{zh:'sumRange(0, 2)', en:'sumRange(0, 2)'}, chips:[chip('8', 'ok')]}],
+      msg:{zh:'注意 LeetCode 的區間是<b>閉區間</b>，我們的 range_sum 是半開的，所以要 <b>r + 1</b>。這種 off-by-one 是這類題最常見的失分點。',
+           en:'Note that LeetCode uses an <b>inclusive</b> range while our range_sum is half open, hence <b>r + 1</b>. This off-by-one is where most of the lost marks on these problems come from.'}});
+    return F.list;
+  }
+
+  if (varIx === 1){
+    const nums = [5, 2, 6, 1];
+    const sorted = [1, 2, 5, 6];
+    const rank = {1:0, 2:1, 5:2, 6:3};
+    const hist = [0, 0, 0, 0];
+    const out = [0, 0, 0, 0];
+    for (let i = nums.length - 1; i >= 0; i--){
+      const rk = rank[nums[i]];
+      let smaller = 0;
+      for (let q = 0; q < rk; q++) smaller += hist[q];
+      out[i] = smaller;
+      const st = {}; st[i] = 'hot';
+      for (let q = i + 1; q < nums.length; q++) st[q] = 'done';
+      const hst = {}; for (let q = 0; q < rk; q++) if (hist[q]) hst[q] = 'ok';
+      hst[rk] = 'act';
+      F.push({shapes:cellRow(nums, X0, 1.30, W, .72, {states:st, title:{zh:'nums', en:'nums'}})
+                .concat(cellRow(hist, X0, 3.10, W, .72,
+                        {states:hst, labels:sorted.map(String), title:{zh:'BIT（出現次數）', en:'BIT (counts)'}}))
+                .concat([S.t(midX, 4.85, {zh:'比 ' + nums[i] + ' 小、而且已經看過的：' + smaller,
+                                          en:'smaller than ' + nums[i] + ' and already seen: ' + smaller}, {c:COL.orangeL, fs:.36})]),
+        view:VIEW, line:ln(CODE_LC, 'out[i] = bit.prefix'),
+        panels:[{lbl:{zh:'目前答案', en:'answer so far'}, chips:out.map((v, q) => chip(q < i ? '?' : String(v), q < i ? '' : 'ok'))},
+                {lbl:{zh:'rank', en:'rank'}, chips:[chip(String(nums[i]) + ' -> ' + rk, 'act')]}],
+        msg:{zh:'關鍵是<b>從右往左掃</b>：這樣「在我後面」就等於「我已經看過的」。BIT 當成一個計數直方圖，問題就變成一次 <b>prefix(rank)</b> - 比我小的有幾個。' + (i === nums.length - 1 ? '值先壓縮成 rank，BIT 才不用開到 10⁹ 格。' : ''),
+             en:'The trick is to <b>scan right to left</b>: then "after me" is the same as "already seen". Use the BIT as a histogram of counts and the question becomes one <b>prefix(rank)</b> - how many seen values are smaller than mine.' + (i === nums.length - 1 ? ' Values are compressed to ranks first, so the BIT does not need 10^9 cells.' : '')}});
+      hist[rk] += 1;
+    }
+    F.push({shapes:cellRow(out, X0, 2.20, W, .78, {states:{0:'ok', 1:'ok', 2:'ok', 3:'ok'}, title:{zh:'答案', en:'answer'}})
+              .concat([S.t(midX, 4.05, {zh:'n = 4000 時，BIT 比暴力兩層迴圈快約 30 倍',
+                                        en:'at n = 4000 the BIT runs about 30x faster than the double loop'}, {c:COL.tealL, fs:.36})]),
+      panels:[{lbl:{zh:'複雜度', en:'complexity'}, chips:[chip('O(n log n)', 'ok')]}],
+      view:VIEW, line:ln(CODE_LC, 'return out'),
+      msg:{zh:'這題值得記住的不是 BIT，是<b>「把統計問題轉成 prefix 查詢」</b>這個轉換 - 逆序數對、滑動視窗排名、離線區間統計都是同一招。',
+           en:'The thing worth remembering here is not the BIT but the <b>reduction of a counting question to a prefix query</b> - inversion counts, sliding-window ranks and offline range statistics are all the same move.'}});
+    return F.list;
+  }
+
+  /* 370 */
+  const len = 5;
+  const ups = [[1, 3, 2], [2, 4, 3], [0, 2, -2]];
+  const diff = new Array(len + 1).fill(0);
+  ups.forEach((u, k) => {
+    diff[u[0]] += u[2]; diff[u[1] + 1] -= u[2];
+    const st = {}; st[u[0]] = 'hot'; st[u[1] + 1] = 'bad';
+    F.push({shapes:cellRow(diff, 1.85, 2.30, W, .78, {states:st, title:{zh:'diff', en:'diff'}}),
+      view:VIEW, line:ln(CODE_LC, 'diff[l] += v; diff[r + 1] -= v'),
+      panels:[{lbl:{zh:'更新', en:'update'}, chips:[chip('[' + u.join(', ') + ']', 'act')]},
+              {lbl:{zh:'碰了幾格', en:'cells touched'}, chips:[chip('2', 'ok')]}],
+      msg:{zh:'<b>370 Range Addition</b>：對 [' + u[0] + ', ' + u[1] + '] 全部加 ' + u[2] + '，只要動 <b>兩格</b> - 開頭 +' + u[2] + '，結尾後一格抵銷掉。' + (k === 0 ? '完全不需要樹。' : ''),
+           en:'<b>370 Range Addition</b>: adding ' + u[2] + ' to all of [' + u[0] + ', ' + u[1] + '] touches exactly <b>two cells</b> - the start gets +' + u[2] + ' and the cell past the end cancels it.' + (k === 0 ? ' No tree required.' : '')}});
+  });
+  let acc2 = 0; const res = [];
+  for (let i = 0; i < len; i++){
+    acc2 += diff[i]; res.push(acc2);
+    const st = {}; for (let q = 0; q <= i; q++) st[q] = 'ok';
+    F.push({shapes:cellRow(diff, 1.85, 2.30, W, .78, {states:{}, title:{zh:'diff', en:'diff'}})
+              .concat(cellRow(res.concat(new Array(len - res.length).fill('')), 1.85, 4.10, W, .78,
+                      {states:st, index:false, title:{zh:'結果', en:'result'}})),
+      view:VIEW, line:ln(CODE_LC, 'accumulate(diff)'),
+      panels:[{lbl:{zh:'總成本', en:'total cost'}, chips:[chip('O(n + k)', 'ok')]}],
+      msg:{zh:'所有更新做完之後，掃一次前綴和就得到答案。<b>這一題是故意放在最後的反高潮</b>：更新全部發生在查詢之前，所以差分陣列 O(n + k) 就夠，樹一點忙都幫不上。',
+           en:'Once every update is in, one prefix-sum pass produces the answer. <b>This problem is a deliberate anticlimax</b>: all the updates happen before any query, so a difference array in O(n + k) is enough and a tree buys nothing.'}});
+  }
+  F.push({shapes:[
+      S.t(midX, 1.75, {zh:'先問一句：更新和查詢是<b>交錯</b>的嗎？',
+                       en:'ask first: are the updates and the queries <b>interleaved</b>?'}, {c:COL.tealL, fs:.42}),
+      S.t(midX, 2.85, {zh:'不是 → 差分陣列 / 前綴和，O(n + k)', en:'no -> difference array or prefix sums, O(n + k)'}, {c:COL.orangeL, fs:.36}),
+      S.t(midX, 3.75, {zh:'是，而且運算可以減 → Fenwick tree，n 格、六行',
+                       en:'yes, and the op has an inverse -> Fenwick tree, n cells and six lines'}, {c:COL.pale, fs:.36}),
+      S.t(midX, 4.65, {zh:'是，但運算不能減（min / max / gcd）→ segment tree',
+                       en:'yes, but the op cannot be undone (min / max / gcd) -> segment tree'}, {c:COL.pale, fs:.36})],
+    panels:[{lbl:{zh:'決策順序', en:'decision order'}, chips:[chip('1 -> 2 -> 3', 'ok')]}],
+    view:VIEW, line:ln(CODE_LC, 'def get_modified_array'),
+    msg:{zh:'今天的三題其實是一條決策樹。<b>樹只有在更新和查詢交錯的時候才賺得到它的成本</b>，而這件事在題目敘述裡就看得出來。',
+         en:'The three problems today are really one decision tree. <b>A tree only earns its cost when updates and queries interleave</b> - and you can tell which case you are in straight from the problem statement.'}});
+  return F.list;
+}
+
+const DAY_META = {
+  title:{zh:'區間結構：Segment Tree 與 Fenwick Tree', en:'Segment tree and Fenwick tree - range queries under updates'},
+  sub:{zh:'改一格 + 問一段：兩種拒絕在 O(1) 和 O(n) 之間選邊的辦法',
+       en:'write a cell, sum a slice - two ways to refuse the choice between O(1) and O(n)'},
+  tabs:[
+    {id:'why', label:{zh:'1. 為什麼難', en:'1. why it is hard'},
+     stage:{zh:'兩個天真解互為鏡像', en:'two naive answers, mirror images'}, view:VIEW,
+     idea:{zh:'純陣列 O(1) 更新、O(n) 查詢；prefix sum 剛好相反。<b>難的是同時要快</b>。',
+           en:'A plain array is O(1) update and O(n) query; prefix sums are exactly the reverse. <b>Wanting both is the hard part</b>.'},
+     legend:['idle', 'hot', 'bad', 'ok'], code:CODE_WHY, build:whyFrames},
+    {id:'seg', label:{zh:'2. Segment Tree', en:'2. segment tree'},
+     stage:{zh:'把區間切成整棵子樹', en:'cutting a range into whole subtrees'}, view:VIEW,
+     variants:[{zh:'查詢 a[1:7]', en:'query a[1:7]'}, {zh:'查詢 a[2:5]', en:'query a[2:5]'}],
+     idea:{zh:'長度 2n 的平坦陣列，葉子在 t[n+i]；查詢從兩端往上爬，<b>每層最多拿 2 個節點</b>。',
+           en:'A flat array of size 2n with leaf i at t[n+i]; the query climbs from both ends and takes <b>at most 2 nodes per level</b>.'},
+     legend:['idle', 'act', 'ok', 'done'], code:CODE_SEG, build:segFrames},
+    {id:'lazy', label:{zh:'3. Lazy 標記', en:'3. lazy tags'},
+     stage:{zh:'蓋滿了就停下來', en:'stop at the node that is fully covered'}, view:VIEW,
+     variants:[{zh:'lazy：留便條', en:'lazy: leave a note'}, {zh:'eager：走到葉子', en:'eager: walk to the leaves'}],
+     idea:{zh:'整段被蓋住的節點自己就知道新的和，<b>小孩的事等有人來看再說</b>。',
+           en:'A fully covered node already knows its new sum; <b>the children only find out when somebody looks</b>.'},
+     legend:['idle', 'act', 'hot', 'bad', 'done'], code:CODE_LAZY, build:lazyFrames},
+    {id:'bit', label:{zh:'4. Fenwick / BIT', en:'4. Fenwick / BIT'},
+     stage:{zh:'形狀藏在 i & -i 裡', en:'the shape is in i & -i'}, view:VIEW,
+     variants:[{zh:'t[i] 蓋住什麼', en:'what t[i] covers'}, {zh:'兩條走法', en:'the two walks'}],
+     idea:{zh:'不存樹，只存 n 個計數器；<b>t[i] 蓋住以 i 結尾的 i & -i 個元素</b>。',
+           en:'No tree is stored, only n counters; <b>t[i] covers the i & -i elements ending at i</b>.'},
+     legend:['idle', 'act', 'hot', 'ok', 'done'], code:CODE_BIT, build:bitFrames},
+    {id:'min', label:{zh:'5. BIT 做不到的事', en:'5. what a BIT cannot do'},
+     stage:{zh:'min 沒有反元素', en:'min has no inverse'}, view:VIEW,
+     idea:{zh:'prefix(r) − prefix(l) 需要減法；<b>min 折進去就拿不出來</b>，於是安靜地給錯答案。',
+           en:'prefix(r) - prefix(l) needs subtraction; <b>a min folded in can never be taken out</b>, so the answer is silently wrong.'},
+     legend:['idle', 'hot', 'bad', 'ok'], code:CODE_MIN, build:minFrames},
+    {id:'lc', label:{zh:'6. LeetCode', en:'6. LeetCode'},
+     stage:{zh:'307 / 315 / 370', en:'307 / 315 / 370'}, view:VIEW,
+     variants:[{zh:'307 Range Sum Query - Mutable', en:'307 Range Sum Query - Mutable'},
+               {zh:'315 Count of Smaller Numbers', en:'315 Count of Smaller Numbers'},
+               {zh:'370 Range Addition', en:'370 Range Addition'}],
+     idea:{zh:'307 是標準題，315 把統計轉成 prefix 查詢，370 提醒你<b>不交錯就不需要樹</b>。',
+           en:'307 is the canonical one, 315 turns a counting question into a prefix query, and 370 is the reminder that <b>without interleaving you do not need a tree</b>.'},
+     legend:['idle', 'act', 'hot', 'bad', 'ok'], code:CODE_LC, build:lcFrames}
+  ]
+};

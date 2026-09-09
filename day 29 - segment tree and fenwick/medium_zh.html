@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 29 — 區間結構：Segment Tree 與 Fenwick Tree</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 29 — 區間結構：Segment Tree 與 Fenwick Tree</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2029%20-%20segment%20tree%20and%20fenwick">day 29 on GitHub</a></p>
+<p><em>100 Days of Python - day 29</em></p>
+<p>一個陣列，兩個操作：改一格，然後問某一段的總和。任何一邊挑最直覺的做法，另一邊就爛掉。</p>
+<p>純陣列改一格是 <code>O(1)</code>，問一段是 <code>O(n)</code>。Prefix sum 陣列問一段是 <code>O(1)</code>，但改一格要 <code>O(n)</code> — 因為動到 <code>a[2]</code>，index 2 之後的每一個前綴和都失效了。一百萬個元素的話，前者每次查詢要加一百萬次，後者每次更新要重寫一百萬格。兩個剛好是彼此的鏡像，各自在一件事上完美、在另一件事上沒用。</p>
+<p>今天整篇文章都在做同一件事：<strong>拒絕在這兩者之間選邊</strong>。昨天的平衡樹是讓一堆 key 保持好找，今天的結構是讓一堆區間的摘要保持好維護 — 問題不一樣，但形狀非常像。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2029%20-%20segment%20tree%20and%20fenwick/imgs/day29_1.png">
+<h2>Segment tree：把區間切成一整棵一整棵子樹</h2>
+<p>想法是先把所有「自然的區塊」的總和都算好 — 整個陣列、每一半、每四分之一，一路切到單一元素 — 之後任何查詢都只是把其中幾塊黏起來。</p>
+<p>我實際會寫的是迭代版。它把整棵樹放在一個長度 <code>2n</code> 的平坦陣列裡：第 <code>i</code> 個葉子在 <code>t[n + i]</code>，節點 <code>k</code> 的父親是 <code>k &gt;&gt; 1</code>。沒有節點物件、沒有遞迴、沒有指標。</p>
+<pre><code>class SegmentTree:
+    def __init__(self, data):
+        self.n = len(data)
+        self.t = [0] * (2 * self.n)
+        self.t[self.n:] = data
+        for k in range(self.n - 1, 0, -1):        # build bottom up
+            self.t[k] = self.t[2 * k] + self.t[2 * k + 1]
+
+    def update(self, i, value):
+        k = i + self.n
+        self.t[k] = value
+        while k &gt; 1:                               # walk up the parent chain
+            k &gt;&gt;= 1
+            self.t[k] = self.t[2 * k] + self.t[2 * k + 1]
+
+    def query(self, l, r):                         # half open [l, r)
+        res, l, r = 0, l + self.n, r + self.n
+        while l &lt; r:
+            if l &amp; 1: res += self.t[l]; l += 1     # l is a right child: take it
+            if r &amp; 1: r -= 1; res += self.t[r]     # r is a right child: take r-1
+            l &gt;&gt;= 1; r &gt;&gt;= 1
+        return res</code></pre>
+<p>兩個指標從葉子往上爬，只有當一個節點<strong>完全落在區間裡</strong>才把它收走，那兩個 <code>&amp; 1</code> 判斷問的就是「我是不是一個突出來的邊角」。<code>canonical_cover(16, 3, 13)</code> 回傳 <code>[5, 6, 19, 28]</code> — <strong>十個元素的查詢，只讀四個存好的和</strong>。</p>
+<p>上界是 <code>2·log2(n)</code>，而理由短到可以直接記住：每一層最多只會有一個節點是左邊突出的邊角、一個是右邊突出的邊角，所以每層最多拿兩個。實測比上界寬鬆很多：<code>n = 65536</code> 平均 13.25 個節點（上界 32），<code>n = 1000000</code> 平均 17.03 個（上界 38）。</p>
+<p>有一件事要先注意，因為文章最後會回來算帳：查詢從頭到尾只把<strong>互不相交</strong>的區塊合起來，一次減法都沒有。所以那個合併可以換成任何滿足結合律的運算 — sum、min、max、gcd、矩陣乘法 — 改兩行就好。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2029%20-%20segment%20tree%20and%20fenwick/imgs/day29_2.png">
+<h2>Lazy propagation：同一招，搬到更新這一邊</h2>
+<p>現在改成「把某一段的每個元素都加上 <code>delta</code>」。走到每一片葉子是 <code>O(n)</code>，等於白蓋這棵樹了。但查詢已經會把區間切成整棵子樹，而<strong>被整段蓋住</strong>的節點根本不用問小孩：它的總和就是加上 <code>delta * width</code>。</p>
+<p>那就在那裡加完、留一張便條、然後停下來。</p>
+<pre><code>def _apply(self, k, delta, width):
+    self.t[k] += delta * width          # this node&#x27;s sum is now correct
+    if k &lt; self.size:
+        self.lazy[k] += delta           # the children are owed the same delta
+
+def _push(self, k, lo, hi):
+    if self.lazy[k]:
+        mid = (lo + hi) // 2
+        self._apply(2 * k,     self.lazy[k], mid - lo + 1)
+        self._apply(2 * k + 1, self.lazy[k], hi - mid)
+        self.lazy[k] = 0</code></pre>
+<p>這裡的不變式值得講清楚，因為安全性全靠它：<strong>一個節點自己的總和永遠是正確的；它的小孩可能落後，落後多少就記在 <code>lazy</code> 裡</strong>。這筆帳由 <code>_push</code> 結清，而且只有真的有人要往下走的時候才結。</p>
+<p>這是「延後做」不是「不做」，而且省下來的量不是邊際的。100000 個元素、2000 次隨機 range add：eager 版走了 100775266 個節點，lazy 版 116963 個，其中 42681 次 push down。<strong>862 倍。</strong></p>
+<p>而且那張便條不一定要是數字，它只要能疊加就好。「整段設成某個值」、「整段乘上某個係數」、「套一個仿射變換」都是合法的 tag — 這也是為什麼同一招會出現在區間排程、整棵子樹上色，以及任何「對一整個區域套一個運算子」的地方。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2029%20-%20segment%20tree%20and%20fenwick/imgs/day29_3.png">
+<h2>Fenwick tree：把樹丟掉，只留下位元</h2>
+<p>接著是另一個答案：一樣的複雜度，但完全沒有樹。</p>
+<p>Peter Fenwick 1994 年的論文裡自己就把它叫做 <strong>binary indexed tree</strong>，所以是的，BIT 和 Fenwick tree 是同一個東西，同一篇討論裡兩個名字混著用很正常。它只存 <code>n + 1</code> 個數字、零個連結，整個設計就是一個式子：<code>i &amp; -i</code>，也就是 <code>i</code> 的最低位元。</p>
+<pre><code>def prefix(self, i):                 # sum of a[0:i]
+    s = 0
+    while i &gt; 0:
+        s += self.t[i]
+        i -= i &amp; -i                  # strip the lowest set bit
+    return s
+
+def add(self, i, delta):             # a[i] += delta
+    i += 1
+    while i &lt;= self.n:
+        self.t[i] += delta
+        i += i &amp; -i                  # climb to the next responsible cell</code></pre>
+<p><code>t[i]</code> 存的是<strong>以 i 結尾</strong>的 <code>i &amp; -i</code> 個元素的總和。<code>t[8]</code> 蓋住 <code>a[0:8]</code>、<code>t[12]</code> 蓋住 <code>a[8:12]</code>、<code>t[6]</code> 蓋住 <code>a[4:6]</code>、<code>t[7]</code> 只蓋住 <code>a[6:7]</code>。這個階梯不是誰設計出來的排版，它就是二進位計數本身長出來的形狀。</p>
+<p><code>prefix(13)</code> 把 <code>1101</code> 的位元一顆一顆剝掉：<code>13 → 12 → 8 → 0</code>，一個 set bit 讀一次。<code>add</code> 則爬另一條互補的鏈。兩個迴圈最多跑 <code>log2(n)</code> 次，實際上通常更少 — <code>n = 1000000</code> 的 <code>prefix</code> 平均 9.88 步，最壞 19 步。</p>
+<p>回報在記憶體和常數上。一百萬格 64-bit：迭代 segment tree 要 <code>2n</code>、遞迴版 <code>4n</code>、lazy 版 <code>8n</code>、Fenwick tree 只要 <code>n + 1</code>。20000 個元素、2000 組（更新 + 區間查詢）實測：Fenwick 22.5 ms、segment tree 44.0 ms、純陣列 87.4 ms、prefix sum 9068.1 ms。六行程式、lazy tree 四分之一的記憶體、最單純那棵樹兩倍的速度。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2029%20-%20segment%20tree%20and%20fenwick/imgs/day29_4.png">
+<p>它能做的也不只前綴和，這部分知道的人反而不多。拿一個 BIT 蓋在<strong>差分陣列</strong>上，range add 就變成兩次點更新；拿<strong>兩個</strong> BIT，就能同時支援 range add 與 range sum，靠的是 <code>prefix(i) = B1.prefix(i) * i − B2.prefix(i)</code> — lazy segment tree 的複雜度、四分之一的記憶體。至於 <code>lower_bound</code>（前綴和第一次達到某個目標的位置）就是在同一個陣列上做二進位跳躍，<code>O(log n)</code>，不用多開任何結構 — Fenwick tree 就是這樣變成一個加權抽樣器的。</p>
+<h2>BIT 做不到的事</h2>
+<p>那還留著 segment tree 幹嘛？</p>
+<pre><code>a = [5, 3, 8, 1]; a[3] = 9
+real min          = 3
+prefix-min BIT    = 1     # wrong - it never forgot the 1
+min segment tree  = 3</code></pre>
+<p>BIT 的區間查詢一律是 <code>range(l, r) = prefix(r) − prefix(l)</code>。那個減號不是實作細節，它是<strong>對運算本身的要求</strong>：必須存在反元素。加法有，xor 有，<code>min</code> 沒有。一旦那個 1 被折進某一格，就沒有任何操作能把它拿出來 — 所以 prefix-min BIT 只支援值變小，值一變大它就會給你一個看起來很合理的錯答案，而且完全不會報錯。</p>
+<p>Segment tree 從來不減。它只把互不相交的區塊合起來，所以唯一的要求是結合律，<code>min</code>、<code>max</code>、<code>gcd</code>、矩陣乘法原封不動全部可用。</p>
+<p><strong>這才是兩者真正的分界線</strong>，不是常數也不是記憶體：先問「這個運算能不能被減掉」。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2029%20-%20segment%20tree%20and%20fenwick/imgs/day29_5.png">
+<h2>LeetCode</h2>
+<p><strong>307. Range Sum Query - Mutable</strong> 就是這個主題的標準題，它是故意設計成兩種天真解都活不下來的。兩種結構都幾行就寫完，但 BIT 版本藏了一個面試官在聽的細節：<strong>BIT 存的是差值不是值</strong>，所以「把 <code>a[i]</code> 設成 <code>val</code>」要寫成 <code>add(i, val - a[i])</code>，也就是你得自己另外留一份原陣列。漏掉這件事，整棵樹會慢慢歪掉而且永遠不報錯。另一個常見失分是區間慣例：LeetCode 的 <code>sumRange</code> 是閉區間，半開的 <code>range_sum</code> 要記得 <code>r + 1</code>。</p>
+<p><strong>315. Count of Smaller Numbers After Self</strong> 是值得背起來的轉換。先把值壓縮成 rank，然後<strong>從右往左掃</strong>，這樣「在我後面」就等於「我已經看過的」，BIT 當成一個計數直方圖用。每個元素只花一次 <code>prefix(rank)</code> 和一次 <code>add</code>。<code>n = 4000</code> 時大約比兩層迴圈快 30 倍。而「把統計問題轉成 prefix 查詢」這一招，逆序數對、滑動視窗排名、離線區間統計全部通用。</p>
+<p><strong>370. Range Addition</strong> 則是刻意放的反高潮。所有更新都發生在任何查詢之前，所以差分陣列 <code>O(n + k)</code> 已經最佳，樹一點忙都幫不上。</p>
+<p>所以決策流程其實很短。先問：更新和查詢是<strong>交錯</strong>的嗎？不是的話，用 prefix sum 或差分陣列。是的話而且運算可以減，寫那六行的 Fenwick tree。是的話但運算不能減，才蓋 segment tree — 如果更新也是整段整段來，再給它 lazy tag。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2029%20-%20segment%20tree%20and%20fenwick/imgs/day29_6.png">
+<h2>之後會用到的地方</h2>
+<p>強化學習裡的 prioritized replay buffer 本質上就是一棵 sum tree：依照優先度比例抽樣，其實就是在前綴和結構上做 <code>lower_bound</code>，而優先度每次梯度更新都會變 — 天生就是「交錯」的那一類。從一個權重會動的 token 分布抽樣也是同一個操作。區間重疊查詢、掃描線、離線區間統計也都坐在這兩個結構其中之一上，而要選哪一個，還是回到那個關於反元素的問題。</p>
+<p>明天：LRU 與 LFU cache — 記憶體不夠的時候，該丟掉誰。</p>
+<p>程式碼與互動式演示：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2029%20-%20segment%20tree%20and%20fenwick">day 29 on GitHub</a></p>
+</body>
+</html>

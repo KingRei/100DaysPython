@@ -58,7 +58,7 @@
 | Day | 主題 | 備註 |
 |---|---|---|
 | 28 | 平衡樹一次講完：AVL、Red-Black、B-Tree ✅ | 接 Day 04；rotation 保中序、AVL 四種 case、紅黑五性質與 insert fixup（插入 ≤2 旋轉／刪除 ≤3）、B-tree 以 page 為節點（4KB→t=128，1e6 keys height 2）；LC 110/108/1382 + DSW |
-| 29 | 區間結構：Segment Tree（lazy）+ Fenwick | 同一類問題的兩種寫法 |
+| 29 | 區間結構：Segment Tree（lazy）+ Fenwick ✅ | 迭代 segment tree（2n 平坦陣列、每層最多 2 節點）、lazy 便條省 862 倍 node visits、Fenwick 靠 i & -i（n+1 格、快 2 倍）、兩個 BIT 做 range/range；min 沒有反元素所以 BIT 會靜默給錯；LC 307/315/370 |
 | 30 | LRU / LFU Cache | LC 146；為 Day 57 KV cache 鋪路 |
 | 31 | Skip List | Redis sorted set；Day 67 HNSW 的地基 |
 | 32 | 機率型結構：Bloom Filter、HyperLogLog、Count-Min Sketch | 用準確度換空間 |

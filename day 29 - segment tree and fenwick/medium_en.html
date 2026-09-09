@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Segment tree and Fenwick tree: range queries when the data keeps changing</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Segment tree and Fenwick tree: range queries when the data keeps changing</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2029%20-%20segment%20tree%20and%20fenwick">day 29 on GitHub</a></p>
+<p><em>100 Days of Python - day 29</em></p>
+<p>Two operations on one array. Write a single cell. Ask for the sum of a slice. Pick the obvious structure for either one and you have made the other one terrible.</p>
+<p>A plain array updates in <code>O(1)</code> and answers a range sum in <code>O(n)</code>. A prefix-sum array answers in <code>O(1)</code> and needs <code>O(n)</code> for a single write, because touching <code>a[2]</code> invalidates every prefix from index 2 onward. On a million elements that is a million adds per query, or a million rewrites per update. They are mirror images, each perfect at one job and useless at the other.</p>
+<p>Everything today exists to refuse that trade. Yesterday&#x27;s balanced trees kept a <em>set of keys</em> short to search; today&#x27;s structures keep a <em>summary of ranges</em> cheap to maintain, which is a different problem with a very similar shape.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2029%20-%20segment%20tree%20and%20fenwick/imgs/day29_1.png">
+<h2>The segment tree: cut the range into whole subtrees</h2>
+<p>The idea is to precompute the sum of every &quot;natural&quot; block - the whole array, each half, each quarter, down to single elements - and then answer any query by gluing together a few of those blocks.</p>
+<p>The iterative version is the one I would actually write. It stores the tree in a flat array of size <code>2n</code>: leaf <code>i</code> lives at <code>t[n + i]</code>, and the parent of node <code>k</code> is <code>k &gt;&gt; 1</code>. No node objects, no recursion, no pointers.</p>
+<pre><code>class SegmentTree:
+    def __init__(self, data):
+        self.n = len(data)
+        self.t = [0] * (2 * self.n)
+        self.t[self.n:] = data
+        for k in range(self.n - 1, 0, -1):        # build bottom up
+            self.t[k] = self.t[2 * k] + self.t[2 * k + 1]
+
+    def update(self, i, value):
+        k = i + self.n
+        self.t[k] = value
+        while k &gt; 1:                               # walk up the parent chain
+            k &gt;&gt;= 1
+            self.t[k] = self.t[2 * k] + self.t[2 * k + 1]
+
+    def query(self, l, r):                         # half open [l, r)
+        res, l, r = 0, l + self.n, r + self.n
+        while l &lt; r:
+            if l &amp; 1: res += self.t[l]; l += 1     # l is a right child: take it
+            if r &amp; 1: r -= 1; res += self.t[r]     # r is a right child: take r-1
+            l &gt;&gt;= 1; r &gt;&gt;= 1
+        return res</code></pre>
+<p>Both pointers start at the leaves and climb. On each level, a node is harvested only when it lies entirely inside the range, and the two <code>&amp; 1</code> tests are exactly the &quot;am I an overhang?&quot; question. <code>canonical_cover(16, 3, 13)</code> returns <code>[5, 6, 19, 28]</code> - <strong>four stored sums answer a ten-element query</strong>.</p>
+<p>The bound is <code>2·log2(n)</code>, and the argument is short enough to keep in your head: on each level at most one node can be a partial overhang on the left and one on the right, so you can never take more than two per level. Measured over random ranges, it is comfortably better than the bound - <code>n = 65536</code> averages 13.25 nodes against a bound of 32, and <code>n = 1000000</code> averages 17.03 against 38.</p>
+<p>One thing to notice, because it comes back at the end: the query only ever combines <strong>disjoint</strong> pieces. Nothing is ever subtracted. That means the merge can be any associative operation - sum, min, max, gcd, matrix product - with a two-line change.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2029%20-%20segment%20tree%20and%20fenwick/imgs/day29_2.png">
+<h2>Lazy propagation: the same idea, moved to the update side</h2>
+<p>Now add <code>delta</code> to every element of a range. Walking to each leaf is <code>O(n)</code> and throws the tree away. But the query already knows how to cut a range into whole subtrees, and a node that is <em>fully covered</em> does not need to ask its children anything: its sum goes up by exactly <code>delta * width</code>.</p>
+<p>So apply it there, leave a note, and stop.</p>
+<pre><code>def _apply(self, k, delta, width):
+    self.t[k] += delta * width          # this node&#x27;s sum is now correct
+    if k &lt; self.size:
+        self.lazy[k] += delta           # the children are owed the same delta
+
+def _push(self, k, lo, hi):
+    if self.lazy[k]:
+        mid = (lo + hi) // 2
+        self._apply(2 * k,     self.lazy[k], mid - lo + 1)
+        self._apply(2 * k + 1, self.lazy[k], hi - mid)
+        self.lazy[k] = 0</code></pre>
+<p>The invariant is worth stating precisely, because it is what makes the whole thing safe: <strong>a node&#x27;s stored sum is always correct; its children may be stale by whatever is recorded in <code>lazy</code></strong>. The debt is settled by <code>_push</code>, and only when someone actually descends past that node.</p>
+<p>This is deferred work, not skipped work, and the saving is not marginal. On 100000 elements with 2000 random range-adds: the eager version makes 100775266 node visits, the lazy version 116963, with 42681 pushes. <strong>862 times fewer.</strong></p>
+<p>The tag does not have to be a number, either - it only has to compose. &quot;Assign this value&quot;, &quot;multiply by this factor&quot;, &quot;apply this affine map&quot; are all legal tags, which is why the same trick shows up in interval scheduling, in paint-the-subtree problems, and anywhere an operator is applied to a whole region at once.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2029%20-%20segment%20tree%20and%20fenwick/imgs/day29_3.png">
+<h2>The Fenwick tree: throw the tree away, keep the bits</h2>
+<p>And now the other answer, which reaches the same complexity with no tree at all.</p>
+<p>Peter Fenwick published it in 1994 and called it a <strong>binary indexed tree</strong> in the paper itself - so yes, &quot;BIT&quot; and &quot;Fenwick tree&quot; are the same structure, and you will see both names in the same discussion. It stores <code>n + 1</code> numbers and no links. The entire design is one expression: <code>i &amp; -i</code>, the lowest set bit of <code>i</code>.</p>
+<pre><code>def prefix(self, i):                 # sum of a[0:i]
+    s = 0
+    while i &gt; 0:
+        s += self.t[i]
+        i -= i &amp; -i                  # strip the lowest set bit
+    return s
+
+def add(self, i, delta):             # a[i] += delta
+    i += 1
+    while i &lt;= self.n:
+        self.t[i] += delta
+        i += i &amp; -i                  # climb to the next responsible cell</code></pre>
+<p><code>t[i]</code> holds the sum of the <code>i &amp; -i</code> elements <em>ending at</em> <code>i</code>. <code>t[8]</code> covers <code>a[0:8]</code>, <code>t[12]</code> covers <code>a[8:12]</code>, <code>t[6]</code> covers <code>a[4:6]</code>, <code>t[7]</code> covers only <code>a[6:7]</code>. That staircase is not a layout someone designed; it is what binary counting implies.</p>
+<p><code>prefix(13)</code> peels the set bits of <code>1101</code>: <code>13 → 12 → 8 → 0</code>, one read per set bit. <code>add</code> climbs the complementary chain. Both loops run at most <code>log2(n)</code> times, usually fewer - on <code>n = 1000000</code> the average <code>prefix</code> takes 9.88 steps against a worst case of 19.</p>
+<p>The payoff is memory and constants. On a million 64-bit cells an iterative segment tree needs <code>2n</code>, a recursive one <code>4n</code>, a lazy one <code>8n</code>, and a Fenwick tree <code>n + 1</code>. On 20000 elements with 2000 update-plus-query pairs, I measured 22.5 ms for the Fenwick tree, 44.0 ms for the segment tree, 87.4 ms for the plain array and 9068.1 ms for prefix sums. Six lines of code, a quarter of the memory of a lazy tree, twice the speed of the simplest one.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2029%20-%20segment%20tree%20and%20fenwick/imgs/day29_4.png">
+<p>It also does more than prefix sums, which is the part people tend not to know. Run one BIT over the <em>difference</em> array and a range add becomes two point updates. Run <strong>two</strong> BITs and you get range add plus range sum, via <code>prefix(i) = B1.prefix(i) * i - B2.prefix(i)</code> - a lazy segment tree&#x27;s asymptotics in a quarter of its memory. And <code>lower_bound</code>, the smallest index whose prefix reaches a target, is a binary lift over the same array in <code>O(log n)</code>, which is how a Fenwick tree turns into a weighted sampler.</p>
+<h2>What a Fenwick tree cannot do</h2>
+<p>So why keep the segment tree at all?</p>
+<pre><code>a = [5, 3, 8, 1]; a[3] = 9
+real min          = 3
+prefix-min BIT    = 1     # wrong - it never forgot the 1
+min segment tree  = 3</code></pre>
+<p>Every BIT range query is <code>range(l, r) = prefix(r) - prefix(l)</code>. That subtraction is not an implementation detail, it is a <strong>requirement on the operation</strong>: there must be an inverse. Addition has one. Xor has one. <code>min</code> does not. Once a 1 has been folded into a cell, nothing takes it back out - so a prefix-min BIT can only ever let values decrease, and when a value increases it returns a plausible, wrong answer without raising anything.</p>
+<p>The segment tree never subtracts. It combines disjoint pieces, so associativity is the only requirement, and <code>min</code>, <code>max</code>, <code>gcd</code> and matrix products all work unchanged.</p>
+<p>That, not the constant factor and not the memory, is the real dividing line: <strong>ask whether the operation can be undone.</strong></p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2029%20-%20segment%20tree%20and%20fenwick/imgs/day29_5.png">
+<h2>The LeetCode problems</h2>
+<p><strong>307. Range Sum Query - Mutable</strong> is the canonical problem for this whole topic, built so that neither naive answer survives. Both structures solve it in a few lines, but the BIT version hides the detail interviewers listen for: a BIT stores <strong>deltas, not values</strong>, so &quot;set <code>a[i]</code> to <code>val</code>&quot; has to be written <code>add(i, val - a[i])</code>, which means keeping the original array beside the tree. Miss it and the structure drifts quietly, never erroring. The other easy loss is the interval convention - LeetCode&#x27;s <code>sumRange</code> is inclusive, so a half-open <code>range_sum</code> needs <code>r + 1</code>.</p>
+<p><strong>315. Count of Smaller Numbers After Self</strong> is the reduction worth memorising. Compress the values to ranks, scan <strong>right to left</strong> so that &quot;after me&quot; becomes &quot;already seen&quot;, and use the BIT as a histogram of counts. Each element then costs one <code>prefix(rank)</code> and one <code>add</code>. At <code>n = 4000</code> that ran about 30 times faster than the double loop. The move - turning a counting question into a prefix query - is the same one behind inversion counts, sliding-window ranks and offline range statistics.</p>
+<p><strong>370. Range Addition</strong> is a deliberate anticlimax. Every update arrives before any query, so a difference array in <code>O(n + k)</code> is optimal and a tree buys nothing.</p>
+<p>Which makes the decision procedure short. Are the updates and the queries <strong>interleaved</strong>? If not, use prefix sums or a difference array. If they are and the operation has an inverse, write the six-line Fenwick tree. If they are and it does not, build the segment tree - and if the updates cover ranges too, give it lazy tags.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2029%20-%20segment%20tree%20and%20fenwick/imgs/day29_6.png">
+<h2>Why this matters later</h2>
+<p>A prioritised replay buffer in reinforcement learning is a sum-tree: sampling proportional to priority is exactly <code>lower_bound</code> on a prefix-sum structure, and priorities change after every gradient step, so this is the interleaved case by construction. Sampling from a token distribution with dynamic weights is the same operation. Interval-overlap queries, sweep-line algorithms and offline range statistics all sit on one of these two structures, and choosing between them still comes down to that one question about the inverse.</p>
+<p>Tomorrow: LRU and LFU caches - what to throw away when memory runs out.</p>
+<p>Code and the interactive walkthrough: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2029%20-%20segment%20tree%20and%20fenwick">day 29 on GitHub</a></p>
+</body>
+</html>
