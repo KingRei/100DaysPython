@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 31 — Skip List 跳躍串列：用擲硬幣取代平衡的排序結構</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 31 — Skip List 跳躍串列：用擲硬幣取代平衡的排序結構</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2031%20-%20skip%20list">day 31 on GitHub</a></p>
+<p><em>100 Days of Python - day 31</em></p>
+<p>Redis 有一種資料型別，可以把上百萬個成員依 score 排好，用微秒等級回答「這個成員排第幾」， 還能直接把排序中第 1000 到第 1020 名交給你，完全不碰其他 999,980 個。裡面沒有樹。只有一條 linked list、幾份比較稀疏的複本疊在上面，還有一枚硬幣。</p>
+<p>昨天的 cache 講的是「故意忘掉東西」；今天剛好相反 —— 一個把所有東西排好、而且查得很快的結構， 但不需要 Day 28 那些為了維持平衡而寫的旋轉程式碼。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2031%20-%20skip%20list/imgs/day31_1.png">
+<h2>問題：光有順序是不夠的</h2>
+<p>排序好的陣列可以做 binary search；排序好的 linked list 順序一模一樣，卻完全不能 binary search，因為二分法要「直接落在中間」，而串列只能一步一步走過去。在範例程式裡，在 100 個排序好 的 key 中找 198，陣列花 7 次 probe，串列花 99 跳。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2031%20-%20skip%20list/imgs/day31_2.png">
+<p>所以缺的不是順序，是「跨大步」的能力。跳躍串列補上的就只有這件事：把排序串列留在第 0 層， 上面疊幾份比較稀疏的複本當快車道。</p>
+<p>搜尋從最高層開始，永遠只做兩件事：下一個 key 還比目標小就往右走，不能走了就往下掉一層。 每次往下掉的時候，腳下這個節點一定已經小於目標，所以任何一段串列都不會被重走。整條路徑就是 一個往右下方走的樓梯。</p>
+<h2>真正聰明的地方：高度是隨機的</h2>
+<p>最直覺的做法是規律地蓋快車道 —— 第 1 層放每隔一個節點、第 2 層放每隔四個。查起來很漂亮， 但根本沒辦法維護：在最前面插入一個 key，後面每個 key 的奇偶就全部翻轉，在 16 個 key 的例子 裡，16 個節點全部要改層數。</p>
+<p>所以跳躍串列不「算」高度。每個節點出生時擲硬幣：正面就繼續擲，第一次反面就停。這個高度決定之後 一輩子不再改變。</p>
+<pre><code>def random_level(self):
+    lvl = 1
+    while self.rng.random() &lt; self.p and lvl &lt; self.max_level:
+        lvl += 1
+    return lvl</code></pre>
+<p>這正是 Day 28 不肯做的那個交易。AVL 和紅黑樹是「賺」來的平衡：每次插入都旋轉，代價是 parent 指標、顏色位元、還有四種 fixup case。跳躍串列則是跟機率「買」平衡，一行 rebalance 都不用寫。 還有個順帶的好處：結構的形狀只跟硬幣有關、跟 key 無關，所以沒有任何一種插入順序能把它打壞。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2031%20-%20skip%20list/imgs/day31_3.png">
+<h2>一趟走訪，三種操作</h2>
+<p>search、insert、delete 走的是同一座樓梯，所以只寫一次：</p>
+<pre><code>def _descend(self, key):
+    update, rank = [None] * self.max_level, [0] * self.max_level
+    node = self.head
+    for i in range(self.level - 1, -1, -1):
+        rank[i] = 0 if i == self.level - 1 else rank[i + 1]
+        while node.forward[i] is not None and node.forward[i].key &lt; key:
+            rank[i] += node.span[i]       # count what this hop flew over
+            node = node.forward[i]
+        update[i] = node                  # the pointer that may be rewritten
+    return update, rank, node.forward[0]</code></pre>
+<p><code>update[i]</code> 是第 i 層上最後一個「還嚴格小於 key」的節點 —— 也就是「如果要在這裡插入，必須被 改寫的那根指標」的擁有者。insert 只要把新節點接進 <code>update</code> 的前 <code>lvl</code> 層，delete 只要把它從 出現過的每一層解開，兩者都不需要再搜尋一次。</p>
+<p>在 16 個 key 的範例串列上，<code>search(13)</code> 兩跳就到，而 <code>search(99)</code> 這種找不到的情況花三跳。</p>
+<h2>span：同一趟走訪，順便回答名次</h2>
+<p>幫每根 forward 指標記第二個數字 —— 它一口氣跨過幾個第 0 層的節點 —— 原本就要走的那趟路就開始 免費回答另一個問題。把走到 key 13 所經過的 span 加起來：<code>10 + 2 + 1 = 13</code>，所以它 0-based 的 rank 是 12。這就是 Redis 的 <code>ZRANK</code>。反過來用 —— 只要累積的 span 還沒超過 <code>k</code> 就繼續走 —— 就得到 <code>select(k)</code>，也就是用索引取值的 <code>ZRANGE</code>。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2031%20-%20skip%20list/imgs/day31_4.png">
+<h2>那一行大家都會忘記</h2>
+<pre><code>for i in range(lvl):                      # levels the new node reaches
+    node.forward[i] = update[i].forward[i]
+    update[i].forward[i] = node
+    node.span[i] = update[i].span[i] - (rank[0] - rank[i])
+    update[i].span[i] = (rank[0] - rank[i]) + 1
+
+for i in range(lvl, self.level):          # levels ABOVE the new node
+    update[i].span[i] += 1</code></pre>
+<p>第二個迴圈非常容易漏掉，因為那幾層根本不用改任何指標：它們直接從新節點頭上飛過去，連知道都不 知道。但問題就在這裡 —— 它們現在比以前多跨過一個節點，所以那個計數少了一。</p>
+<p>把這個迴圈刪掉，然後用你想得到的所有 ordered set 測試去跑：<code>keys()</code> 跟正確版本一樣、 <code>search()</code> 一樣、<code>range()</code> 也一樣，不會噴錯、順序完全正確。但 <code>rank()</code> 在 200 個 key 裡錯了 197 個，從 key 3 開始就理直氣壯地說自己是第 0 名（正確答案是 3）—— 而且 span 一旦少算， 後面每一個名次都會繼承這個誤差。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2031%20-%20skip%20list/imgs/day31_5.png">
+<p>我很喜歡這個 bug，因為它講的其實是測試這件事：forward 指標和 span 是住在同一個節點裡、彼此獨立 的兩個不變條件，而其中只有一個會被人自然而然寫測試去驗。</p>
+<h2>為什麼 Redis 擲的是一枚不公平的硬幣</h2>
+<p>假設升級機率是 <code>p</code>，每個節點平均帶 <code>1 / (1 - p)</code> 根 forward 指標，而走訪要經過的層數大約是 <code>log n / log(1/p)</code>。用 20,000 個 key、2,000 次搜尋實測：</p>
+<pre><code>p     指標/節點  理論值  最高層  平均步數
+----  ---------  ------  ------  --------
+0.5   2.00       2.00    15      14.1
+0.25  1.34       1.33    8       19.1
+0.1   1.11       1.11    6       29.2</code></pre>
+<p>Redis 的 <code>t_zset.c</code> 把 <code>ZSKIPLIST_P</code> 設成 <code>0.25</code>、<code>ZSKIPLIST_MAXLEVEL</code> 設成 32。跟公平硬幣 相比，它只留下三分之一的「額外」指標 —— 在每個節點都必須有的那一根之上，從 1.00 降到 0.34 —— 換來的是多 35% 的跳數。記憶體是每個節點都要付的，跳數只有查詢當下要付，而 sorted set 裡的成員 數永遠遠多於同時在跑的查詢數。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2031%20-%20skip%20list/imgs/day31_6.png">
+<p>Redis 結構裡另外三個細節，也都是「sorted set 該做的事」推出來的。第 0 層另外帶一根 backward 指標，因為 <code>ZREVRANGE</code> 要往回走。節點先比 score 再比 member，這正是所有 score 都相等時 <code>ZRANGEBYLEX</code> 還有意義的原因。而在 <code>zset-max-listpack-entries</code>（預設 128）以下根本不會有 skip list：直接掃一個平坦的 listpack，因為成員只有幾個的時候，指標的成本比省下的走訪還貴。</p>
+<h2>LeetCode 1206：那個必須是嚴格小於的比較</h2>
+<p>Design Skiplist 允許重複值，而 <code>erase</code> 只能刪掉其中一個。光是這個要求就決定了比較怎麼寫：</p>
+<pre><code>while node.fw[i] and node.fw[i].val &lt; target:   # strictly &lt;, never &lt;=
+    node = node.fw[i]</code></pre>
+<p>用 <code>&lt;</code>，走訪會停在第一個重複值前面，候選節點就是第一個 3，<code>erase</code> 解開的正是它。改成 <code>&lt;=</code>， 走訪會一路滑過三個 3、停在 5 前面，<code>erase(3)</code> 就會回報「3 不在裡面」—— 而那三個 3 明明好端端 地躺在那裡。跟前面的 span bug 同一種味道：順序正確、不會 crash、答案錯。</p>
+<p>LeetCode 315（count of smaller numbers after self）則是 span 的直接產物：把陣列從右往左插入， 每次插入前問一次 <code>count_less(x)</code>。它跟 Day 29 的 Fenwick tree 答案完全一致，而有趣的正是這點： Fenwick tree 數的是「值的索引」的前綴，所以要先把值壓縮到一個小範圍；跳躍串列數的是值本身的 前綴，不用壓縮。</p>
+<h2>同樣的想法，搬到沒有順序的空間</h2>
+<p>快車道其實跟「排序好的 key」沒什麼關係，它講的是「先用大步逼近、再用小步收尾」。這個想法在 「排序」這個詞失去意義之後依然成立 —— 那就是 HNSW，大多數向量資料庫裡面的索引。</p>
+<p>HNSW 用 <code>floor(-ln(U) * mL)</code>（<code>mL = 1 / ln(M)</code>）決定每個節點的最高層：同一個幾何分布，只是寫 成連續隨機變數的版本。上面稀疏的層用貪婪走法，最底層則用寬度 <code>ef</code> 的 beam。beam 是唯一真正的 差別，原因是：一條線困不住貪婪走法，但度量空間可以 —— 你可能比所有鄰居都更靠近查詢點，卻離正確 答案還很遠。</p>
+<p>範例程式裡的玩具版本，recall 維持在 1.00，而工作量幾乎不動：</p>
+<pre><code>n      層數  recall@1  HNSW 距離計算  暴力法   加速
+-----  ----  --------  -------------  -------  -----
+500    4     1.00      10,146         50,000   4.9x
+2,000  5     1.00      12,316         200,000  16.2x
+8,000  5     1.00      13,655         800,000  58.6x</code></pre>
+<p>資料量 16 倍，工作量 1.1 倍。RAG 流程用 embedding 相似度取文件的時候，背後幹活的就是這個結構 —— 把跳躍串列的 <code>O(log n)</code> 樓梯，搬進一個排不了序的空間裡。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2031%20-%20skip%20list/imgs/day31_7.png">
+<h2>複雜度</h2>
+<pre><code>操作                          時間                空間
+----------------------------  ------------------  -----------
+search / insert / delete      O(log n) 期望值     O(n) 期望值
+rank / select / countless     O(log n) 期望值     -
+range(lo, hi)                 O(log n + k)        -
+每個節點的 forward 指標數     1 / (1 - p) 期望值  -
+排序 linked list，同樣的搜尋  O(n)                O(n)</code></pre>
+<p>明天：用準確度換空間的機率型結構 —— Bloom Filter、HyperLogLog、Count-Min Sketch。今天隨機性 買到的是形狀，明天買到的是記憶體。</p>
+<p>這裡的每一段都跑得起來：<code>python skip_list.py</code> 會把上面全部印出來，notebook 裡存著輸出， <code>demo.html</code> 則把搜尋樓梯、插入的接線、span、漏掉的那一行，以及 LeetCode 1206 兩種比較的差別 並排動畫出來。</p>
+<p><a href="https://github.com/KingRei/100DaysPython/tree/master/day%2031%20-%20skip%20list">day 31 on GitHub</a></p>
+</body>
+</html>

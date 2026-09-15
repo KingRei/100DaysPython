@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bloom filter, HyperLogLog and Count-Min sketch: answering set questions in kilobytes</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Bloom filter, HyperLogLog and Count-Min sketch: answering set questions in kilobytes</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2032%20-%20probabilistic%20structures">day 32 on GitHub</a></p>
+<p><em>100 Days of Python - day 32</em></p>
+<p>Chrome checks every URL you visit against a list of known-malicious sites, without downloading the list and without asking Google about every page you open. Redis can tell you how many distinct users hit your site today out of 16 KB of memory, for any number of users. Neither of those is possible with an exact data structure, and both of them are wrong sometimes - on purpose, in a direction chosen in advance.</p>
+<p>Yesterday&#x27;s skip list used randomness to get a shape without rebalancing. Today randomness buys something bigger: memory that stops growing with the data.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2032%20-%20probabilistic%20structures/imgs/day32_1.png">
+<h2>The trade, stated precisely</h2>
+<p>A Bloom filter sized for 10,000 items at a 1% false positive rate is 11,982 bytes. A Python <code>set</code> holding the same 10,000 strings is 1,103,394 bytes - 92 times larger, and it grows with the length of the strings while the filter does not. A HyperLogLog is 16,384 bytes whether it has seen a thousand distinct users or five hundred thousand.</p>
+<p>The part worth internalising is not the size of the error but its <em>direction</em>:</p>
+<ul><li>A Bloom filter only ever says yes too often. It never loses something you added.</li><li>A Count-Min sketch only ever over-counts. Its answer is never below the truth.</li><li>HyperLogLog can miss in either direction. That is why its unions are free and its intersections are worthless.</li></ul>
+<p>The size of the error always comes with a knob. The direction never does, and it is what decides whether the code <em>after</em> the answer is still correct.</p>
+<h2>Bloom filter: k bits switched on, and no way back</h2>
+<pre><code>def add(self, item):
+    h1, h2 = hash_pair(item)
+    for i in range(self.k):
+        self.bits[(h1 + i * h2 + i * i) % self.m] = 1
+
+def __contains__(self, item):
+    h1, h2 = hash_pair(item)
+    return all(self.bits[(h1 + i * h2 + i * i) % self.m]
+               for i in range(self.k))</code></pre>
+<p>An item becomes <code>k</code> positions in an <code>m</code>-bit array and those bits go to 1. A query recomputes the same positions: one zero proves the item was never added, all ones means it probably was. You do not need <code>k</code> real hash functions - the Kirsch-Mitzenmacher trick builds them all from two, with <code>g_i = h1 + i·h2 + i²</code>, and one BLAKE2b digest split in half provides both.</p>
+<p>Two formulas size it: <code>m = -n ln p / (ln 2)²</code> bits and <code>k = (m/n) ln 2</code> hashes. For 10,000 items at 1% that is 9.59 bits per item and 7 hashes. Measured over 100,000 lookups of items never added, the false positive rate is 1.03% against a 1.00% design, and the false negative count over the 10,000 real members is zero - not &quot;small&quot;, zero, by construction.</p>
+<p>That 1% is a promise about a load, not about the structure:</p>
+<pre><code>  load    items      fill    expected    measured
+  0.5x      500     30.7%       0.03%       0.01%
+  1.0x     1000     52.5%       1.00%       1.26%
+  2.0x     2000     77.1%      15.74%      16.19%
+  4.0x     4000     94.8%      67.86%      69.18%
+  8.0x     8000     99.7%      97.99%      97.50%</code></pre>
+<p>Past its design size the filter does not degrade gently, it degrades like a power. At eight times the load it says yes to everything, which is not a filter at all.</p>
+<h2>Delete is not a missing feature, it is an impossible one</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2032%20-%20probabilistic%20structures/imgs/day32_3.png">
+<p>A bit set by <code>alpha</code> may also have been set by <code>bravo</code>. In a deliberately tiny filter - 64 bits, <code>k = 3</code>, 14 words - clearing the three bits of <code>alpha</code> takes <code>bravo</code> and <code>india</code> down with it. Two false negatives, in a structure whose whole contract is that false negatives cannot happen. Nothing raises an error; the filter just starts answering no about things that are plainly in the set.</p>
+<p>A counting Bloom filter swaps each bit for a 4-bit counter, so a shared slot drops from 2 to 1 instead of to 0 - zero false negatives on the same test. The price is four times the memory and saturation: once a counter hits 15 it stops rising, and every later decrement is wrong.</p>
+<p>The more expensive mistake is trusting a yes. Deduplicating 20,000 documents with a 1% filter keeps 13,932 of the 13,954 distinct ones - 22 documents declared &quot;already seen&quot; and dropped. The filter did exactly what it promised. As a pre-filter in front of a real lookup, a false positive costs one wasted read; as the final answer, it costs data that never comes back. Same structure, same error rate, and the difference is entirely in what the code does after the yes.</p>
+<h2>HyperLogLog: a maximum that counts</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2032%20-%20probabilistic%20structures/imgs/day32_4.png">
+<p>Flip a coin repeatedly and a run of <code>r</code> heads shows up about once in <code>2^r</code> tries, so the longest run you have seen estimates how many tries you made - and a maximum needs one number of storage, not a list.</p>
+<pre><code>def add(self, item):
+    h = hash64(item)
+    idx = h &amp; (self.m - 1)                    # low p bits pick a register
+    rho = trailing_zeros(h &gt;&gt; self.p) + 1     # the run of zeros
+    self.reg[idx] = max(self.reg[idx], rho)</code></pre>
+<p>Because it is a maximum, feeding the same item in a thousand times changes nothing: the sketch deduplicates for free. One register is far too noisy, so the estimate is a harmonic mean across all <code>m</code> registers - harmonic because it damps the ones that got a freakish run - with linear counting taking over at the low end. At <code>p = 14</code> that is 16,384 one-byte registers and a theoretical error of <code>1.04/√m</code> = 0.81%:</p>
+<pre><code>     true     estimate     error   hll bytes   exact bytes    ratio
+     1000         1005     0.52%       16384         64984       4x
+    10000         9930    -0.70%       16384        844504      52x
+   100000        99924    -0.08%       16384       7394520     451x
+   500000       504141     0.83%       16384      32777432    2001x</code></pre>
+<p>The memory column does not move. That is the entire point.</p>
+<p>The property that makes HLL ship is that merging is a register-wise maximum and it is exact: merging two shards gives byte-identical registers to one machine scanning everything. Keep one sketch per hour and any range of hours rolls up later with no accumulated error.</p>
+<p>Intersections are the trap. <code>|A ∩ B| = |A| + |B| - |A ∪ B|</code> is algebraically true and numerically hopeless. With <code>|A| = |B| = 200,000</code> and a true intersection of 2,000, the union is estimated to within 0.84% and the intersection comes out at 1,681 - a 16% error. Three relative errors on numbers near 200,000 become one absolute error the size of the answer. Inclusion- exclusion subtracts big numbers to get a small one, which is exactly what an estimator with relative error cannot survive.</p>
+<h2>Count-Min sketch: every row over-counts, so take the smallest</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2032%20-%20probabilistic%20structures/imgs/day32_6.png">
+<pre><code>def query(self, item):
+    return min(self.rows[i][self._hash(item, i) % self.w]
+               for i in range(self.d))</code></pre>
+<p><code>d</code> rows of <code>w</code> counters, each row a complete tally of the stream with its own collisions folded in. A collision can only push a counter up, so the smallest row is the least polluted and the answer is never below the truth. Sizing is <code>w = ⌈e/ε⌉</code>, <code>d = ⌈ln(1/δ)⌉</code>, for an error of at most <code>ε·N</code> with probability <code>1 - δ</code>.</p>
+<p>On 200,000 events over 4,934 distinct keys, a 5 × 5,437 sketch (108,740 bytes, against 443,608 for a <code>Counter</code>) has a guaranteed bound of +100, a worst observed error of 21 and zero under-counts. Where that error lands is the lesson: <strong>+0.01% relative on the top ten keys, +150% on the bottom ten</strong>. The bound is absolute, so the same 21-count error is rounding noise on a key seen 31,648 times and the entire answer on a key seen once. Excellent at &quot;which keys are big&quot;; useless at &quot;did this key appear exactly once&quot;.</p>
+<p>The conservative update - only raise the counters currently at the minimum - drops the mean error from 0.3 to 0.1 for free and keeps the guarantee. It makes delete impossible, but delete was never on the menu.</p>
+<h2>LeetCode 347, with and without enough memory</h2>
+<pre><code>def top_k_frequent(nums, k):
+    counts = Counter(nums)
+    return heapq.nlargest(k, counts, key=counts.get)</code></pre>
+<p><code>Counter</code> plus a k-sized heap: <code>O(n)</code> time, memory proportional to the number of distinct keys. In the interview that is the answer. The sketch version is the follow-up when the array becomes a stream with a billion keys: add each item to a Count-Min sketch, query it straight back, keep only <code>k</code> candidates. On a 200,000-event Zipf stream with <code>k = 10</code> it returns the same ten keys, in the same order, with the same counts, out of 108,740 bytes instead of 443,608.</p>
+<p>Then flatten the stream - top key 65 occurrences, tenth 61 - and it drops <code>w-385</code>. Approximate top-k only means something when the head stands clear of the noise floor: the k-th true count has to be comfortably larger than <code>e/w · N</code>. That is the sizing rule, and it is the same rule in all three structures - decide how wrong you can afford to be, and in which direction, then buy exactly that much memory.</p>
+<h2>Picking one</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2032%20-%20probabilistic%20structures/imgs/day32_7.png">
+<pre><code>structure     question             error direction        bytes @1e6
+set (exact)   membership + count   none                     60000000
+Bloom filter  have I seen x?       false positive only       1198133
+HyperLogLog   how many distinct?   relative, both ways         16384
+Count-Min     how often is x?      over-count only            108740</code></pre>
+<p>All three are mergeable, which is why they survive in distributed systems: Bloom filters with the same <code>m</code> and <code>k</code> OR together, HLL registers take the max, Count-Min rows add. Bloom filters run Chrome Safe Browsing, Cassandra and LevelDB SSTable lookups and SPV wallets - a cheap no that skips an expensive disk or network read. HyperLogLog is Redis <code>PFCOUNT</code>, BigQuery <code>APPROX_COUNT_DISTINCT</code>, Presto <code>approx_distinct</code>. Count-Min runs network flow monitoring, trending topics and per-key rate limiting.</p>
+<p>These structures also keep appearing in the parts of an LLM stack that have to stay cheap: sketching which prefixes are hot enough to be worth keeping in a cache, estimating the number of distinct n-grams in a corpus without materialising them, deduplicating a training set - the last one being precisely where a Bloom filter&#x27;s false positive stops being free and starts deleting documents.</p>
+<p>Tomorrow: dynamic programming from the ground up - climbing stairs and coin change.</p>
+<p>Everything here runs: <code>python probabilistic.py</code> prints all of it, the notebook carries the outputs, and <code>demo.html</code> animates the false positive, the delete that erases a neighbour, the HyperLogLog registers, the Count-Min minimum and LeetCode 347 side by side.</p>
+<p><a href="https://github.com/KingRei/100DaysPython/tree/master/day%2032%20-%20probabilistic%20structures">day 32 on GitHub</a></p>
+</body>
+</html>

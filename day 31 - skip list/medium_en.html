@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Skip list: an ordered map built out of coin flips</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Skip list: an ordered map built out of coin flips</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2031%20-%20skip%20list">day 31 on GitHub</a></p>
+<p><em>100 Days of Python - day 31</em></p>
+<p>Redis has a data type that keeps millions of members sorted by score, answers &quot;what rank is this member&quot; in microseconds, and can hand you elements 1000 through 1020 of the ordering without touching the other 999,980. There is no tree in it. There is a linked list, a few sparser copies of that list stacked on top, and a coin.</p>
+<p>Yesterday&#x27;s caches were about forgetting things on purpose. Today is about the opposite: a structure that keeps everything in order and still answers questions quickly - without any of the rotation machinery day 28 needed to stay balanced.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2031%20-%20skip%20list/imgs/day31_1.png">
+<h2>The problem: order is not enough</h2>
+<p>A sorted array can be binary searched. A sorted linked list has exactly the same order and cannot be binary searched at all, because bisection needs to <em>land</em> in the middle and a list only lets you walk there. In the module, searching for 198 among 100 sorted keys takes 7 probes in the array and 99 hops in the list.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2031%20-%20skip%20list/imgs/day31_2.png">
+<p>So the missing ingredient is not order, it is the ability to take a big step. A skip list adds exactly that and nothing else: keep the sorted list as level 0, and put sparser copies of it above as express lanes.</p>
+<p>Search starts on the top lane and does two things forever: move right while the next key is still smaller than the target, drop a level when it is not. Every drop happens at a node already known to be below the target, so no part of the list is ever walked twice. The path is a staircase going down and to the right.</p>
+<h2>The part that is actually clever: heights are random</h2>
+<p>The obvious way to build lanes is regularly - every second node on level 1, every fourth on level 2. It searches beautifully and it is unmaintainable. Insert one key at the front and every other key&#x27;s parity flips; in the 16-key example in the module, all 16 nodes change level.</p>
+<p>So a skip list does not compute heights. Each node flips a coin when it is created: keep flipping while heads, stop at the first tail. That height is fixed for the node&#x27;s whole life.</p>
+<pre><code>def random_level(self):
+    lvl = 1
+    while self.rng.random() &lt; self.p and lvl &lt; self.max_level:
+        lvl += 1
+    return lvl</code></pre>
+<p>This is the trade day 28 refused to make. AVL and red-black trees <em>earn</em> their balance by rotating on every insert, and pay for it with parent pointers, colour bits and four cases of fixup code. A skip list buys its balance from probability. There is no rebalancing code at all - and, pleasantly, no adversarial input either: the shape depends on the coin, not on the keys, so no ordering of insertions can degenerate it.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2031%20-%20skip%20list/imgs/day31_3.png">
+<h2>One traversal, three operations</h2>
+<p>Search, insert and delete all walk the same staircase, so it is written once:</p>
+<pre><code>def _descend(self, key):
+    update, rank = [None] * self.max_level, [0] * self.max_level
+    node = self.head
+    for i in range(self.level - 1, -1, -1):
+        rank[i] = 0 if i == self.level - 1 else rank[i + 1]
+        while node.forward[i] is not None and node.forward[i].key &lt; key:
+            rank[i] += node.span[i]       # count what this hop flew over
+            node = node.forward[i]
+        update[i] = node                  # the pointer that may be rewritten
+    return update, rank, node.forward[0]</code></pre>
+<p><code>update[i]</code> is the last node on level <code>i</code> that is still strictly below the key - which is precisely the node whose forward pointer has to change if we insert here. Insert then splices the new node into the first <code>lvl</code> levels of <code>update</code>, and delete unlinks it from wherever it appears. Neither needs to search again.</p>
+<p>On the 16-key list in the module, <code>search(13)</code> finds its answer in 2 hops and a miss like <code>search(99)</code> costs 3.</p>
+<h2>Spans: the same walk, now returning positions</h2>
+<p>Give every forward pointer a second number - how many level-0 nodes it flies over - and the walk you already do starts answering a different question for free. Add up the spans of the hops taken to reach key 13: <code>10 + 2 + 1 = 13</code>, so its 0-based rank is 12. That is Redis&#x27;s <code>ZRANK</code>. Run the sums the other way - descend while the accumulated span stays below <code>k</code> - and you get <code>select(k)</code>, which is <code>ZRANGE</code> by index.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2031%20-%20skip%20list/imgs/day31_4.png">
+<h2>The line everyone forgets</h2>
+<pre><code>for i in range(lvl):                      # levels the new node reaches
+    node.forward[i] = update[i].forward[i]
+    update[i].forward[i] = node
+    node.span[i] = update[i].span[i] - (rank[0] - rank[i])
+    update[i].span[i] = (rank[0] - rank[i]) + 1
+
+for i in range(lvl, self.level):          # levels ABOVE the new node
+    update[i].span[i] += 1</code></pre>
+<p>The second loop is easy to drop, because those levels need no pointer change whatsoever: they fly straight over the new node without noticing it. But that is exactly the problem - they now fly over one more node than before, so their count is short by one.</p>
+<p>Delete the loop and run every test you can think of for an ordered set. <code>keys()</code> matches a correct list. <code>search()</code> matches a correct list. <code>range()</code> matches a correct list. Nothing raises, nothing is out of order. <code>rank()</code> is wrong on 197 of 200 keys, starting at key 3, which confidently reports rank 0 instead of 3 - and because a short span is inherited by everything after it, one missing bump poisons the whole tail of the ordering.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2031%20-%20skip%20list/imgs/day31_5.png">
+<p>I like this bug because of what it says about testing. The forward pointers and the spans are two independent invariants living in the same node, and only one of them has a test that anyone naturally writes.</p>
+<h2>Why Redis flips an unfair coin</h2>
+<p>With promotion probability <code>p</code>, a node carries <code>1 / (1 - p)</code> forward pointers on average and the walk has about <code>log n / log(1/p)</code> levels to get through. Over 20,000 keys and 2,000 searches:</p>
+<pre><code>p     pointers/node  theory  top level  avg steps
+----  -------------  ------  ---------  ---------
+0.5   2.00           2.00    15         14.1
+0.25  1.34           1.33    8          19.1
+0.1   1.11           1.11    6          29.2</code></pre>
+<p>Redis&#x27;s <code>t_zset.c</code> sets <code>ZSKIPLIST_P</code> to <code>0.25</code> and <code>ZSKIPLIST_MAXLEVEL</code> to 32. Against a fair coin that keeps a third of the <em>optional</em> pointers - 0.34 per node instead of 1.00, on top of the one pointer every node must have - in exchange for 35% more hops. Memory is paid by every node; hops are paid only by a query, and a sorted set has far more members than it has queries in flight.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2031%20-%20skip%20list/imgs/day31_6.png">
+<p>Three more details of the Redis structure follow from what a sorted set has to do. Level 0 carries a backward pointer as well, because <code>ZREVRANGE</code> walks the other way. Nodes are ordered by score and then by member, which is what gives <code>ZRANGEBYLEX</code> a meaning when all the scores are equal. And below <code>zset-max-listpack-entries</code> - 128 by default - there is no skip list at all: a flat listpack gets scanned, because for a handful of members the pointers cost more than the walk saves.</p>
+<h2>LeetCode 1206: the comparison that has to be strict</h2>
+<p>Design Skiplist allows duplicates, and <code>erase</code> must remove exactly one copy. That requirement alone decides the comparison:</p>
+<pre><code>while node.fw[i] and node.fw[i].val &lt; target:   # strictly &lt;, never &lt;=
+    node = node.fw[i]</code></pre>
+<p>With <code>&lt;</code> the walk stops in front of the first copy, so the candidate node is the first copy and <code>erase</code> unlinks exactly that one. With <code>&lt;=</code> the walk sails past all three copies of a 3 and stops in front of 5, and <code>erase(3)</code> reports that 3 is not in the list - while three of them sit there in plain sight. Same flavour as the span bug: sorted, uncrashed, wrong.</p>
+<p>LeetCode 315 - count of smaller numbers after self - falls out of spans instead. Insert the array from the right and ask <code>count_less(x)</code> before each insert. It reproduces the Fenwick tree answer from day 29 exactly, which is the interesting part: a Fenwick tree counts prefixes over value <em>indices</em> and needs the values compressed into a small range first, while a skip list counts prefixes over the values themselves and does not.</p>
+<h2>The same idea, in a space with no order</h2>
+<p>The lanes are not really about sorted keys. They are about approaching something with big strides and finishing with small ones, and that idea survives when &quot;sorted&quot; stops meaning anything - which is what HNSW, the index inside most vector databases, is.</p>
+<p>HNSW draws each node&#x27;s top layer from <code>floor(-ln(U) * mL)</code> with <code>mL = 1 / ln(M)</code>: the same geometric distribution, written for a continuous random variable. Upper layers are sparse and searched greedily; the bottom layer is searched with a beam of width <code>ef</code>. That beam is the one real difference, and it exists because a line cannot trap a greedy walk but a metric space can - you can be closer to the query than all your neighbours and still be nowhere near the answer.</p>
+<p>The toy version in the module keeps recall at 1.00 while the work stays nearly flat:</p>
+<pre><code>n      layers  recall@1  HNSW distances  brute force  speedup
+-----  ------  --------  --------------  -----------  -------
+500    4       1.00      10,146          50,000       4.9x
+2,000  5       1.00      12,316          200,000      16.2x
+8,000  5       1.00      13,655          800,000      58.6x</code></pre>
+<p>16x the data, 1.1x the work. When a RAG pipeline retrieves documents by embedding similarity, this is the structure doing it - the skip list&#x27;s <code>O(log n)</code> staircase, carried into a space where nothing can be sorted.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2031%20-%20skip%20list/imgs/day31_7.png">
+<h2>Complexity</h2>
+<pre><code>Operation                        Time                  Space
+-------------------------------  --------------------  -------------
+search / insert / delete         O(log n) expected     O(n) expected
+rank / select / countless        O(log n) expected     -
+range(lo, hi)                    O(log n + k)          -
+forward pointers per node        1 / (1 - p) expected  -
+sorted linked list, same search  O(n)                  O(n)</code></pre>
+<p>Tomorrow: probabilistic structures that trade accuracy for space - Bloom filters, HyperLogLog and Count-Min Sketch. Today randomness bought us a shape; tomorrow it buys memory.</p>
+<p>Everything here runs: <code>python skip_list.py</code> prints all of it, the notebook carries the outputs, and <code>demo.html</code> animates the search staircase, the insert splice, the spans, the missing bump and LeetCode 1206 side by side.</p>
+<p><a href="https://github.com/KingRei/100DaysPython/tree/master/day%2031%20-%20skip%20list">day 31 on GitHub</a></p>
+</body>
+</html>

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LRU and LFU caches: choosing what to throw away</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>LRU and LFU caches: choosing what to throw away</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2030%20-%20lru%20and%20lfu%20cache">day 30 on GitHub</a></p>
+<p><em>100 Days of Python - day 30</em></p>
+<p>Here is a cache policy with a hit rate of exactly zero percent. Not &quot;poor&quot;, not &quot;0.3%&quot; - zero. It is a correct, textbook LRU cache, running a workload that fits in thirty-three keys while the cache holds thirty-two. Every lookup misses. Every insert evicts precisely the key the next lookup is about to ask for. Nothing is broken, nothing raises, and the cache does a great deal of work to achieve nothing at all.</p>
+<p>That failure, and its mirror image on the other main policy, is the whole reason this page is not simply &quot;here is LeetCode 146, see you tomorrow&quot;.</p>
+<p>Yesterday&#x27;s segment trees answered questions about data that keeps changing. A cache is a different bargain: it answers questions about data that is <em>expensive</em>, by remembering answers it has already paid for. The remembering half is day 09&#x27;s hash table. The interesting half is the one line that runs only when memory is full - <strong>which entry do we throw away?</strong></p>
+<h2>The ceiling nobody can reach</h2>
+<p>Before comparing policies it helps to know what perfect looks like. Bélády&#x27;s MIN evicts the entry whose <em>next</em> use is furthest in the future. It is optimal, provable, and unimplementable, because it needs the whole request sequence up front. Offline, though, we have the sequence - so it costs one right-to-left scan:</p>
+<pre><code>def belady_hits(trace, capacity):
+    nxt = [len(trace)] * len(trace)       # when is each position used again?
+    seen = {}
+    for i in range(len(trace) - 1, -1, -1):
+        nxt[i] = seen.get(trace[i], len(trace))
+        seen[trace[i]] = i
+    ...
+    victim = max(cache, key=lambda k: nxt_use[k])   # furthest away dies</code></pre>
+<p>This turns &quot;is our policy any good?&quot; from an argument into a number. On the skewed workload later in this article, the best online policy reaches 71.6% where MIN reaches 79.0%. That seven-point gap is not a bug to be fixed; it is the price of not knowing the future.</p>
+<h2>LRU: a hash map welded to a doubly linked list</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2030%20-%20lru%20and%20lfu%20cache/imgs/day30_1.png">
+<p>LRU bets that what was used recently will be used again, so it needs two abilities at once: find a key instantly, and find the least recently used entry instantly. No single structure does both, so it carries two.</p>
+<pre><code>def get(self, key):
+    node = self.map.get(key)
+    if node is None:
+        return -1
+    self._unlink(node)                 # a read IS a use
+    self._push_front(node)
+    return node.val
+
+def put(self, key, value):
+    if key in self.map:
+        node = self.map[key]; node.val = value
+        self._unlink(node); self._push_front(node); return
+    if len(self.map) == self.capacity:
+        victim = self.tail.prev        # least recent, always right there
+        self._unlink(victim)
+        del self.map[victim.key]
+    node = Node(key, value)
+    self.map[key] = node
+    self._push_front(node)</code></pre>
+<p>The map answers <em>where</em>, the list answers <em>who is oldest</em>, and the victim is never searched for - it sits at <code>tail.prev</code> by construction. Two sentinel nodes at the ends delete every null check inside <code>_unlink</code>. And <code>move_to_end</code> plus <code>popitem(last=False)</code> on an <code>OrderedDict</code> are this exact structure with the pointer dance already compiled.</p>
+<h3>The bug that does not announce itself</h3>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2030%20-%20lru%20and%20lfu%20cache/imgs/day30_2.png">
+<p>Delete the two refresh lines inside <code>get</code> and the cache still compiles, still runs, still passes any test that only checks returned values. What changes is the <em>meaning</em> of the list: it now records when each key <strong>arrived</strong> rather than when it was <strong>used</strong>. LRU has silently become FIFO.</p>
+<p>On the same call script, the two evict different keys. That is all the symptom you get - no exception, no warning, just a slightly worse hit rate in production and a wrong answer on the judge. The single most useful habit here is to remember that in a recency cache, <strong>a read is a use</strong>.</p>
+<h3>Why two structures instead of one</h3>
+<p>A list-only LRU is correct: search the list for the key, move it to the front. It is also quadratic. Over 40,000 operations against a 2,000-slot cache the list version scans 19.1 million cells and runs about 9.5x slower than the linked-list version. Writing it once, badly, is the cheapest way to understand why every real implementation carries a map <em>and</em> a list.</p>
+<h2>LFU: buckets, and a minimum that never searches</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2030%20-%20lru%20and%20lfu%20cache/imgs/day30_3.png">
+<p>LFU bets on popularity instead of recency: evict whichever entry has been used least often. That sounds like it requires a heap, or a scan for the minimum count. It requires neither, and the reason is a one-line observation: <strong>a count only ever changes by one.</strong></p>
+<pre><code>self.buckets = defaultdict(OrderedDict)   # count -&gt; keys, least recent first
+self.min_freq = 0
+
+def _bump(self, key):
+    f = self.freq[key]
+    del self.buckets[f][key]
+    if not self.buckets[f]:                       # the min bucket just emptied
+        del self.buckets[f]
+        if self.min_freq == f:
+            self.min_freq = f + 1
+    self.freq[key] = f + 1
+    self.buckets[f + 1][key] = None               # newest at the back</code></pre>
+<p><code>min_freq</code> moves in exactly two situations: it steps up to <code>f + 1</code> when a hit empties the bucket that was the minimum, and it resets to <code>1</code> when a new key arrives, because a newcomer has earned nothing yet. There is no third case. That is where the <code>O(1)</code> comes from - not from a clever structure, but from the fact that the minimum can never jump.</p>
+<p>Inside a bucket, order matters. Keys tied on count are broken by recency, oldest use first - and LeetCode 460 tests it. A version that breaks ties by insertion order passes every value-level check and still returns different keys:</p>
+<pre><code>cache.put(1, 1); cache.put(2, 2)
+cache.get(2); cache.get(1)      # both at count 2; key 2 is the older use
+cache.put(3, 3)                 # evicts... which one?
+
+# LFU with LRU tie-break  -&gt; get(1) = 1,  get(2) = -1     (what LC 460 wants)
+# LFU by insertion order  -&gt; get(1) = -1, get(2) = 2</code></pre>
+<p>Strip the values away and what remains - a sorted chain of count buckets, each holding a set of keys - is LeetCode 432 by itself. <code>inc</code>, <code>dec</code>, <code>getMaxKey</code>, <code>getMinKey</code>, all <code>O(1)</code>, because the destination bucket is always the neighbour and the extremes are the two ends of the chain.</p>
+<h2>The two ways these policies fail</h2>
+<p>Four synthetic workloads, 32 slots, <code>opt</code> being Bélády&#x27;s offline ceiling:</p>
+<pre><code>workload                  opt    lru    lfu    fifo   mru    slru
+------------------------  -----  -----  -----  -----  -----  -----
+zipf (skewed popularity)  79.0%  63.2%  71.6%  57.6%  22.2%  69.5%
+scan (loop of 33 keys)    96.1%  0.0%   0.0%   0.0%   96.1%  0.0%
+shifting hot set          95.7%  94.9%  26.8%  94.8%  27.3%  30.5%
+hot set + cold scans      77.0%  64.1%  76.6%  55.6%  16.7%  76.4%</code></pre>
+<p><strong>Scan pollution</strong> is the zero row.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2030%20-%20lru%20and%20lfu%20cache/imgs/day30_4.png">
+<p>A loop over 33 keys through 32 slots: each miss evicts the oldest entry, which is exactly the key the next request wants. The policy is in lockstep with the workload and one step behind it forever.</p>
+<p>The instructive part is the rest of that row. LFU is also at zero, and SLRU with it - because nothing is ever touched <em>twice</em>, no counter ever rises, and no entry ever earns protection. Frequency cannot help when there is no frequency. Only MRU survives, at 96.1%, by doing the apparently idiotic thing: throwing away the entry it just inserted, sacrificing the same slot repeatedly so that the rest of the working set lives.</p>
+<p><strong>LFU stickiness</strong> is the other one. When the hot set moves - a new set of keys is hot in each phase - LFU falls to 26.8% while LRU holds 94.9%. Those counters are the scoreboard of a popularity contest that finished, and yesterday&#x27;s champions squat in the cache against today&#x27;s traffic. Real LFU implementations age their counters, or refuse to trust the count alone.</p>
+<p>Nothing in the table wins everywhere. That is not a gap in the table; it is the actual result.</p>
+<h2>Which is why sglang ships five of them</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2030%20-%20lru%20and%20lfu%20cache/imgs/day30_5.png">
+<p><code>python/sglang/srt/mem_cache/evict_policy.py</code> declines to pick a winner. The five strategies are five key functions over one shared heap:</p>
+<pre><code>LRUStrategy   -&gt;  node.last_access_time
+LFUStrategy   -&gt;  (node.hit_count, node.last_access_time)
+FIFOStrategy  -&gt;  node.creation_time
+MRUStrategy   -&gt;  -node.last_access_time
+SLRUStrategy  -&gt;  (node.hit_count &gt;= threshold, node.last_access_time)
+
+victim = heapq.nsmallest(1, entries, key=strategy.get_priority)[0]</code></pre>
+<p>Chosen at launch with <code>--radix-eviction-policy {lru,lfu,fifo,mru,slru}</code>. Every node stores the same three fields; the policy is expressed as <em>how to compare</em>, not as five data structures. Adding one is a lambda, and the zero-percent disaster above becomes a flag rather than a rewrite.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2030%20-%20lru%20and%20lfu%20cache/imgs/day30_6.png">
+<p>SLRU is the compromise visible in the last row: an entry becomes protected once it has been hit twice, which is worth twelve points over LRU on &quot;hot set + cold scans&quot; (64.1% to 76.4%) without inheriting LFU&#x27;s stickiness on the shifting one.</p>
+<h2>Why this matters later</h2>
+<p>This machinery is not decoration around an inference server - it is load-bearing. The KV cache stores the attention keys and values already computed for every prompt prefix, so a request that shares a prefix with an earlier one can skip recomputing it. A radix tree (day 24) finds the longest shared prefix. And when GPU memory fills, something has to go - chosen by exactly the policies above, applied to tree nodes instead of plain keys.</p>
+<p>The stakes are different there. Evicting a key from a web cache costs you a database round trip. Evicting a prefix node costs you the GPU time that computed it, and a scan-shaped workload - many unrelated prompts arriving back to back - is precisely the pattern that drives a pure LRU tree to zero reuse. That is why the policy is a launch flag: the right answer depends on traffic that the engine cannot see in advance.</p>
+<p>Tomorrow: a sorted structure that gives up on balancing entirely and flips coins instead - and still gets <code>O(log n)</code>.</p>
+<p>The runnable module, notebook, both articles and an interactive walkthrough of every structure on this page are in the repo: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2030%20-%20lru%20and%20lfu%20cache">day 30 on GitHub</a>.</p>
+</body>
+</html>

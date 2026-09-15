@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 30 — LRU 與 LFU 快取：滿了的時候丟掉誰</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 30 — LRU 與 LFU 快取：滿了的時候丟掉誰</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2030%20-%20lru%20and%20lfu%20cache">day 30 on GitHub</a></p>
+<p><em>100 Days of Python - day 30</em></p>
+<p>先給一個數字：命中率 0.0%。不是「不太好」，不是 0.3%，是剛好零。而且它是一個完全正確、照教科書寫的 LRU 快取，只是工作負載是一個 33 個 key 的迴圈，而快取有 32 格。每一次查詢都 miss，每一次插入丟掉的，都剛好是下一次要問的那個 key。程式沒壞、沒噴錯，只是忙了半天什麼也沒接住。</p>
+<p>這個失敗，加上另一個主流策略上完全對稱的失敗，就是今天不只是「這是 LeetCode 146，明天見」的原因。</p>
+<p>昨天的區間結構處理的是「資料一直在變」的查詢。快取換的是另一種帳：它處理的是「算起來很貴」的東西，靠記住已經付過的答案。記住的那一半就是 Day 09 的 hash table，沒別的。真正有趣的是只有在記憶體滿掉時才會跑的那一行——<strong>要丟掉哪一個？</strong></p>
+<h2>先看看天花板長什麼樣</h2>
+<p>比較策略之前，得先知道「完美」是多少。Bélády&#x27;s MIN 丟掉的是「下一次使用離現在最遠」的那一個。它是最佳解、可以證明，而且不可能實作，因為它要先知道整串請求。不過離線分析時我們手上就有整串，所以它只要從右往左掃一遍：</p>
+<pre><code>def belady_hits(trace, capacity):
+    nxt = [len(trace)] * len(trace)       # 每個位置下次何時再被用到
+    seen = {}
+    for i in range(len(trace) - 1, -1, -1):
+        nxt[i] = seen.get(trace[i], len(trace))
+        seen[trace[i]] = i
+    ...
+    victim = max(cache, key=lambda k: nxt_use[k])   # 最遠的先死</code></pre>
+<p>這讓「我們的策略到底好不好」從嘴砲變成數字。在後面那個偏態工作負載上，最好的線上策略拿到 71.6%，MIN 拿到 79.0%。中間那 7 個百分點不是 bug，那是「不知道未來」的定價。</p>
+<h2>LRU：hash map 焊上一條雙向串列</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2030%20-%20lru%20and%20lfu%20cache/imgs/day30_1.png">
+<p>LRU 賭的是「最近用過的還會再用」，所以它同時需要兩種能力：瞬間找到某個 key，以及瞬間找到最久沒用的那個。沒有單一結構能同時做到，所以它帶兩個。</p>
+<pre><code>def get(self, key):
+    node = self.map.get(key)
+    if node is None:
+        return -1
+    self._unlink(node)                 # 讀也算用過
+    self._push_front(node)
+    return node.val
+
+def put(self, key, value):
+    if key in self.map:
+        node = self.map[key]; node.val = value
+        self._unlink(node); self._push_front(node); return
+    if len(self.map) == self.capacity:
+        victim = self.tail.prev        # 最久沒用的，它本來就在那
+        self._unlink(victim)
+        del self.map[victim.key]
+    node = Node(key, value)
+    self.map[key] = node
+    self._push_front(node)</code></pre>
+<p>map 回答「在哪裡」，串列回答「誰最舊」，而受害者從來不用找——照定義它就坐在 <code>tail.prev</code>。頭尾兩個 sentinel 節點讓 <code>_unlink</code> 裡一個 null 檢查都不用寫。至於 <code>OrderedDict</code> 的 <code>move_to_end</code> 和 <code>popitem(last=False)</code>，就是同一組指標動作，只是已經編譯成 C 了。</p>
+<h3>不會自己舉手的 bug</h3>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2030%20-%20lru%20and%20lfu%20cache/imgs/day30_2.png">
+<p>把 <code>get</code> 裡那兩行刷新刪掉，程式照樣編譯、照樣跑、任何只檢查回傳值的測試照樣過。改掉的是串列順序的<strong>意義</strong>：它現在記的是每個 key <strong>進來</strong>的時間，而不是<strong>被用</strong>的時間。LRU 就這樣悄悄變成了 FIFO。</p>
+<p>同一串呼叫跑下去，兩者丟掉的 key 不一樣——而這就是你能拿到的全部症狀。沒有例外、沒有警告，只有生產環境上稍微差一點的命中率，和 judge 上一個錯誤答案。這裡最值得養成的習慣只有一句：在 recency 快取裡，<strong>讀也算用過</strong>。</p>
+<h3>為什麼要兩個結構</h3>
+<p>只用一個 list 的 LRU 也是對的：在 list 裡找到 key，搬到最前面。它同時也是平方級的。在 2000 格的快取上跑 40,000 次操作，list 版本掃了 1910 萬格，比串列版本慢大約 9.5 倍。花十分鐘把慢的那版寫一次，是理解「為什麼每個真實實作都同時帶 map 和 list」最便宜的方法。</p>
+<h2>LFU：一個次數一格，而且最小值永遠不用找</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2030%20-%20lru%20and%20lfu%20cache/imgs/day30_3.png">
+<p>LFU 賭的不是最近而是熱門：丟掉被用最少次的那個。聽起來需要一顆 heap，或是掃一遍找最小次數。其實兩個都不用，理由只有一句話：<strong>次數一次只會變動 1。</strong></p>
+<pre><code>self.buckets = defaultdict(OrderedDict)   # 次數 -&gt; keys，最舊的排前面
+self.min_freq = 0
+
+def _bump(self, key):
+    f = self.freq[key]
+    del self.buckets[f][key]
+    if not self.buckets[f]:                       # 最小那格剛好被清空
+        del self.buckets[f]
+        if self.min_freq == f:
+            self.min_freq = f + 1
+    self.freq[key] = f + 1
+    self.buckets[f + 1][key] = None               # 新的放後面</code></pre>
+<p><code>min_freq</code> 只有兩種變法：命中把原本的最小格清空時變成 <code>f + 1</code>，以及插入新 key 時重設回 <code>1</code>（剛進來的東西還沒有任何資格）。沒有第三種情況。<code>O(1)</code> 就是從這裡來的——不是靠什麼精巧的結構，而是因為最小值不可能跳號。</p>
+<p>同一格裡面的順序也有講究：次數相同時比最久沒用，舊的先死——LC 460 會考。改成「先插入的先丟」的版本，所有只看數值的檢查都會過，但回傳的 key 不一樣：</p>
+<pre><code>cache.put(1, 1); cache.put(2, 2)
+cache.get(2); cache.get(1)      # 兩個都在 count 2；key 2 是比較舊的那次使用
+cache.put(3, 3)                 # 丟掉誰？
+
+# LFU + LRU 平手規則 -&gt; get(1) = 1,  get(2) = -1     （LC 460 要的）
+# LFU + 先插入先丟   -&gt; get(1) = -1, get(2) = 2</code></pre>
+<p>把 value 拿掉，剩下的東西——一條按次數排好的 bucket 鏈，每格裝著一組 key——本身就是 LeetCode 432。<code>inc</code>、<code>dec</code>、<code>getMaxKey</code>、<code>getMinKey</code> 全部 <code>O(1)</code>，因為目標格永遠是隔壁，而最大最小就是鏈的兩端。</p>
+<h2>這兩種策略各自會死在哪</h2>
+<p>四個合成工作負載，32 格，<code>opt</code> 是 Bélády 的離線天花板：</p>
+<pre><code>workload                  opt    lru    lfu    fifo   mru    slru
+------------------------  -----  -----  -----  -----  -----  -----
+zipf（偏態熱度）          79.0%  63.2%  71.6%  57.6%  22.2%  69.5%
+scan（33 個 key 的迴圈）  96.1%  0.0%   0.0%   0.0%   96.1%  0.0%
+會移動的熱點              95.7%  94.9%  26.8%  94.8%  27.3%  30.5%
+熱點 + 冷掃描             77.0%  64.1%  76.6%  55.6%  16.7%  76.4%</code></pre>
+<p><strong>掃描污染</strong>就是那排零。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2030%20-%20lru%20and%20lfu%20cache/imgs/day30_4.png">
+<p>33 個 key 繞 32 格：每次 miss 丟掉最舊的那個，而那個剛好就是下一個請求要的。策略和工作負載完全同步，而且永遠慢一步。</p>
+<p>這排真正值得看的是其他欄。LFU 也是零，SLRU 也是零——因為沒有任何 key 被用到<strong>第二次</strong>，沒有計數器會上升，也就沒有任何 entry 能取得保護。沒有 frequency 的時候，frequency 幫不上忙。活下來的只有 MRU（96.1%），靠的是看起來很蠢的做法：丟掉剛剛才放進去的那一個，反覆犧牲同一格，讓其他的 working set 活著。</p>
+<p><strong>LFU 的黏性</strong>是另一種死法。當熱點會移動（每個階段熱的是另一組 key），LFU 掉到 26.8%，LRU 還有 94.9%。那些計數器是一場已經結束的人氣比賽的記分板，昨天的冠軍佔著位子不走。真實世界的 LFU 因此都會讓計數器老化，或者乾脆不單獨相信次數。</p>
+<p>表格裡沒有任何一欄到處都贏。這不是表格做得不好，這就是結論。</p>
+<h2>所以 sglang 直接給你五種</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2030%20-%20lru%20and%20lfu%20cache/imgs/day30_5.png">
+<p><code>python/sglang/srt/mem_cache/evict_policy.py</code> 拒絕選邊站。五種策略就是同一顆 heap 上的五個 key function：</p>
+<pre><code>LRUStrategy   -&gt;  node.last_access_time
+LFUStrategy   -&gt;  (node.hit_count, node.last_access_time)
+FIFOStrategy  -&gt;  node.creation_time
+MRUStrategy   -&gt;  -node.last_access_time
+SLRUStrategy  -&gt;  (node.hit_count &gt;= threshold, node.last_access_time)
+
+victim = heapq.nsmallest(1, entries, key=strategy.get_priority)[0]</code></pre>
+<p>啟動時用 <code>--radix-eviction-policy {lru,lfu,fifo,mru,slru}</code> 挑。每個節點存的欄位完全一樣，策略被寫成「<strong>怎麼比大小</strong>」，而不是五份資料結構。要加一種只是一個 lambda，而上面那個 0% 的災難也就變成一個參數，而不是一次重寫。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2030%20-%20lru%20and%20lfu%20cache/imgs/day30_6.png">
+<p>SLRU 是最後一排看得到的折衷：被命中兩次之後就進入保護區。在「熱點 + 冷掃描」上這值 12 個百分點（64.1% → 76.4%），同時不會繼承 LFU 在移動熱點上的黏性。</p>
+<h2>這些東西後面會用在哪</h2>
+<p>這套機制不是推論引擎旁邊的裝飾品，它是承重牆。KV cache 存的是每段 prompt 前綴已經算好的 attention key/value，所以跟舊請求共用前綴的新請求可以整段跳過不算。radix tree（Day 24）負責找出最長的共用前綴。而當 GPU 記憶體滿掉時，總得丟掉一些東西——丟誰，就是上面那幾條策略決定的，只是對象從單純的 key 換成樹的節點。</p>
+<p>只是那邊的賭注不一樣。網頁快取丟掉一個 key，代價是多一趟資料庫。丟掉一個前綴節點，代價是當初算它的那段 GPU 時間；而「一堆彼此無關的 prompt 連續打進來」這種掃描形狀的流量，正好就是把純 LRU 的樹逼到零重用的那種模式。這也是為什麼它是一個啟動參數：正確答案取決於引擎事先看不到的流量。</p>
+<p>明天換一個放棄平衡、改用擲硬幣的排序結構——而且它照樣是 <code>O(log n)</code>。</p>
+<p>可執行的模組、notebook、兩篇文章，以及一頁把上面每個結構都動起來的互動演示，都在 repo：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2030%20-%20lru%20and%20lfu%20cache">day 30 on GitHub</a>。</p>
+</body>
+</html>

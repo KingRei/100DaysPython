@@ -59,9 +59,9 @@
 |---|---|---|
 | 28 | 平衡樹一次講完：AVL、Red-Black、B-Tree ✅ | 接 Day 04；rotation 保中序、AVL 四種 case、紅黑五性質與 insert fixup（插入 ≤2 旋轉／刪除 ≤3）、B-tree 以 page 為節點（4KB→t=128，1e6 keys height 2）；LC 110/108/1382 + DSW |
 | 29 | 區間結構：Segment Tree（lazy）+ Fenwick ✅ | 迭代 segment tree（2n 平坦陣列、每層最多 2 節點）、lazy 便條省 862 倍 node visits、Fenwick 靠 i & -i（n+1 格、快 2 倍）、兩個 BIT 做 range/range；min 沒有反元素所以 BIT 會靜默給錯；LC 307/315/370 |
-| 30 | LRU / LFU Cache | LC 146；為 Day 57 KV cache 鋪路 |
-| 31 | Skip List | Redis sorted set；Day 67 HNSW 的地基 |
-| 32 | 機率型結構：Bloom Filter、HyperLogLog、Count-Min Sketch | 用準確度換空間 |
+| 30 | LRU / LFU Cache ✅ | LRU = map + 雙向串列（刪掉 get 的刷新就靜悄悄變 FIFO）、LFU 靠「min_freq 只有 +1 或重設 1 兩種變法」拿到 O(1)、平手比 recency（LC 460 會考）；兩種死法：scan pollution 讓 LRU/LFU/SLRU 全 0%（只有 MRU 96.1%）、熱點移動讓 LFU 剩 26.8%；sglang 五策略＝一顆 heap 五個 get_priority；LC 146/460/432；為 Day 57 KV cache 鋪路 |
+| 31 | Skip List ✅ | 排序串列有順序卻不能二分（99 跳 vs 7 probe）、高度用擲硬幣決定一次不再改（完美快車道插一個 key 要改 16/16 節點）、`_descend` 的 update[]/rank[] 一趟供三種操作；span 讓同一趟走訪回答 ZRANK/ZRANGE，漏掉 `for i in range(lvl, self.level): span += 1` 會順序全對、search 全對、200 個 rank 錯 197；Redis p=0.25＝只留三分之一「額外」指標換 35% 跳數，MAXLEVEL 32／backward 指標／listpack 128；LC 1206 的 `<` 不能寫 `<=`、LC 315 對得上 Day 29 Fenwick；玩具 HNSW（幾何分布層數＋ef beam）16 倍資料只多 1.1 倍距離計算 |
+| 32 | 機率型結構：Bloom Filter、HyperLogLog、Count-Min Sketch ✅ | 誤差的「方向」比大小重要：Bloom 只會多說 yes、CMS 只會多算、HLL 兩邊都偏（所以聯集免費、交集用排容 −16% 而聯集只差 −0.84%）；Bloom 10k@1% ＝ 9.59 bits/item、k=7、11982 B vs set 1103394 B（92 倍），超載是指數式崩潰（2x→16%、8x→97.5%），Kirsch–Mitzenmacher 兩個雜湊湊出 k 個；刪除不是沒實作而是不可能（m=64/k=3 清掉 alpha 順手弄丟 bravo 與 india），counting Bloom 用 4-bit 計數器換 4 倍空間；拿 filter 去重 20000 份文件會永久丟掉 22 份（0.16%）——差別在拿到 yes 之後做什麼；HLL p=14＝16384 B 固定不動，1e3→5e5 都在 1% 內（誤差 1.04/√m），merge 逐格取 max 且精確；CMS 5×5437 取 min 保證不少算，誤差是絕對值 ε·N＝前十名 +0.01%、後十名 +150%，conservative update 免費把平均誤差 0.3→0.1；LC 347 用 Counter+heap，stream 版 sketch 在 Zipf 上完全一致，但把分布壓平（頭 65 / 第 k 61）就漏掉 w-385 |
 
 ## Part 5 — 動態規劃、貪心與回溯（Day 33–39）
 

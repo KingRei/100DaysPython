@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 32 — Bloom Filter、HyperLogLog、Count-Min Sketch：用固定記憶體回答集合問題</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 32 — Bloom Filter、HyperLogLog、Count-Min Sketch：用固定記憶體回答集合問題</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2032%20-%20probabilistic%20structures">day 32 on GitHub</a></p>
+<p><em>100 Days of Python - day 32</em></p>
+<p>Chrome 會把你開的每個網址比對惡意網站清單，但它既沒有把整份清單下載下來，也沒有把你開的每一頁 回報給 Google。Redis 可以用 16 KB 告訴你今天有多少個不重複的使用者造訪，不管使用者是一萬個還是 五億個。這兩件事用精確的資料結構都做不到，而它們的共同點是：都會答錯，而且是故意的、錯在 事先選好的方向上。</p>
+<p>昨天的 skip list 用隨機性換到一個不必旋轉就能維持的形狀；今天隨機性換到的東西更大 —— 記憶體不再 跟著資料長大。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2032%20-%20probabilistic%20structures/imgs/day32_1.png">
+<h2>這筆交易到底換了什麼</h2>
+<p>為 10000 筆資料、1% 誤判率設計的 Bloom filter 是 11982 bytes；同樣 10000 個字串放進 Python <code>set</code> 是 1103394 bytes，大 92 倍，而且字串越長 set 越大，filter 卻完全不受影響。HyperLogLog 更極端：不管數過一千個還是五十萬個不重複值，都是 16384 bytes。</p>
+<p>真正要記住的不是誤差多大，而是誤差的<strong>方向</strong>：</p>
+<ul><li>Bloom filter 只會多說 yes，永遠不會把加過的東西弄丟。</li><li>Count-Min sketch 只會多算，答案永遠不小於真值。</li><li>HyperLogLog 兩邊都可能偏 —— 這就是為什麼它的聯集免費，交集卻完全不能用。</li></ul>
+<p>誤差的大小永遠有旋鈕可以調，方向沒有；而決定你的程式在拿到答案「之後」還對不對的，是方向。</p>
+<h2>Bloom filter：打開 k 個位元，而且回不去</h2>
+<pre><code>def add(self, item):
+    h1, h2 = hash_pair(item)
+    for i in range(self.k):
+        self.bits[(h1 + i * h2 + i * i) % self.m] = 1
+
+def __contains__(self, item):
+    h1, h2 = hash_pair(item)
+    return all(self.bits[(h1 + i * h2 + i * i) % self.m]
+               for i in range(self.k))</code></pre>
+<p>一筆資料被換成 <code>m</code> 位元陣列裡的 <code>k</code> 個位置，把那幾格設成 1。查詢時重算同樣的位置：只要有一格是 0，就證明它絕對沒被加過；全部是 1，則是「大概加過」。你不需要真的準備 k 個雜湊函數 —— Kirsch-Mitzenmacher 的做法是用兩個湊出全部，<code>g_i = h1 + i·h2 + i²</code>，而一次 BLAKE2b 的 digest 切成兩半就同時給了 h1 和 h2。</p>
+<p>兩條公式決定大小：<code>m = -n ln p / (ln 2)²</code> 個位元、<code>k = (m/n) ln 2</code> 個雜湊。10000 筆 1% 就是每筆 9.59 個位元、7 個雜湊。用 100000 次「從來沒加過」的查詢實測，誤判率 1.03%，設計值 1.00%；而對 10000 個真的成員，false negative 是 0 —— 不是「很少」，是 0，這是結構本身保證的。</p>
+<p>那個 1% 是對「裝多滿」的承諾，不是對結構的承諾：</p>
+<pre><code>  load    items      fill    expected    measured
+  0.5x      500     30.7%       0.03%       0.01%
+  1.0x     1000     52.5%       1.00%       1.26%
+  2.0x     2000     77.1%      15.74%      16.19%
+  4.0x     4000     94.8%      67.86%      69.18%
+  8.0x     8000     99.7%      97.99%      97.50%</code></pre>
+<p>超過設計容量之後它不是慢慢變差，而是指數式地崩掉。裝到八倍時它對什麼都說 yes，那就不是 filter 了。</p>
+<h2>刪除不是「還沒實作」，是做不到</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2032%20-%20probabilistic%20structures/imgs/day32_3.png">
+<p><code>alpha</code> 打開的那一格，可能 <code>bravo</code> 也在用。在一個刻意做小的 filter 裡（64 個位元、k=3、放了 14 個字），把 <code>alpha</code> 的三格清成 0，會順便帶走 <code>bravo</code> 和 <code>india</code>：兩個 false negative，出現在一個 「保證不會有 false negative」的結構上。沒有任何錯誤訊息，它只是開始對明明在集合裡的東西說 no。</p>
+<p>counting Bloom filter 把每個位元換成 4-bit 計數器，共用的那格從 2 減到 1 而不是歸零，同樣的測試 false negative 是 0。代價是 4 倍記憶體，還有飽和問題：計數器一旦到 15 就加不上去，之後每一次減都 是錯的。</p>
+<p>但更貴的錯誤是「相信 yes」。拿 1% 的 filter 去對 20000 份文件去重，13954 份不重複的文件只留下 13932 份 —— 有 22 份被判定成「看過了」直接丟掉。filter 完全照規格運作。放在真實查詢前面當前置 過濾，一次誤判只是浪費一次讀取；拿它當最終答案，誤判就是永遠救不回來的資料。同一個結構、同一個 誤差率，差別完全在「拿到 yes 之後你做什麼」。</p>
+<h2>HyperLogLog：用最大值來數數</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2032%20-%20probabilistic%20structures/imgs/day32_4.png">
+<p>一直丟硬幣，連續 <code>r</code> 次正面大約每 <code>2^r</code> 次會出現一次；所以「你看過最長的一串」本身就在估計「你丟過 幾次」 —— 而記住一個最大值只需要一個數字，不需要一份清單。</p>
+<pre><code>def add(self, item):
+    h = hash64(item)
+    idx = h &amp; (self.m - 1)                    # 低 p 位挑暫存器
+    rho = trailing_zeros(h &gt;&gt; self.p) + 1     # 0 串的長度
+    self.reg[idx] = max(self.reg[idx], rho)</code></pre>
+<p>因為存的是最大值，同一筆資料塞一千次結果完全一樣：它天生就會去重。單一暫存器雜訊太大，所以最後是 對 m 個暫存器取調和平均（調和平均會壓住那些運氣好爆出長 0 串的格子），數量少的時候改用 linear counting。<code>p = 14</code> 就是 16384 個 1 byte 的暫存器，理論誤差 <code>1.04/√m</code> = 0.81%：</p>
+<pre><code>     true     estimate     error   hll bytes   exact bytes    ratio
+     1000         1005     0.52%       16384         64984       4x
+    10000         9930    -0.70%       16384        844504      52x
+   100000        99924    -0.08%       16384       7394520     451x
+   500000       504141     0.83%       16384      32777432    2001x</code></pre>
+<p>記憶體那一欄完全不動，這就是重點。</p>
+<p>讓 HLL 真的被拿去上線的性質是：合併就是逐格取 max，而且是<strong>精確</strong>的 —— 兩個 shard 合併出來的 暫存器陣列，跟一台機器掃過全部資料的結果一模一樣。所以可以每小時存一份，事後任意組合成任何區間， 而且合併不會累積誤差。</p>
+<p>交集則是陷阱。<code>|A ∩ B| = |A| + |B| - |A ∪ B|</code> 在代數上完全正確，在數值上完全不行：<code>|A| = |B| = 200000</code>、真實交集 2000 時，聯集估到 0.84% 以內，交集卻算出 1681，誤差 16%。三個在 20 萬量級上的 相對誤差，變成一個跟答案一樣大的絕對誤差。排容原理是「拿大數相減求小數」，那正是相對誤差型估計值 撐不住的算法。</p>
+<h2>Count-Min sketch：每一列都會多算，所以取最小的那個</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2032%20-%20probabilistic%20structures/imgs/day32_6.png">
+<pre><code>def query(self, item):
+    return min(self.rows[i][self._hash(item, i) % self.w]
+               for i in range(self.d))</code></pre>
+<p><code>d</code> 列、每列 <code>w</code> 個計數器，每一列都是一份完整但會撞在一起的統計。碰撞只會讓數字變大，所以最小的 那列被汙染最少，而且答案永遠不小於真值。大小是 <code>w = ⌈e/ε⌉</code>、<code>d = ⌈ln(1/δ)⌉</code>，誤差以 <code>1 - δ</code> 的 機率不超過 <code>ε·N</code>。</p>
+<p>200000 筆事件、4934 個不重複 key，5 × 5437 的 sketch（108740 bytes，<code>Counter</code> 要 443608）保證 上界是 +100，實測最大誤差 21，少算次數 0。重點在誤差落在哪裡：<strong>前十名的相對誤差 +0.01%， 最後十名 +150%</strong>。上界是絕對值，所以同樣 21 的誤差，對出現 31648 次的 key 是四捨五入的雜訊，對 只出現一次的 key 就是整個答案。問「哪些 key 很大」非常好用，問「這個 key 是不是只出現過一次」完全 不能用。</p>
+<p>conservative update（只把目前等於最小值的那幾格加上去）可以免費把平均誤差從 0.3 降到 0.1，而且 保證仍然成立。它讓刪除變得不可能，不過刪除本來就不在菜單上。</p>
+<h2>LeetCode 347：記憶體夠與不夠的兩種寫法</h2>
+<pre><code>def top_k_frequent(nums, k):
+    counts = Counter(nums)
+    return heapq.nlargest(k, counts, key=counts.get)</code></pre>
+<p><code>Counter</code> 加一個大小為 k 的 heap：時間 <code>O(n)</code>，空間跟不重複 key 的數量成正比。面試就寫這個。 sketch 版是面試官接著問「現在它是一條 stream，key 有十億個」時的答案：每讀一筆就 add、馬上 query，只保留 k 個候選。在 200000 筆的 Zipf stream、k = 10 上，它給出一模一樣的十個 key、一樣的 順序、一樣的次數，只用了 108740 bytes 而不是 443608。</p>
+<p>然後把 stream 弄平 —— 第一名 65 次、第十名 61 次 —— 它就漏掉了 <code>w-385</code>。近似 top-k 只有在「頭部 明顯高過雜訊地板」時才有意義：第 k 名的真實次數必須明顯大於 <code>e/w · N</code>。這條規則三個結構都一樣 —— 先決定你可以錯到什麼程度、錯的方向能不能接受，再決定要花多少記憶體。</p>
+<h2>怎麼選</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2032%20-%20probabilistic%20structures/imgs/day32_7.png">
+<pre><code>structure     question             error direction        bytes @1e6
+set (exact)   membership + count   none                     60000000
+Bloom filter  have I seen x?       false positive only       1198133
+HyperLogLog   how many distinct?   relative, both ways         16384
+Count-Min     how often is x?      over-count only            108740</code></pre>
+<p>三個都可以合併，這也是它們能活在分散式系統裡的原因：同樣 m 和 k 的 Bloom filter 直接 OR、HLL 暫存器取 max、Count-Min 把列加起來。Bloom filter 跑在 Chrome Safe Browsing、Cassandra 與 LevelDB 的 SSTable 查詢、SPV 錢包裡 —— 都是「一個便宜的 no 就省下一次昂貴的磁碟或網路讀取」。 HyperLogLog 就是 Redis 的 <code>PFCOUNT</code>、BigQuery 的 <code>APPROX_COUNT_DISTINCT</code>、Presto 的 <code>approx_distinct</code>。Count-Min 則出現在網路流量監控、熱門話題、per-key rate limiting。</p>
+<p>這些結構在 LLM 系統裡也一直出現，尤其是那些必須便宜的地方：估計哪些 prefix 熱到值得留在 cache、 不把 n-gram 展開就估出語料裡有多少種、還有訓練資料去重 —— 最後這一個正好就是「Bloom filter 的 誤判不再免費，而是開始刪掉文件」的地方。</p>
+<p>明天：動態規劃入門 —— 爬樓梯與硬幣找零。</p>
+<p>這篇的東西都跑得起來：<code>python probabilistic.py</code> 會把上面全部印出來，notebook 存了輸出， <code>demo.html</code> 則把誤判、把鄰居一起刪掉的 delete、HyperLogLog 的暫存器、Count-Min 的取最小值， 以及 LeetCode 347 並排動畫演一遍。</p>
+<p><a href="https://github.com/KingRei/100DaysPython/tree/master/day%2032%20-%20probabilistic%20structures">day 32 on GitHub</a></p>
+</body>
+</html>
