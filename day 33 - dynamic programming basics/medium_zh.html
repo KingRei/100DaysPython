@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 33 — 動態規劃入門：爬樓梯與硬幣找零</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 33 — 動態規劃入門：爬樓梯與硬幣找零</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2033%20-%20dynamic%20programming%20basics">day 33 on GitHub</a></p>
+<p><em>100 Days of Python - day 33</em></p>
+<p>我寫了一個四行的函式回答「30 階樓梯有幾種爬法」，它呼叫了自己 4,356,617 次。但這題裡面其實只有 31 個不同的子問題。140,536 比 1 —— 這個比例就是今天的全部動機，而解法不是換一個更聰明的演算法，是同一條遞推式，換一個順序去算。</p>
+<p>昨天用機率型結構收掉 Part 4，那裡的交換是「拿正確性換記憶體」。今天開啟 Part 5，交換的方向剛好相反：我們花記憶體，換的是不要再付一次已經付過的計算。</p>
+<h2>遞推式是簡單的那一半</h2>
+<p>一次可以爬一階或兩階，所以爬到第 n 階的方法數，等於「爬到 n-1 再跨一階」加上「爬到 n-2 再跨兩階」。也就是 <code>f(n) = f(n-1) + f(n-2)</code>，這行式子想三十秒就有了。</p>
+<pre><code>def stairs_naive(n):
+    if n &lt;= 1:
+        return 1
+    return stairs_naive(n - 1) + stairs_naive(n - 2)</code></pre>
+<p>這段程式是對的，也是不能用的。而「為什麼不能用」值得多看兩眼，不要只當結論背下來：</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2033%20-%20dynamic%20programming%20basics/imgs/day33_1.png">
+<p>這棵樹的每一片葉子，對答案剛好貢獻 1。所以葉子的數量就等於答案本身 —— 答案是指數的，時間也就是指數的，程式寫得再乾淨都一樣。實際在 <code>stairs_naive(30)</code> 裡面數，<code>f(1)</code> 被算了 832,040 次，<code>f(0)</code> 被算了 1,346,269 次，因為程式裡沒有任何東西記得算過的結果。</p>
+<p>出路有兩條，其實是同一個想法從兩端走過來。memoization 保留遞迴，在前面加一張表，讓每個參數最多只展開一次；tabulation 直接把遞迴丟掉，把子問題攤平成陣列，然後用一個「保證讀到的格子都已經寫好」的順序去填。同樣算 n = 28，我機器上的數字是：naive 252.74 ms、memoized 0.022 ms、滾動版 0.0072 ms。</p>
+<h2>填表的順序才是會咬人的那一半</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2033%20-%20dynamic%20programming%20basics/imgs/day33_2.png">
+<pre><code>def stairs_table(n):
+    dp = [0] * (n + 1)
+    dp[0] = dp[1] = 1
+    for i in range(2, n + 1):
+        dp[i] = dp[i - 1] + dp[i - 2]
+    return dp[n]</code></pre>
+<p>n = 10 時這一列是 <code>[1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89]</code>，就是費氏數列移一格，而 <code>dp[7] = dp[6] + dp[5] = 13 + 8 = 21</code>。</p>
+<p>為什麼可以由左往右填？只有一個理由：<code>dp[i]</code> 只依賴比它小的 index，而比它小的早就填好了。這句話就是整個 DP 唯一的規則，我寫過的每一個 DP bug 追到最後都是違反了它。它在這裡還順便帶來一個好處：既然每格只讀左邊兩格，整張表其實不用留，兩個變數就能用 O(1) 空間算完。</p>
+<h2>硬幣找零：同一張表，換一個運算子</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2033%20-%20dynamic%20programming%20basics/imgs/day33_3.png">
+<p>骨架不動，只換格子裡放什麼。現在 <code>dp[a]</code> 是「湊出 a 元最少要幾枚硬幣」，合併從 <code>+</code> 換成 <code>min</code>：</p>
+<pre><code>def coin_change_min(coins, amount):
+    dp = [0] + [INF] * amount
+    for a in range(1, amount + 1):
+        for c in coins:
+            if c &lt;= a and dp[a - c] + 1 &lt; dp[a]:
+                dp[a] = dp[a - c] + 1
+    return -1 if dp[amount] == INF else dp[amount]</code></pre>
+<p>填 <code>dp[a]</code> 時只問一件事 —— 最後那一枚是什麼？不管選哪一枚，剩下的 <code>a - c</code> 元早就算好了，直接查表。<code>coins = [1, 5, 6, 9]</code>、<code>amount = 11</code> 時整列是 <code>0 1 2 3 4 1 1 2 3 1 2 2</code>，答案是兩枚：<code>6 + 5</code>。</p>
+<p>直覺的替代方案是貪心：每次拿裝得下的最大面額。在這裡它給出 <code>9 + 1 + 1</code>，三枚，多了 50%，而且沒有任何錯誤訊息。貪心只在 canonical（標準）的硬幣系統上才保證正確，而真實世界的貨幣是刻意被設計成 canonical 的 —— 這正是為什麼這個習慣用起來很安全，也正是為什麼它其實不安全。dp 還附帶一個免費的好處：每格順手記下選了哪一枚，就能從答案倒著走回去，把 <code>6 + 5</code> 這個解本身重建出來，而不是只拿到一個數字。</p>
+<p>湊不出來的金額會一直停在無限大，所以 <code>coin_change_min([5, 7], 3)</code> 會正確地回 <code>-1</code>。那不是額外補上去的邊界處理，那就是表格在說「沒有任何路徑走到這裡」。</p>
+<h2>不會報錯的那個 bug</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2033%20-%20dynamic%20programming%20basics/imgs/day33_4.png">
+<p>這一段我會抄成卡片留著。</p>
+<pre><code># LC 518 - 有幾種「組合」？
+dp = [1] + [0] * amount
+for c in coins:                     # 硬幣迴圈在外層
+    for a in range(c, amount + 1):
+        dp[a] += dp[a - c]
+
+# LC 377 - 有幾種「排列」？
+dp = [1] + [0] * amount
+for a in range(1, amount + 1):      # 金額迴圈在外層
+    for c in coins:
+        if c &lt;= a:
+            dp[a] += dp[a - c]</code></pre>
+<p>同一個陣列、同一行更新、連更新的次數都一樣。唯一的差別是哪個 <code>for</code> 在外面。<code>coins = [1, 2, 5]</code>、<code>amount = 5</code> 時，第一個回 4，第二個回 9。</p>
+<p>把它唸出來，這件事就不神祕了。硬幣在外層時，硬幣 <code>5</code> 只在它自己那一輪被「提供」一次，之後再也不會回頭，所以 <code>1+2+2</code> 只可能用一種順序被組出來 —— 你數的是組合（multiset）。金額在外層時，每一枚硬幣都有機會當「最後加進去的那一枚」，於是 <code>1+2+2</code>、<code>2+1+2</code>、<code>2+2+1</code> 是三次不同的填表 —— 你數的是排列（序列）。暴力枚舉兩邊都驗過了：4 種組合、9 種序列。金額拉到 30，兩個答案是 58 對 5,508,222。</p>
+<p>沒有例外、沒有警告，code review 也看不出哪裡怪。它只是回答了另一個問題 —— 而 LeetCode 377 的題目名字叫「Combination Sum IV」，要的卻是排列，所以連名字都救不了你，只能看範例。</p>
+<p>這裡還藏著一個很漂亮的推論：爬樓梯其實就是 <code>coins = {1, 2}</code> 的排列版硬幣找零，因為階梯是有順序的，先一階再兩階和先兩階再一階是不同的爬法。把兩張表並排，排列那一欄完全重現 <code>stairs(n)</code>：1、2、3、5、8、13…，而組合那一欄只慢慢爬 1、2、2、3、3、4。如果哪天你把爬樓梯的遞推式寫成「步伐迴圈在外層」，你就悄悄地改成在數「用了幾個兩階」，而不是在數怎麼爬。</p>
+<h2>一張表，三個問題</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2033%20-%20dynamic%20programming%20basics/imgs/day33_5.png">
+<p>Day 08 的 word break，換個角度看就是同一台機器，只是格子排在字串的「切點」上，而不是數線上。<code>dp[i]</code> 問的是 <code>s[:i]</code> 切不切得開，轉移則是去找一個 <code>j</code>，要求 <code>dp[j]</code> 已經成立、而且 <code>s[j:i]</code> 在字典裡。</p>
+<p>換掉運算子，問題就跟著換：<code>+</code> 數有幾種切法、<code>min</code> 求最少切成幾個字、<code>or</code> 判斷可不可行。<code>word_break(&#x27;applepenapple&#x27;, [&#x27;apple&#x27;, &#x27;pen&#x27;])</code> 是 <code>True</code>，而且只有一種切法。<code>&#x27;catsandog&#x27;</code> 沿路對得上 <code>cat</code>、<code>cats</code>、<code>sand</code>、<code>and</code>，最後還是卡在 <code>og</code> —— 這正是為什麼「看到字就切」的貪心掃描會在這裡出錯，而把每個切點都記下來的表格不會。</p>
+<h2>要用 memo 還是填表？</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2033%20-%20dynamic%20programming%20basics/imgs/day33_6.png">
+<p>兩者算出來的東西一樣，所以判準只有一個：你真正碰到的狀態有多少。<code>coins = [100, 250]</code>、<code>amount = 10000</code> 時只有 50 的倍數會被問到，top-down 只走 203 個狀態，tabulation 卻要配置並填滿 10,001 格 —— 同樣得到 40 枚的答案，多做了 49.3 倍的工。狀態稀疏就是 memoization 的主場。</p>
+<p><code>coins = [1, 2, 5]</code>、<code>amount = 1000</code> 時每個金額都碰得到，兩邊數量幾乎一樣（1005 個狀態對 1001 格），這時填表贏在常數：沒有函式呼叫開銷，也沒有很深的 call stack。而且遞迴版在這裡不只是比較慢，是直接死掉 —— 1000、999、998… 這條鏈剛好等於 Python 預設的遞迴上限，不先 <code>sys.setrecursionlimit</code> 根本跑不完。</p>
+<h2>LeetCode 這一組</h2>
+<p><code>70</code> 爬樓梯（n = 10 是 89）、<code>322</code> 硬幣找零（<code>[1,2,5]</code> 湊 11 是 3，<code>[2]</code> 湊 3 是 -1）、<code>518</code> 組合（4）、<code>377</code> 排列（<code>[1,2,3]</code> 湊 4 是 7）、<code>139</code> word break。五題、一張表、三個運算子。面試時值得講出來的那個 caveat 就是上面那段：計數題要的是組合就把「物品」迴圈放外層，要的是序列就把「目標」迴圈放外層 —— 動手打字之前，先把你在數哪一種唸出來。</p>
+<h2>這件事之後會用在哪</h2>
+<p>Part 5 接下來全都是同一個改寫，換的只是狀態。背包問題把「金額」換成「容量」，並且把物品那個維度攤開來寫；編輯距離與 LCS 把表變成二維，填表順序變成雙層迴圈。再遠一點，Viterbi 解碼就是在隱藏狀態上做硬幣找零，beam search 是表大到填不完時的折衷，而 transformer 的 KV cache 其實就是「有固定預算的 memoization」—— 同樣是不要重算已經知道的東西，只是被迫住在有限的記憶體裡。</p>
+<p>明天：背包問題三兄弟 —— 0/1、完全、多重。迴圈順序的問題會換一頂帽子再回來一次，而「這個物品能不能重複拿」會發現自己跟「內層迴圈往哪個方向跑」是同一個問題。</p>
+<p>所有程式碼、notebook、圖檔與互動式演示都在 repo： <a href="https://github.com/KingRei/100DaysPython">github.com/KingRei/100DaysPython</a></p>
+</body>
+</html>

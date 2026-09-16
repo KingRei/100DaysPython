@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dynamic programming from scratch: climbing stairs and coin change</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Dynamic programming from scratch: climbing stairs and coin change</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2033%20-%20dynamic%20programming%20basics">day 33 on GitHub</a></p>
+<p><em>100 Days of Python - day 33</em></p>
+<p>I wrote a four-line function that answers a question about 30 stairs, and it made 4,356,617 function calls to do it. The question only has 31 different sub-questions in it. That ratio - 140,536 to 1 - is the entire motivation for today, and the fix is not a cleverer algorithm. It is the same recurrence, evaluated in a different order.</p>
+<p>Yesterday closed Part 4 with probabilistic structures, where the trade was memory for exactness. Today opens Part 5, and the trade is the opposite: we spend memory to <em>stop paying</em> for work we already did.</p>
+<h2>The recurrence is the easy half</h2>
+<p>You can climb stairs one or two at a time, so the number of ways to reach step <code>n</code> is the number of ways to reach <code>n-1</code> (then take one step) plus the number of ways to reach <code>n-2</code> (then take two). That is <code>f(n) = f(n-1) + f(n-2)</code>, and writing it down takes about thirty seconds.</p>
+<pre><code>def stairs_naive(n):
+    if n &lt;= 1:
+        return 1
+    return stairs_naive(n - 1) + stairs_naive(n - 2)</code></pre>
+<p>This is correct. It is also unusable, and the reason is worth staring at rather than memorising:</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2033%20-%20dynamic%20programming%20basics/imgs/day33_1.png">
+<p>Every leaf of that tree contributes exactly 1 to the total. So the number of leaves <em>is</em> the answer. An exponential answer costs exponential time, no matter how tidy the code looks. Instrumenting the calls inside <code>stairs_naive(30)</code> shows <code>f(1)</code> being evaluated 832,040 times and <code>f(0)</code> 1,346,269 times, because nothing in the program remembers a result it has already computed.</p>
+<p>There are two ways out and they are the same idea approached from opposite ends. Memoisation keeps the recursion and adds a dictionary in front of it, so each argument is expanded at most once. Tabulation deletes the recursion, lays the subproblems out in an array, and fills it in an order that guarantees every cell it reads has already been written. On my machine the same answer for <code>n = 28</code> takes 252.74 ms naively, 0.022 ms memoised, and 0.0072 ms with the rolling version.</p>
+<h2>The order is the half that bites</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2033%20-%20dynamic%20programming%20basics/imgs/day33_2.png">
+<pre><code>def stairs_table(n):
+    dp = [0] * (n + 1)
+    dp[0] = dp[1] = 1
+    for i in range(2, n + 1):
+        dp[i] = dp[i - 1] + dp[i - 2]
+    return dp[n]</code></pre>
+<p>For <code>n = 10</code> the row reads <code>[1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89]</code> - Fibonacci, shifted by one - and <code>dp[7] = dp[6] + dp[5] = 13 + 8 = 21</code>.</p>
+<p>Why is left-to-right allowed? For one reason: <code>dp[i]</code> depends only on smaller indices, and smaller indices are already finished. That is the whole rule of dynamic programming, and every DP bug I have ever written was a violation of it. It also has a nice consequence here: since a cell reads only the two before it, the array is unnecessary and two variables do the job in <code>O(1)</code> space.</p>
+<h2>Coin change: same table, different operator</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2033%20-%20dynamic%20programming%20basics/imgs/day33_3.png">
+<p>Keep the skeleton and change what a cell holds. Now <code>dp[a]</code> is the fewest coins summing to <code>a</code>, and the combine step is <code>min</code> instead of <code>+</code>:</p>
+<pre><code>def coin_change_min(coins, amount):
+    dp = [0] + [INF] * amount
+    for a in range(1, amount + 1):
+        for c in coins:
+            if c &lt;= a and dp[a - c] + 1 &lt; dp[a]:
+                dp[a] = dp[a - c] + 1
+    return -1 if dp[amount] == INF else dp[amount]</code></pre>
+<p>Filling <code>dp[a]</code> asks exactly one question - what was the last coin? - and whatever is left over, <code>a - c</code>, was solved earlier. With <code>coins = [1, 5, 6, 9]</code> and <code>amount = 11</code> the row comes out as <code>0 1 2 3 4 1 1 2 3 1 2 2</code> and the answer is two coins: <code>6 + 5</code>.</p>
+<p>The instinctive alternative is greedy: keep taking the biggest coin that fits. It gives <code>9 + 1 + 1</code> here - three coins, 50% worse, and no error message anywhere. Greedy is only correct on <em>canonical</em> coin systems. Real currencies are deliberately designed to be canonical, which is exactly why the habit feels safe and exactly why it is not. <code>dp</code> also carries a free bonus: record which coin each cell chose and you can walk backwards from the answer to rebuild <code>6 + 5</code> itself, not just the count.</p>
+<p>Amounts that cannot be made stay at infinity, which is how <code>coin_change_min([5, 7], 3)</code> correctly reports <code>-1</code>. That is not an edge case bolted on; it is the table saying &quot;no path reached here&quot;.</p>
+<h2>The bug that does not raise</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2033%20-%20dynamic%20programming%20basics/imgs/day33_4.png">
+<p>Here is the part I would put on a card and keep.</p>
+<pre><code># LC 518 - how many combinations?
+dp = [1] + [0] * amount
+for c in coins:                     # coin loop OUTSIDE
+    for a in range(c, amount + 1):
+        dp[a] += dp[a - c]
+
+# LC 377 - how many permutations?
+dp = [1] + [0] * amount
+for a in range(1, amount + 1):      # amount loop OUTSIDE
+    for c in coins:
+        if c &lt;= a:
+            dp[a] += dp[a - c]</code></pre>
+<p>Identical array, identical update line, identical number of updates. The only difference is which <code>for</code> is on the outside. With <code>coins = [1, 2, 5]</code> and <code>amount = 5</code>, the first returns 4 and the second returns 9.</p>
+<p>Read them out loud and the difference stops being mysterious. With the coin loop outside, coin <code>5</code> is offered once and for all, in its own pass, and is never revisited - so <code>1+2+2</code> can only be assembled in one order, and you are counting multisets. With the amount loop outside, every coin gets a turn at being the <em>last</em> one added, so <code>1+2+2</code>, <code>2+1+2</code> and <code>2+2+1</code> are three separate fills, and you are counting sequences. Brute force confirms both: 4 multisets, 9 sequences. At amount 30 the two answers are 58 and 5,508,222.</p>
+<p>Nothing raises. Nothing looks suspicious in review. One of them simply answers a different question - and LeetCode 377 is <em>named</em> &quot;Combination Sum IV&quot; while its examples ask for permutations, so the name will not save you either.</p>
+<p>There is a pleasant corollary hiding in this. Climbing stairs is coin change with <code>coins = {1, 2}</code>, counted as permutations, because steps are ordered: one-then-two is a different climb from two-then-one. Line up the tables and the permutation column reproduces <code>stairs(n)</code> exactly - 1, 2, 3, 5, 8, 13, … - while the combination column crawls along at 1, 2, 2, 3, 3, 4. If you ever write the stairs recurrence with the step loop outside, you have quietly started counting how many two-steps you took rather than how you climbed.</p>
+<h2>One table, three questions</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2033%20-%20dynamic%20programming%20basics/imgs/day33_5.png">
+<p>The word break problem from Day 08 turns out to be this same machine, with the cells sitting at the cut points of a string instead of on a number line. <code>dp[i]</code> asks whether <code>s[:i]</code> can be segmented, and the transition looks for a <code>j</code> where <code>dp[j]</code> already holds and <code>s[j:i]</code> is in the dictionary.</p>
+<p>Change the operator and the question changes with it: <code>+</code> counts the segmentations, <code>min</code> returns the fewest words, <code>or</code> decides feasibility. <code>word_break(&#x27;applepenapple&#x27;, [&#x27;apple&#x27;, &#x27;pen&#x27;])</code> is <code>True</code>, with exactly one segmentation. <code>&#x27;catsandog&#x27;</code> matches <code>cat</code>, <code>cats</code>, <code>sand</code> and <code>and</code> along the way and still fails on <code>og</code> - which is precisely why a greedy &quot;cut as soon as a word matches&quot; scanner gets it wrong, and why the table, which records every cut point, does not.</p>
+<h2>Which rewrite: memo or table?</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2033%20-%20dynamic%20programming%20basics/imgs/day33_6.png">
+<p>They compute the same thing, so pick on the basis of which states you actually touch. With <code>coins = [100, 250]</code> and <code>amount = 10000</code> only multiples of 50 are ever reachable: top-down visits 203 states, while tabulation allocates and fills 10,001 cells - 49.3x more work for the same answer of 40 coins. Sparse state spaces are memoisation&#x27;s home turf.</p>
+<p>With <code>coins = [1, 2, 5]</code> and <code>amount = 1000</code> every amount is reachable, the counts coincide (1005 states against 1001 cells), and tabulation wins on constants instead: no call overhead and no deep stack. The recursive version there does not merely run slower, it dies - the chain 1000, 999, 998, … is exactly Python&#x27;s default recursion limit, so it needs <code>sys.setrecursionlimit</code> to finish at all.</p>
+<h2>The LeetCode set</h2>
+<p><code>70</code> climb stairs (89 for n = 10), <code>322</code> coin change (3 for <code>[1,2,5]</code> at 11, <code>-1</code> for <code>[2]</code> at 3), <code>518</code> combinations (4), <code>377</code> permutations (7 for <code>[1,2,3]</code> at 4), <code>139</code> word break. Five problems, one table, three operators. The interview-relevant caveat is the one above: when a counting problem asks for combinations, put the item loop outside; when it asks for sequences, put the target loop outside. Say which one you are doing out loud before you type it.</p>
+<h2>Why this matters later</h2>
+<p>Everything in this part of the series is the same rewrite with a different state. Knapsack replaces &quot;amount&quot; with &quot;capacity&quot; and adds the item dimension explicitly. Edit distance and LCS make the table two-dimensional and the fill order a nested loop. Further out, Viterbi decoding is coin change over hidden states, beam search is what you do when the table is too large to fill, and the KV cache in a transformer is memoisation with a fixed budget - the same &quot;do not recompute what you already know&quot;, forced to live in bounded memory.</p>
+<p>Tomorrow: the knapsack family - 0/1, unbounded and bounded - where the loop-order question comes back wearing a different hat, and where &quot;can I reuse this item?&quot; turns out to be the same question as &quot;which way does the inner loop run?&quot;.</p>
+<p>All the code, the notebook, the figures and an interactive walkthrough are in the repo: <a href="https://github.com/KingRei/100DaysPython">github.com/KingRei/100DaysPython</a></p>
+</body>
+</html>

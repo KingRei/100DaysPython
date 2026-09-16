@@ -1,0 +1,1071 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 33 - Dynamic programming from scratch - climbing stairs and coin change / Day 33 — 動態規劃入門：爬樓梯與硬幣找零</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='2' y='2' width='28' height='28' rx='7' fill='%23062434'/><circle cx='11' cy='12' r='4' fill='%2312b3b8'/><circle cx='21' cy='12' r='4' fill='%239d6bff'/><circle cx='16' cy='22' r='4' fill='%23ff9736'/></svg>">
+<style>
+:root{
+  --bg0:#04121c; --bg1:#062434; --card:rgba(6,36,52,.72);
+  --teal:#12b3b8; --teal-d:#0a6b74; --teal-l:#3fe0dd;
+  --purple:#9d6bff; --purple-d:#241542; --purple-l:#c7a6ff;
+  --orange:#ff9736; --orange-d:#3a2109; --orange-l:#ffbe6b;
+  --red:#ff5c5c; --grey:#8fa3ac; --pale:#dff2f5; --white:#ffffff;
+  --serif:"Latin Modern Roman","Liberation Serif",Georgia,"Times New Roman",serif;
+  --mono:"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:
+    radial-gradient(900px 520px at 12% -8%,rgba(157,107,255,.20) 0%,rgba(157,107,255,0) 62%),
+    radial-gradient(900px 520px at 88% -4%,rgba(255,151,54,.16) 0%,rgba(255,151,54,0) 60%),
+    radial-gradient(1200px 800px at 50% 30%,#083041 0%,var(--bg1) 45%,var(--bg0) 100%);
+  color:var(--pale); font-family:var(--serif); min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--teal-l)}
+.wrap{max-width:1180px;margin:0 auto;padding:26px 20px 60px}
+header{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-bottom:6px}
+h1{font-size:30px;margin:0;color:var(--white);letter-spacing:.4px;
+   text-shadow:0 0 16px rgba(63,224,221,.35)}
+.day{font-size:13px;letter-spacing:2.4px;text-transform:uppercase;color:var(--orange-l);
+     border:1px solid var(--orange);border-radius:999px;padding:4px 12px;
+     background:rgba(255,151,54,.10)}
+.sub{color:var(--grey);font-size:15px;margin:8px 0 20px;max-width:72ch;line-height:1.6}
+.spacer{flex:1}
+.lang{display:flex;border:1px solid var(--teal-d);border-radius:999px;overflow:hidden}
+.lang button{background:transparent;color:var(--teal-l);border:0;padding:5px 14px;
+  font-family:var(--serif);font-size:14px;cursor:pointer}
+.lang button.on{background:var(--teal);color:#022}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
+.tabs button{
+  background:rgba(6,40,58,.75);border:1px solid rgba(18,179,184,.45);color:var(--pale);
+  padding:9px 16px;border-radius:9px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  transition:.18s}
+.tabs button:hover{border-color:var(--teal-l);color:var(--white)}
+.tabs button.on{background:linear-gradient(135deg,var(--teal) 0%,var(--purple) 140%);
+  border-color:var(--teal-l);color:#03222a;box-shadow:0 0 18px rgba(18,179,184,.30)}
+.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:18px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid rgba(18,179,184,.28);border-radius:13px;
+      padding:14px 16px}
+.card h3{margin:0 0 10px;font-size:14px;letter-spacing:2px;text-transform:uppercase;
+         color:var(--teal-l);font-weight:normal}
+svg.stage{width:100%;height:auto;display:block;touch-action:none}
+svg.stage text{font-family:var(--serif);user-select:none}
+.narr{min-height:52px;margin-top:10px;padding:10px 12px;border-left:3px solid var(--orange);
+      background:rgba(255,151,54,.07);font-size:16px;line-height:1.55;color:var(--white)}
+.narr code{font-family:var(--mono);font-size:14px;color:var(--orange-l)}
+.narr b{color:var(--orange-l);font-weight:normal}
+.ctrl{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
+.ctrl button{background:rgba(6,40,58,.9);border:1px solid var(--teal-d);color:var(--teal-l);
+  border-radius:8px;padding:7px 13px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  min-width:44px;transition:.15s}
+.ctrl button:hover:not(:disabled){background:var(--teal);color:#03222a}
+.ctrl button:disabled{opacity:.35;cursor:default}
+.ctrl .play{min-width:92px;font-weight:bold;border-color:var(--orange);color:var(--orange-l)}
+.ctrl .play:hover{background:var(--orange);color:#2a1400}
+.ctrl input[type=range]{width:120px;accent-color:var(--purple)}
+.stepno{color:var(--grey);font-size:14px;font-family:var(--mono)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;min-height:30px}
+.chip{border:1px solid var(--teal-d);border-radius:6px;padding:3px 9px;font-family:var(--mono);
+      font-size:14px;color:var(--pale);background:rgba(18,179,184,.10)}
+.chip.hot{border-color:var(--orange);color:var(--orange-l);background:rgba(255,151,54,.14)}
+.chip.act{border-color:var(--purple);color:var(--purple-l);background:rgba(157,107,255,.16)}
+.chip.ok{border-color:var(--teal-l);color:var(--teal-l);background:rgba(63,224,221,.12)}
+.chip.dim{border-color:#2f5661;color:var(--grey);background:transparent}
+.chip.bad{border-color:var(--red);color:#ff9a9a;background:rgba(255,92,92,.14)}
+.chip.empty{border-style:dashed;color:var(--grey);border-color:#2f5661}
+.panel+.panel{margin-top:12px}
+.panel .lbl{font-size:13px;letter-spacing:1.6px;text-transform:uppercase;color:var(--grey);
+  margin-bottom:5px}
+pre.code{margin:0;font-family:var(--mono);font-size:13.5px;line-height:1.72;overflow-x:auto;
+  color:#a8c8d0}
+pre.code .ln{display:block;padding:0 8px;border-left:3px solid transparent;white-space:pre}
+pre.code .ln.on{background:rgba(255,151,54,.12);border-left-color:var(--orange);color:var(--white)}
+pre.code .cm{color:#5f7b85;font-style:italic}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:13.5px;color:var(--grey)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;
+  vertical-align:-1px;border:1px solid rgba(255,255,255,.22)}
+.note{font-size:15px;line-height:1.65;color:var(--pale)}
+.note b{color:var(--purple-l);font-weight:normal}
+.note code{font-family:var(--mono);font-size:13.5px;color:var(--teal-l)}
+.toggle-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.toggle-row button{border:1px solid rgba(18,179,184,.45);border-radius:8px;padding:6px 13px;
+  cursor:pointer;font-family:var(--serif);font-size:14px;
+  background:rgba(6,40,58,.75);color:var(--pale)}
+.toggle-row button.on{background:var(--purple);border-color:var(--purple-l);color:#150a2b}
+footer{margin-top:32px;padding-top:16px;border-top:1px solid rgba(18,179,184,.25);
+  color:var(--grey);font-size:14px;display:flex;gap:18px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <span class="day">Day 33</span>
+  <h1 data-i18n="title">Day 33 — 動態規劃入門：爬樓梯與硬幣找零</h1>
+  <span class="spacer"></span>
+  <div class="lang">
+    <button id="btn-zh" class="on" onclick="setLang('zh')">中文</button>
+    <button id="btn-en" onclick="setLang('en')">EN</button>
+  </div>
+</header>
+<p class="sub" data-i18n="sub">DP 不是一種新演算法，而是一次改寫：把重複展開的遞迴樹折成一張只填一次的表格。遞推式通常是簡單的那一半，真正會咬人的是「填表的順序」—— 兩個迴圈交換位置，程式不會報錯，只是回答了另一個問題。</p>
+
+<div class="tabs" id="tabs"></div>
+
+<div class="grid">
+  <div>
+    <div class="card">
+      <h3 id="stage-title"></h3>
+      <svg class="stage" id="stage" viewBox="0 0 10 6.4" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="legend" id="legend"></div>
+      <div class="narr" id="narr"></div>
+      <div class="ctrl">
+        <button onclick="reset()" title="reset">⟲</button>
+        <button id="prev" onclick="step(-1)">◀</button>
+        <button class="play" id="play" onclick="togglePlay()" data-i18n="play">▶ 播放</button>
+        <button id="next" onclick="step(1)">▶</button>
+        <span class="stepno" id="stepno">0 / 0</span>
+        <span class="spacer"></span>
+        <span style="font-size:13px;color:var(--grey)" data-i18n="speed">速度</span>
+        <input type="range" id="speed" min="180" max="1600" step="20" value="820">
+      </div>
+      <div class="toggle-row" id="extra"></div>
+    </div>
+  </div>
+  <div>
+    <div class="card" id="state-card">
+      <h3 data-i18n="state">演算法狀態</h3>
+      <div id="panels"></div>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="code">程式碼</h3>
+      <pre class="code" id="code"></pre>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="idea">重點</h3>
+      <div class="note" id="idea"></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <span>100 Days of Python — Day 33</span>
+  <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2033%20-%20dynamic%20programming%20basics" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://medium.com/100-days-of-python" target="_blank" rel="noopener">Medium</a>
+</footer>
+</div>
+<script>
+// DAY: 33
+// TITLE_ZH: Day 33 — 動態規劃入門：爬樓梯與硬幣找零
+// TITLE_EN: Dynamic programming from scratch - climbing stairs and coin change
+// SUB_ZH: DP 不是一種新演算法，而是一次改寫：把重複展開的遞迴樹折成一張只填一次的表格。遞推式通常是簡單的那一半，真正會咬人的是「填表的順序」—— 兩個迴圈交換位置，程式不會報錯，只是回答了另一個問題。
+// SUB_EN: Dynamic programming is not a new algorithm, it is a rewrite: fold a recursion tree that re-expands the same subproblem over and over into a table that fills each cell once. The recurrence is usually the easy half; the half that bites is the order you fill the table in - swap two loops and the program still runs, it just answers a different question.
+// FOLDER: day%2033%20-%20dynamic%20programming%20basics
+// MEDIUM: https://medium.com/100-days-of-python
+
+const VIEW = [9.8, 6.4];
+function chip(t, cls){ return {t:t, cls:cls || ''}; }
+
+/* ======================================================================== *
+ * Tab 1 - the recursion tree of f(5) and what memoisation prunes
+ * ======================================================================== */
+const CODE_TREE = [
+  'def stairs(n, memo=None):',
+  '    if memo is not None and n in memo:',
+  '        return memo[n]        # cache hit - prune',
+  '    if n <= 1:',
+  '        return 1              # base case',
+  '    r = stairs(n - 1, memo) + stairs(n - 2, memo)',
+  '    if memo is not None:',
+  '        memo[n] = r',
+  '    return r'
+];
+
+function buildTree(n){
+  const nodes = []; let id = 0;
+  function rec(v, d){
+    const me = {id:id++, n:v, d:d, kids:[]};
+    nodes.push(me);
+    if (v > 1){ me.kids.push(rec(v - 1, d + 1)); me.kids.push(rec(v - 2, d + 1)); }
+    return me;
+  }
+  const root = rec(n, 0);
+  let slot = 0;
+  (function lay(t){
+    if (!t.kids.length) t.slot = slot++;
+    else { t.kids.forEach(lay); t.slot = (t.kids[0].slot + t.kids[t.kids.length - 1].slot) / 2; }
+  })(root);
+  return {root:root, nodes:nodes, leaves:slot};
+}
+const T5 = buildTree(5);
+const TX0 = .55, TX1 = 9.25, TSW = (TX1 - TX0) / T5.leaves;
+const TY0 = .80, TDY = 1.12, TR = .31;
+const nx = t => TX0 + (t.slot + .5) * TSW;
+const ny = t => TY0 + t.d * TDY;
+
+function treeShapes(st, extra){
+  const out = [];
+  T5.nodes.forEach(t => t.kids.forEach(k => {
+    const s = (st[k.id] === 'ghost') ? 'ghost' : 'soft';
+    out.push(S.e(nx(t), ny(t), nx(k), ny(k), {arrow:false, pad:TR, s:s}));
+  }));
+  T5.nodes.forEach(t => out.push(S.c(nx(t), ny(t), TR, st[t.id] || 'idle', 'f' + t.n, {fs:.32})));
+  return out.concat(extra || []);
+}
+
+function treeFrames(v){
+  const memoMode = (v === 1);
+  const F = new Frames();
+  const st = {}; T5.nodes.forEach(t => st[t.id] = 'idle');
+  const seen = {}; const memo = {};
+  let calls = 0, hits = 0;
+  const panels = () => [
+    {lbl:{zh:'實際呼叫次數', en:'calls actually made'}, chips:[chip(String(calls), calls ? 'hot' : 'dim')]},
+    {lbl:{zh:'子問題 f(n) 被算幾次', en:'times each f(n) is evaluated'},
+     chips:Object.keys(seen).sort((a, b) => a - b).map(k =>
+       chip('f' + k + ' x' + seen[k], seen[k] > 1 ? 'bad' : 'dim'))},
+    {lbl:{zh:'快取命中（整棵子樹省掉）', en:'cache hits (whole subtree skipped)'},
+     chips:[chip(String(hits), hits ? 'ok' : 'dim')]}
+  ];
+  function ghostSub(t){ t.kids.forEach(k => { st[k.id] = 'ghost'; ghostSub(k); }); }
+
+  F.push({shapes:treeShapes(st), view:VIEW, line:0, panels:panels(),
+    msg:{zh:'爬 n 階、一次一或兩階：f(n) = f(n-1) + f(n-2)。遞推式本身三秒就想得出來，問題全出在它「怎麼被執行」。',
+         en:'Climb n stairs one or two at a time and f(n) = f(n-1) + f(n-2). The recurrence takes three seconds to write; everything that goes wrong is about how it gets executed.'}});
+
+  function walk(t){
+    calls++;
+    if (memoMode && memo[t.n] !== undefined){
+      hits++; st[t.id] = 'ok'; ghostSub(t);
+      F.push({shapes:treeShapes(st), view:VIEW, line:2, panels:panels(),
+        msg:{zh:'f(' + t.n + ') 之前算過，查表直接回 ' + memo[t.n] + '。虛線那一整片子樹一次都不會展開 —— 這一行就是 O(2^n) 掉到 O(n) 的地方。',
+             en:'f(' + t.n + ') was computed already, so the memo hands back ' + memo[t.n] + ' immediately. The dashed subtree below is never expanded at all - this one line is the whole difference between O(2^n) and O(n).'}});
+      return memo[t.n];
+    }
+    seen[t.n] = (seen[t.n] || 0) + 1;
+    const dup = seen[t.n] > 1;
+    st[t.id] = dup ? 'bad' : 'act';
+    let msg;
+    if (t.n <= 1)
+      msg = {zh:'f(' + t.n + ') 是 base case，回 1。注意：葉子的數量就等於答案 —— 答案有多大，這棵樹就有多大，這是指數的來源。',
+             en:'f(' + t.n + ') is a base case and returns 1. Note what that means: the number of leaves *is* the answer, so the tree is as big as the number it computes. That is where the exponent comes from.'};
+    else if (dup)
+      msg = {zh:'f(' + t.n + ') 第 ' + seen[t.n] + ' 次被展開。參數一樣，答案一定一樣，底下整段都是重算。重疊子問題就是這個紅色。',
+             en:'f(' + t.n + ') is being expanded for the ' + seen[t.n] + 'th time. Same argument, so necessarily the same answer - everything below it is recomputation. The red nodes are exactly what "overlapping subproblems" means.'};
+    else
+      msg = {zh:'展開 f(' + t.n + ') = f(' + (t.n - 1) + ') + f(' + (t.n - 2) + ')：先往左走完，右邊才開始。',
+             en:'Expand f(' + t.n + ') = f(' + (t.n - 1) + ') + f(' + (t.n - 2) + '). The left branch runs to completion before the right one starts.'};
+    F.push({shapes:treeShapes(st), view:VIEW, line:(t.n <= 1 ? 4 : 5), panels:panels(), msg:msg});
+    let r;
+    if (t.n <= 1) r = 1;
+    else r = walk(t.kids[0]) + walk(t.kids[1]);
+    memo[t.n] = r;
+    if (st[t.id] === 'act') st[t.id] = 'done';
+    return r;
+  }
+  const ans = walk(T5.root);
+  T5.nodes.forEach(t => { if (st[t.id] === 'act') st[t.id] = 'done'; });
+  st[T5.root.id] = 'ok';
+  const tail = memoMode
+    ? {zh:'f(5) = ' + ans + '，只呼叫了 ' + calls + ' 次，其中 ' + hits + ' 次是查表。n = 30 時這個差距是 4,356,617 次對 59 次。',
+       en:'f(5) = ' + ans + ' after only ' + calls + ' calls, ' + hits + ' of which were cache hits. At n = 30 the same comparison reads 4,356,617 calls against 59.'}
+    : {zh:'f(5) = ' + ans + '，花了 ' + calls + ' 次呼叫，但不同的子問題只有 6 個。n = 30 時是 4,356,617 次對 31 個 —— 浪費 140,536 倍，而且 f(1) 被算了 832,040 次。',
+       en:'f(5) = ' + ans + ' took ' + calls + ' calls even though there are only 6 distinct subproblems. At n = 30 that is 4,356,617 calls against 31 subproblems - 140,536x of pure waste, with f(1) alone evaluated 832,040 times.'};
+  F.push({shapes:treeShapes(st, [S.t(4.9, 6.15,
+      memoMode ? {zh:'記住答案 → 每個子問題只算一次', en:'remember answers -> each subproblem runs once'}
+               : {zh:'同一個子問題一再重算 → 指數級', en:'the same subproblem, over and over -> exponential'},
+      {c:memoMode ? '#3fe0dd' : '#ff5c5c', fs:.34})]),
+    view:VIEW, line:8, panels:panels(), msg:tail});
+  return F.list;
+}
+
+/* ======================================================================== *
+ * Tab 2 - fold the tree into a one-dimensional table
+ * ======================================================================== */
+const CODE_TABLE = [
+  'def stairs_table(n):',
+  '    dp = [0] * (n + 1)',
+  '    dp[0] = dp[1] = 1',
+  '    for i in range(2, n + 1):',
+  '        dp[i] = dp[i - 1] + dp[i - 2]',
+  '    return dp[n]',
+  '',
+  'def stairs_rolling(n):',
+  '    a, b = 1, 1           # dp[i-2], dp[i-1]',
+  '    for _ in range(2, n + 1):',
+  '        a, b = b, a + b   # the window slides',
+  '    return b'
+];
+const TB_N = 10, TB_X0 = .75, TB_W = .80, TB_H = .82, TB_Y = 2.45;
+
+function tableFrames(v){
+  const rolling = (v === 1);
+  const F = new Frames();
+  const dp = new Array(TB_N + 1).fill(null);
+  dp[0] = 1; dp[1] = 1;
+  const draw = (st, extra) => cellRow(dp.map(x => x == null ? '' : x), TB_X0, TB_Y, TB_W, TB_H,
+      {states:st, title:'dp', ilift:.34}).concat(extra || []);
+  const pan = i => [
+    {lbl:{zh:'已填好的格子', en:'cells filled so far'},
+     chips:dp.filter(x => x != null).map((x, k) => chip('dp[' + k + ']=' + x, k === i ? 'hot' : 'dim'))},
+    {lbl:{zh:'真正需要記住的值', en:'values actually kept'},
+     chips:rolling ? [chip('a = ' + (dp[i - 2] == null ? 1 : dp[i - 2]), 'ok'),
+                      chip('b = ' + (dp[i - 1] == null ? 1 : dp[i - 1]), 'ok')]
+                   : [chip('the whole row, ' + (TB_N + 1) + ' cells', 'dim')]}
+  ];
+  F.push({shapes:draw({0:'ok', 1:'ok'}), view:VIEW, line:2, panels:pan(1),
+    msg:{zh:'把遞迴樹壓成一列：dp[i] = 爬到第 i 階的走法數。base case 先寫死 dp[0] = dp[1] = 1，其餘由左往右填。',
+         en:'Flatten the tree into a single row: dp[i] is the number of ways to reach step i. Hard-code the base cases dp[0] = dp[1] = 1 and fill left to right.'}});
+
+  for (let i = 2; i <= TB_N; i++){
+    dp[i] = dp[i - 1] + dp[i - 2];
+    const st = {};
+    for (let k = 0; k < i; k++) st[k] = rolling ? 'ghost' : 'done';
+    st[i - 1] = 'hot'; st[i - 2] = 'hot'; st[i] = 'act';
+    const extra = [S.t(4.9, 5.35,
+      'dp[' + i + '] = dp[' + (i - 1) + '] + dp[' + (i - 2) + '] = ' + dp[i - 1] + ' + ' + dp[i - 2] + ' = ' + dp[i],
+      {c:'#ffbe6b', fs:.40})];
+    if (rolling){
+      extra.push(S.r(3.30, 4.20, 1.10, .80, 'ok', String(dp[i - 2]), {fs:.40}));
+      extra.push(S.r(4.90, 4.20, 1.10, .80, 'ok', String(dp[i - 1]), {fs:.40}));
+      extra.push(S.t(3.85, 4.02, 'a', {c:'#3fe0dd', fs:.32}));
+      extra.push(S.t(5.45, 4.02, 'b', {c:'#3fe0dd', fs:.32}));
+      extra.push(S.t(4.90, 6.10, {zh:'虛線的格子從來沒被存起來 → O(1) 空間',
+                                  en:'the dashed cells are never stored -> O(1) space'}, {c:'#8fa3ac', fs:.34}));
+    }
+    F.push({shapes:draw(st, extra), view:VIEW, line:(rolling ? 10 : 4), panels:pan(i),
+      msg:{zh:'填 dp[' + i + ']：它只看左邊兩格，而且那兩格早就填好了 —— 這就是「順序」的全部意義。' +
+             (rolling ? '既然只看兩格，整張表其實不用留。' : ''),
+           en:'Fill dp[' + i + ']. It only reads the two cells to its left, and those were finished long ago - that is all "order" ever means here.' +
+             (rolling ? ' And since only two cells are ever read, the row need not be kept at all.' : '')}});
+  }
+  const stF = {}; for (let k = 0; k <= TB_N; k++) stF[k] = 'done';
+  stF[TB_N] = 'ok';
+  F.push({shapes:draw(stF, [S.t(4.9, 5.35, {zh:'10 階 → 89 種走法，就是費氏數列移一格',
+                                            en:'10 stairs -> 89 ways = Fibonacci shifted'}, {c:'#3fe0dd', fs:.38})]),
+    view:VIEW, line:(rolling ? 11 : 5), panels:pan(TB_N),
+    msg:{zh:'指數變成 O(n)。爬樓梯的骨架之後會一直出現：走法數、最小成本、能不能到 —— 換的只是格子裡放什麼、以及怎麼合併。',
+         en:'Exponential becomes O(n). This skeleton keeps coming back: number of ways, minimum cost, reachable or not. All that changes is what lives in a cell and how two cells combine.'}});
+  return F.list;
+}
+
+/* ======================================================================== *
+ * Tab 3 - coin change: min over coins, and why greedy is not allowed
+ * ======================================================================== */
+const CODE_COIN = [
+  'INF = float("inf")',
+  '',
+  'def coin_change_min(coins, amount):',
+  '    dp = [0] + [INF] * amount',
+  '    for a in range(1, amount + 1):',
+  '        for c in coins:',
+  '            if c <= a and dp[a - c] + 1 < dp[a]:',
+  '                dp[a] = dp[a - c] + 1',
+  '    return -1 if dp[amount] == INF else dp[amount]',
+  '',
+  '# greedy: always take the biggest coin that fits',
+  'while amount:',
+  '    c = max(x for x in coins if x <= amount)',
+  '    amount -= c      # nothing proves this is optimal'
+];
+const COINS = [1, 5, 6, 9], AMT = 11;
+const CO_X0 = .62, CO_W = .75, CO_H = .78, CO_Y = 2.55;
+
+function coinFrames(v){
+  const F = new Frames();
+  const INF = Infinity;
+  const dp = [0].concat(new Array(AMT).fill(INF));
+  const pick = new Array(AMT + 1).fill(null);
+  const shown = () => dp.map(x => x === INF ? 'inf' : String(x));
+  const draw = (st, extra) => cellRow(shown(), CO_X0, CO_Y, CO_W, CO_H,
+      {states:st, title:'dp', ilift:.34, fs:.34}).concat(
+      [S.t(4.9, 1.30, 'coins = [1, 5, 6, 9]   amount = 11', {c:'#3fe0dd', fs:.38})]).concat(extra || []);
+
+  if (v === 0){
+    F.push({shapes:draw({0:'ok'}), view:VIEW, line:3, panels:[
+        {lbl:{zh:'dp[a] = 湊出 a 的最少硬幣數', en:'dp[a] = fewest coins summing to a'}, chips:[chip('dp[0] = 0', 'ok')]}],
+      msg:{zh:'同一張表，格子改放「最少硬幣數」，合併從 + 換成 min。dp[0] = 0 不是邊界技巧，它是事實：湊 0 元要零個硬幣。',
+           en:'Same table, but a cell now holds the fewest coins for that amount and the combine step is min instead of plus. dp[0] = 0 is not a boundary hack, it is a fact: zero coins make zero.'}});
+    for (let a = 1; a <= AMT; a++){
+      const cands = [];
+      for (const c of COINS) if (c <= a && dp[a - c] + 1 < dp[a]){ dp[a] = dp[a - c] + 1; pick[a] = c; }
+      for (const c of COINS) if (c <= a) cands.push(c);
+      const st = {}; for (let k = 0; k < a; k++) st[k] = 'done';
+      cands.forEach(c => st[a - c] = 'hot');
+      st[a] = 'act';
+      const expr = cands.map(c => 'dp[' + (a - c) + ']').join(', ');
+      F.push({shapes:draw(st, [S.t(4.9, 5.45, 'dp[' + a + '] = 1 + min(' + expr + ') = ' + (dp[a] === INF ? 'inf' : dp[a]),
+              {c:'#ffbe6b', fs:.36})]),
+        view:VIEW, line:7, panels:[
+          {lbl:{zh:'可以當「最後一枚」的硬幣', en:'coins allowed as the last one'}, chips:cands.map(c => chip(String(c), 'hot'))},
+          {lbl:{zh:'它們各自留下的小問題', en:'the subproblem each one leaves'},
+           chips:cands.map(c => chip('dp[' + (a - c) + '] = ' + (dp[a - c] === INF ? 'inf' : dp[a - c]), 'dim'))},
+          {lbl:{zh:'選到的硬幣', en:'coin chosen'}, chips:[chip(pick[a] == null ? '-' : String(pick[a]), 'ok')]}],
+        msg:{zh:'算 dp[' + a + ']：只問一件事 —— 最後那一枚是什麼？枚舉每一種可能，剩下的 ' + a + ' 減 c 元早就算好了，直接查表。',
+             en:'To fill dp[' + a + '] ask exactly one question: what was the last coin? Try every candidate; whatever is left, ' + a + ' - c, was solved earlier, so just read it off.'}});
+    }
+    let a = AMT; const used = []; const stT = {};
+    for (let k = 0; k <= AMT; k++) stT[k] = 'done';
+    while (a > 0){
+      stT[a] = 'ok'; used.push(pick[a]); a -= pick[a];
+      const stNow = {}; Object.keys(stT).forEach(k => stNow[k] = stT[k]); stNow[a] = 'hot';
+      F.push({shapes:draw(stNow,
+          [S.t(4.9, 5.45, {zh:'沿著 pick 回頭走，就把「最佳解長什麼樣」還原出來',
+                           en:'walk back along pick to rebuild the answer'}, {c:'#3fe0dd', fs:.36})]),
+        view:VIEW, line:7, panels:[{lbl:{zh:'重建出的硬幣', en:'coins reconstructed'}, chips:used.map(c => chip(String(c), 'ok'))}],
+        msg:{zh:'dp 只存了「幾枚」，但每格順手記下選了哪一枚，就能倒著走回 0，把 ' + used.join(' + ') + ' 讀出來。',
+             en:'The table stores only counts, but if each cell also remembers which coin it chose, walking backwards to 0 spells out the actual answer: ' + used.join(' + ') + '.'}});
+    }
+    stT[0] = 'ok';
+    F.push({shapes:draw(stT, [S.t(4.9, 5.45, {zh:'11 = 6 + 5，兩枚', en:'11 = 6 + 5, two coins'}, {c:'#3fe0dd', fs:.40})]),
+      view:VIEW, line:8, panels:[{lbl:{zh:'答案', en:'answer'}, chips:[chip('2 coins: 6 + 5', 'ok')]}],
+      msg:{zh:'答案是 2 枚。注意 coins = [5, 7]、amount = 3 時 dp[3] 會停在無限大 —— 那不是 bug，是「湊不出來」的正確表示法，函式回 -1。',
+           en:'The answer is two coins. Note that with coins [5, 7] and amount 3 the cell stays at infinity - not a bug but the correct spelling of "impossible", which the function reports as -1.'}});
+  } else {
+    for (let a = 1; a <= AMT; a++)
+      for (const c of COINS) if (c <= a && dp[a - c] + 1 < dp[a]){ dp[a] = dp[a - c] + 1; pick[a] = c; }
+    let rem = AMT; const taken = [];
+    F.push({shapes:[S.t(4.9, 1.30, 'coins = [1, 5, 6, 9]   amount = 11', {c:'#3fe0dd', fs:.38}),
+        S.t(4.9, 3.20, {zh:'每次拿裝得下的最大面額', en:'take the largest coin that fits'}, {c:'#8fa3ac', fs:.40})],
+      view:VIEW, line:11, panels:[
+        {lbl:{zh:'還要湊', en:'still to make'}, chips:[chip(String(rem), 'hot')]}],
+      msg:{zh:'直覺的做法是每次拿裝得下的最大面額。這在台幣、美金上剛好都對，所以很多人以為它總是對的。',
+           en:'The instinctive method is to take the largest coin that fits. It happens to be correct for real US and Taiwanese coins, which is why so many people assume it is always correct.'}});
+    while (rem > 0){
+      let c = 0; COINS.forEach(x => { if (x <= rem) c = Math.max(c, x); });
+      taken.push(c); rem -= c;
+      const boxes = taken.map((t, i) => S.r(1.05 + i * 1.75, 2.60, 1.45, 1.00, 'bad', String(t), {fs:.50}));
+      F.push({shapes:boxes.concat([
+          S.t(4.9, 1.30, 'coins = [1, 5, 6, 9]   amount = 11', {c:'#3fe0dd', fs:.38}),
+          S.t(4.9, 4.60, {zh:'還剩 ' + rem + ' 元要湊', en:rem + ' left to make'}, {c:'#ff9a9a', fs:.38})]),
+        view:VIEW, line:12, panels:[
+          {lbl:{zh:'貪心拿到的硬幣', en:'coins taken greedily'}, chips:taken.map(t => chip(String(t), 'bad'))},
+          {lbl:{zh:'還要湊', en:'still to make'}, chips:[chip(String(rem), rem ? 'hot' : 'dim')]}],
+        msg:{zh:'拿 ' + c + '，剩下 ' + rem + '。每一步都「當下最划算」，但沒有任何東西保證這串選擇合起來還是最好的。',
+             en:'Take ' + c + ' and ' + rem + ' is left. Every step is locally the best buy, yet nothing guarantees that a sequence of locally best buys is globally best.'}});
+    }
+    F.push({shapes:[
+        S.r(1.05, 2.60, 1.45, 1.00, 'bad', '9', {fs:.50}),
+        S.r(2.80, 2.60, 1.45, 1.00, 'bad', '1', {fs:.50}),
+        S.r(4.55, 2.60, 1.45, 1.00, 'bad', '1', {fs:.50}),
+        S.t(7.30, 3.15, {zh:'貪心：3 枚', en:'greedy: 3 coins'}, {c:'#ff9a9a', fs:.40}),
+        S.r(1.05, 4.30, 1.45, 1.00, 'ok', '6', {fs:.50}),
+        S.r(2.80, 4.30, 1.45, 1.00, 'ok', '5', {fs:.50}),
+        S.t(7.30, 4.85, {zh:'DP：2 枚', en:'DP: 2 coins'}, {c:'#3fe0dd', fs:.40}),
+        S.t(4.9, 1.30, 'coins = [1, 5, 6, 9]   amount = 11', {c:'#3fe0dd', fs:.38})],
+      view:VIEW, line:13, panels:[
+        {lbl:{zh:'貪心', en:'greedy'}, chips:[chip('9 + 1 + 1 = 3 coins', 'bad')]},
+        {lbl:{zh:'DP', en:'DP'}, chips:[chip('6 + 5 = 2 coins', 'ok')]}],
+      msg:{zh:'差別在於 9 把 11 切成 9 + 2，而 2 只能用兩個 1 補；放棄眼前最大的 9 改拿 6，反而剛好留下一個 5。貪心在這裡多了 50%，而且不會報錯。',
+           en:'Taking 9 splits 11 into 9 + 2, and 2 can only be paid with two ones. Refusing the biggest coin and taking 6 leaves exactly a 5. Greedy is 50% worse here - and it raises no error while being wrong.'}});
+  }
+  return F.list;
+}
+
+/* ======================================================================== *
+ * Tab 4 - the silent failure: combinations vs permutations
+ * ======================================================================== */
+const CODE_ORDER = [
+  '# LC 518 - combinations, order does NOT matter',
+  'dp = [1] + [0] * amount',
+  'for c in coins:                 # coin loop OUTSIDE',
+  '    for a in range(c, amount + 1):',
+  '        dp[a] += dp[a - c]',
+  '',
+  '# LC 377 - permutations, order DOES matter',
+  'dp = [1] + [0] * amount',
+  'for a in range(1, amount + 1):  # amount loop OUTSIDE',
+  '    for c in coins:',
+  '        if c <= a:',
+  '            dp[a] += dp[a - c]'
+];
+const OC = [1, 2, 5], OA = 5;
+const OR_X0 = 2.30, OR_W = .90, OR_H = .90, OR_Y = 2.85;
+
+function enumComb(coins, amount){
+  const out = [];
+  (function rec(i, rem, cur){
+    if (rem === 0){ out.push(cur.slice()); return; }
+    if (i >= coins.length) return;
+    rec(i + 1, rem, cur);
+    if (coins[i] <= rem){ cur.push(coins[i]); rec(i, rem - coins[i], cur); cur.pop(); }
+  })(0, amount, []);
+  return out;
+}
+function enumPerm(coins, amount){
+  const out = [];
+  (function rec(rem, cur){
+    if (rem === 0){ out.push(cur.slice()); return; }
+    coins.forEach(c => { if (c <= rem){ cur.push(c); rec(rem - c, cur); cur.pop(); } });
+  })(amount, []);
+  return out;
+}
+
+function orderFrames(v){
+  const perm = (v === 1);
+  const F = new Frames();
+  const dp = [1].concat(new Array(OA).fill(0));
+  const coinBoxes = cur => OC.map((c, i) =>
+    S.r(3.35 + i * 1.15, 1.05, .95, .70, c === cur ? 'hot' : 'soft', String(c), {fs:.40}));
+  const draw = (st, cur, extra) =>
+    cellRow(dp.map(String), OR_X0, OR_Y, OR_W, OR_H, {states:st, title:'dp', ilift:.34, fs:.42})
+      .concat(coinBoxes(cur))
+      .concat([S.t(4.90, .80, perm ? {zh:'外層跑金額，內層跑硬幣', en:'amount outside, coin inside'}
+                                   : {zh:'外層跑硬幣，內層跑金額', en:'coin outside, amount inside'},
+                   {c:'#c7a6ff', fs:.34})])
+      .concat(extra || []);
+  const pan = (cur, a) => [
+    {lbl:{zh:'外層迴圈變數', en:'outer loop variable'},
+     chips:[chip(perm ? 'a = ' + (a == null ? '-' : a) : 'c = ' + (cur == null ? '-' : cur), 'act')]},
+    {lbl:{zh:'dp 目前的樣子', en:'dp right now'}, chips:dp.map((x, k) => chip('dp[' + k + ']=' + x, k === a ? 'hot' : 'dim'))}
+  ];
+
+  F.push({shapes:draw({0:'ok'}, null), view:VIEW, line:1, panels:pan(null, null),
+    msg:perm
+      ? {zh:'同樣的 dp[a] += dp[a-c]，這次把金額放外層。dp[0] = 1 的意思是「什麼都不拿」也算一種湊法。',
+         en:'The same dp[a] += dp[a-c] update, but this time the amount loop is on the outside. dp[0] = 1 says that taking nothing is itself one way to make zero.'}
+      : {zh:'從 dp[0] = 1 開始，每次做的事都只有一行：dp[a] += dp[a-c]。整個 tab 只有一個問題 —— 這一行被跑的順序。',
+         en:'Start from dp[0] = 1 and do one thing repeatedly: dp[a] += dp[a-c]. This whole tab is about one question - the order in which that line runs.'}});
+
+  if (!perm){
+    OC.forEach(c => {
+      F.push({shapes:draw({0:'ok'}, c), view:VIEW, line:2, panels:pan(c, null),
+        msg:{zh:'換到硬幣 ' + c + '。關鍵在這裡：硬幣 ' + c + ' 只會在這一輪被「提供」一次，之後再也不會回頭 —— 所以硬幣的使用順序被鎖死，1 永遠排在 2 前面。',
+             en:'Switch to coin ' + c + '. This is the crux: coin ' + c + ' is offered exactly once, in this pass, and is never revisited - so the order in which coins may be used is frozen, 1 always before 2.'}});
+      for (let a = c; a <= OA; a++){
+        const before = dp[a];
+        dp[a] += dp[a - c];
+        const st = {0:'ok'}; st[a] = 'act'; st[a - c] = 'hot';
+        F.push({shapes:draw(st, c, [S.t(4.90, 5.30, 'dp[' + a + '] += dp[' + (a - c) + ']   ' + before + ' + ' + dp[a - c] + ' = ' + dp[a],
+                {c:'#ffbe6b', fs:.38})]),
+          view:VIEW, line:4, panels:pan(c, a),
+          msg:{zh:'用硬幣 ' + c + ' 更新 dp[' + a + ']：把「湊 ' + (a - c) + ' 的每一種方法」各加一枚 ' + c + '。因為只有前面幾種硬幣被開放過，同一個組合不會用不同順序再被數一次。',
+               en:'Update dp[' + a + '] with coin ' + c + ': take every way of making ' + (a - c) + ' and add one ' + c + ' to it. Only the coins released so far are available, so the same multiset can never be recounted in a different order.'}});
+      }
+    });
+  } else {
+    for (let a = 1; a <= OA; a++){
+      const stA = {0:'ok'}; stA[a] = 'act';
+      F.push({shapes:draw(stA, null), view:VIEW, line:8, panels:pan(null, a),
+        msg:{zh:'換到金額 ' + a + '。這一輪三種硬幣都會被試 —— 也就是每一枚硬幣都有機會當「最後一枚」，而 1+2 和 2+1 的最後一枚不同，會各算一次。',
+             en:'Switch to amount ' + a + '. All three coins get tried in this pass, which means every coin gets a turn at being the *last* one - and since 1+2 and 2+1 end differently, both are counted.'}});
+      for (const c of OC){
+        if (c > a) continue;
+        const before = dp[a];
+        dp[a] += dp[a - c];
+        const st = {0:'ok'}; st[a] = 'act'; st[a - c] = 'hot';
+        F.push({shapes:draw(st, c, [S.t(4.90, 5.30, 'dp[' + a + '] += dp[' + (a - c) + ']   ' + before + ' + ' + dp[a - c] + ' = ' + dp[a],
+                {c:'#ffbe6b', fs:.38})]),
+          view:VIEW, line:11, panels:pan(c, a),
+          msg:{zh:'把 ' + c + ' 當成湊 ' + a + ' 的最後一枚：前面 ' + (a - c) + ' 元的每一種「序列」後面接上 ' + c + '，都是一個新序列。',
+               en:'Let ' + c + ' be the final coin used to reach ' + a + ': every *sequence* making ' + (a - c) + ' becomes a new sequence once ' + c + ' is appended to it.'}});
+      }
+    }
+  }
+  const stF = {}; for (let k = 0; k <= OA; k++) stF[k] = 'done';
+  stF[OA] = 'ok';
+  const lists = perm ? enumPerm(OC, OA) : enumComb(OC, OA);
+  F.push({shapes:draw(stF, null, [S.t(4.90, 5.30,
+      perm ? {zh:'dp[5] = 9 種「序列」', en:'dp[5] = 9 sequences'}
+           : {zh:'dp[5] = 4 種「組合」', en:'dp[5] = 4 multisets'}, {c:'#3fe0dd', fs:.42}),
+      S.t(4.90, 6.05, {zh:'兩個迴圈交換位置，程式不會報錯，只是回答了另一個問題',
+                       en:'swap the loops: no error, a different question'},
+          {c:'#ff9a9a', fs:.32})]),
+    view:VIEW, line:(perm ? 8 : 2), panels:[
+      {lbl:perm ? {zh:'列出來的 9 種序列', en:'the 9 sequences, enumerated'} : {zh:'列出來的 4 種組合', en:'the 4 multisets, enumerated'},
+       chips:lists.map(l => chip(l.join('+'), 'ok'))},
+      {lbl:{zh:'另一種寫法會得到', en:'the other loop order gives'},
+       chips:[chip(perm ? '4' : '9', 'bad')]}],
+    msg:perm
+      ? {zh:'9 —— 因為 1+1+1+2、1+1+2+1、1+2+1+1、2+1+1+1 被算成四種。LC 377 名字叫 Combination Sum IV，要的卻是排列；金額 30 時兩者是 58 對 5,508,222。',
+         en:'Nine, because 1+1+1+2, 1+1+2+1, 1+2+1+1 and 2+1+1+1 all count separately. LC 377 is called Combination Sum IV yet asks for permutations; at amount 30 the two answers are 58 and 5,508,222.'}
+      : {zh:'4 —— 1+1+1+1+1、1+1+1+2、1+2+2、5。這是 LC 518 要的答案。把兩個 for 交換，它會變成 9，而且沒有任何錯誤訊息。',
+         en:'Four: 1+1+1+1+1, 1+1+1+2, 1+2+2 and 5. That is what LC 518 asks for. Swap the two for-loops and it silently becomes 9, with no error message anywhere.'}});
+  return F.list;
+}
+
+/* ======================================================================== *
+ * Tab 5 - the same table, combined with `or`: word break (Day 08)
+ * ======================================================================== */
+const CODE_WB = [
+  'def word_break(s, words):',
+  '    wordset = set(words)',
+  '    dp = [True] + [False] * len(s)',
+  '    for i in range(1, len(s) + 1):',
+  '        for j in range(i):',
+  '            if dp[j] and s[j:i] in wordset:',
+  '                dp[i] = True      # `or`  - can we?',
+  '                break',
+  '    return dp[len(s)]',
+  '',
+  '# dp = [1] + [0] * len(s)',
+  '#     dp[i] += dp[j]     # `+`   - how many ways?',
+  '#     dp[i] = min(...)   # `min` - fewest words?'
+];
+const WB_CASES = [
+  {s:'applepenapple', words:['apple', 'pen'], count:false},
+  {s:'applepenapple', words:['apple', 'pen'], count:true},
+  {s:'catsandog', words:['cats', 'dog', 'sand', 'and', 'cat'], count:false}
+];
+
+function wbFrames(v){
+  const cs = WB_CASES[v], s = cs.s, ws = cs.words, count = cs.count;
+  const F = new Frames();
+  const n = s.length;
+  const W = Math.min(.66, 9.10 / (n + 1)), X0 = (9.80 - (n + 1) * W) / 2, H = .64, Y = 3.20;
+  const dp = count ? [1].concat(new Array(n).fill(0)) : [true].concat(new Array(n).fill(false));
+  const truthy = k => count ? dp[k] > 0 : dp[k];
+  const chars = hi => {
+    const out = [];
+    for (let i = 0; i < n; i++)
+      out.push(S.r(X0 + i * W + W / 2, 2.05, W - .06, .62,
+        (hi && i >= hi[0] && i < hi[1]) ? 'hot' : 'soft', s[i], {fs:.34}));
+    return out;
+  };
+  const draw = (st, hi, extra) =>
+    cellRow(dp.map(x => count ? String(x) : (x ? 'T' : 'F')), X0, Y, W, H,
+      {states:st, ilift:.30, fs:.34, ifs:.26})
+    .concat(chars(hi))
+    .concat([S.t(4.90, 1.35, 'words = [' + ws.map(w => '"' + w + '"').join(', ') + ']', {c:'#3fe0dd', fs:.34})])
+    .concat(extra || []);
+
+  F.push({shapes:draw({0:'ok'}, null), view:VIEW, line:2, panels:[
+      {lbl:{zh:'dp[i] = s[:i] 切得開嗎', en:'dp[i] = can s[:i] be segmented'},
+       chips:[chip(count ? 'dp[0] = 1' : 'dp[0] = True', 'ok')]}],
+    msg:{zh:'Day 08 的 word break 就是同一張表：格子排在字串的「切點」上，dp[i] 問前 i 個字元切不切得開。dp[0] 為真，因為空字串本來就切得開。',
+         en:'The word break from Day 08 is this same table: the cells sit at the cut points of the string and dp[i] asks whether the first i characters can be split. dp[0] is true because the empty prefix trivially splits.'}});
+
+  for (let i = 1; i <= n; i++){
+    let hi = null; const matched = [];
+    for (let j = 0; j < i; j++){
+      if (truthy(j) && ws.indexOf(s.slice(j, i)) >= 0){
+        matched.push({j:j, w:s.slice(j, i)});
+        if (count) dp[i] += dp[j];
+        else { dp[i] = true; hi = [j, i]; break; }
+      }
+    }
+    if (count && matched.length) hi = [matched[0].j, i];
+    const st = {}; for (let k = 0; k < i; k++) st[k] = truthy(k) ? 'ok' : 'done';
+    matched.forEach(m => st[m.j] = 'hot');
+    st[i] = truthy(i) ? 'act' : 'bad';
+    const extra = [S.t(4.90, 5.10, matched.length
+        ? 'dp[' + i + '] <- dp[' + matched[0].j + '] + "' + matched[0].w + '"'
+        : {zh:'沒有任何切點成立 → dp[' + i + '] 留 ' + (count ? '0' : 'False'),
+           en:'no cut point works -> dp[' + i + '] stays ' + (count ? '0' : 'False')},
+      {c:matched.length ? '#ffbe6b' : '#ff9a9a', fs:.38})];
+    F.push({shapes:draw(st, hi, extra), view:VIEW, line:(matched.length ? 6 : 5), panels:[
+        {lbl:{zh:'成立的切點 j', en:'cut points j that work'},
+         chips:matched.map(m => chip('j=' + m.j + ' "' + m.w + '"', 'hot'))},
+        {lbl:{zh:'dp', en:'dp'}, chips:dp.map((x, k) => chip(String(count ? x : (x ? 'T' : 'F')), k === i ? 'act' : 'dim'))}],
+      msg:matched.length
+        ? {zh:'i = ' + i + '：找一個切點 j，要求前面 j 個字元切得開、而且 s[j:i] 是字典裡的字。找到 j = ' + matched[0].j + '，s[' + matched[0].j + ':' + i + '] = "' + matched[0].w + '"。',
+           en:'i = ' + i + ': look for a cut point j where the prefix of length j already splits and s[j:i] is a dictionary word. Found j = ' + matched[0].j + ' with s[' + matched[0].j + ':' + i + '] = "' + matched[0].w + '".'}
+        : {zh:'i = ' + i + '：每個 j 都試過了，沒有一個同時滿足兩個條件，所以這個前綴切不開。失敗也是要被記下來的答案。',
+           en:'i = ' + i + ': every j has been tried and none satisfies both conditions, so this prefix cannot be split. A failure is an answer too, and it has to be written down.'}});
+  }
+  const stF = {}; for (let k = 0; k <= n; k++) stF[k] = truthy(k) ? 'ok' : 'done';
+  const okEnd = truthy(n);
+  stF[n] = okEnd ? 'ok' : 'bad';
+  F.push({shapes:draw(stF, null, [S.t(4.90, 5.10,
+      count ? {zh:'dp[13] = 1 → 只有一種切法：apple | pen | apple', en:'dp[13] = 1 - one way: apple | pen | apple'}
+            : (okEnd ? {zh:'dp[13] = True → apple | pen | apple', en:'dp[13] = True -> apple | pen | apple'}
+                     : {zh:'dp[9] = False → 這串字切不開', en:'dp[9] = False -> this string cannot be split'}),
+      {c:okEnd ? '#3fe0dd' : '#ff5c5c', fs:.38}),
+      S.t(4.90, 5.90, count ? {zh:'把 or 換成 +，同一張表就從「能不能」變成「有幾種」',
+                               en:'swap `or` for `+`: same table, now it counts'}
+                            : {zh:'+ 算方法數、min 求最佳、or 判可行 —— 三題一張表',
+                               en:'`+` counts, `min` optimises, `or` decides'},
+      {c:'#8fa3ac', fs:.32})]),
+    view:VIEW, line:8, panels:[
+      {lbl:{zh:'答案', en:'answer'}, chips:[chip(count ? String(dp[n]) : String(okEnd), okEnd ? 'ok' : 'bad')]}],
+    msg:okEnd
+      ? (count
+        ? {zh:'1 種。合併步驟從 or 換成 + 就從判定題變成計數題，程式其他地方一個字都沒改 —— 這是今天真正要記住的東西。',
+           en:'One. Changing the combine step from `or` to `+` turns a decision problem into a counting problem without touching another character of the code - that is the thing worth remembering today.'}
+        : {zh:'True。注意那個 break：判定題找到一個切點就夠了；但要算方法數就不能 break，否則會漏算。',
+           en:'True. Note the break: for a decision one working cut point is enough. For a count you must not break, or you will miss segmentations.'})
+      : {zh:'False。"cat"、"cats"、"sand"、"and" 沿路都對得上，最後卻卡在 "og"。貪心地「看到字就切」會在這裡選錯；DP 之所以對，是因為它把每個切點都記了下來。',
+         en:'False. "cat", "cats", "sand" and "and" all match along the way, yet the string dies on "og". A greedy "cut as soon as a word matches" scanner picks wrong here; the DP is correct precisely because it records every cut point.'}});
+  return F.list;
+}
+
+/* ======================================================================== */
+const DAY_META = {
+  title:{zh:'Day 33 — 動態規劃入門：爬樓梯與硬幣找零',
+         en:'Dynamic programming from scratch - climbing stairs and coin change'},
+  sub:{zh:'把重複展開的遞迴樹折成只填一次的表格；遞推式是簡單的一半，填表的順序才是會咬人的那一半。',
+       en:'Fold a re-expanding recursion tree into a table that fills each cell once. The recurrence is the easy half; the order you fill it in is the half that bites.'},
+  tabs:[
+    {
+      id:'tree', label:{zh:'遞迴樹', en:'recursion tree'},
+      stage:{zh:'f(5) 的遞迴樹：同一個子問題被算了幾次',
+             en:'the recursion tree of f(5): how often each subproblem is recomputed'},
+      view:VIEW,
+      variants:[{zh:'原始遞迴', en:'plain recursion'}, {zh:'加上記憶表', en:'with a memo'}],
+      idea:{zh:'爬樓梯的遞推式 f(n) = f(n-1) + f(n-2) 本身沒有問題，問題是照字面遞迴下去，樹的葉子數量剛好等於答案本身 —— 答案是指數的，執行時間也是。紅色節點是被重算的子問題：參數一樣、答案一定一樣。記憶表做的事只有一件，就是讓每個參數只展開一次。',
+            en:'There is nothing wrong with the recurrence f(n) = f(n-1) + f(n-2); what is wrong is executing it literally. The number of leaves in the tree equals the answer itself, so an exponential answer costs exponential time. The red nodes are recomputed subproblems - same argument, necessarily the same result. A memo does exactly one thing: it lets each argument be expanded once.'},
+      legend:[['#ff5c5c', {zh:'重複的子問題', en:'repeated subproblem'}],
+              ['#9d6bff', {zh:'正在展開', en:'being expanded'}],
+              ['#3fe0dd', {zh:'查表命中 / 結果', en:'cache hit / result'}],
+              ['#2f5661', {zh:'虛線：完全沒展開', en:'dashed: never expanded'}]],
+      code:CODE_TREE, build:treeFrames
+    },
+    {
+      id:'table', label:{zh:'填表', en:'filling a table'},
+      stage:{zh:'同一件事由左往右填一次：O(2^n) 變成 O(n)',
+             en:'the same computation, filled left to right exactly once: O(2^n) becomes O(n)'},
+      view:VIEW,
+      variants:[{zh:'整張表 O(n) 空間', en:'full table, O(n) space'}, {zh:'滾動兩個變數 O(1)', en:'rolling window, O(1)'}],
+      idea:{zh:'把遞迴樹攤平成一列格子，由小到大填。之所以能這樣填，是因為 dp[i] 只依賴比它小的 index —— 依賴關係決定填表順序，這句話是整個 DP 唯一需要記住的規則。既然每格只看左邊兩格，整張表其實也不用留，兩個變數就夠。',
+            en:'Flatten the tree into a row of cells and fill from small to large. That works because dp[i] depends only on smaller indices - dependencies dictate the fill order, and that single sentence is the only rule DP really has. And since each cell reads just the two before it, the row need not be kept at all; two variables suffice.'},
+      legend:[['#ff9736', {zh:'這一格依賴的兩格', en:'the two cells it depends on'}],
+              ['#9d6bff', {zh:'正在填的格子', en:'the cell being filled'}],
+              ['#2f5661', {zh:'已填好 / 不再需要', en:'filled / no longer needed'}],
+              ['#3fe0dd', {zh:'答案', en:'the answer'}]],
+      code:CODE_TABLE, build:tableFrames
+    },
+    {
+      id:'coin', label:{zh:'硬幣找零', en:'coin change'},
+      stage:{zh:'LC 322：湊 11 元最少幾枚，以及貪心為什麼不能用',
+             en:'LC 322: fewest coins for 11, and why greedy is not allowed'},
+      view:VIEW,
+      variants:[{zh:'DP 填表 + 重建解', en:'DP + reconstruction'}, {zh:'貪心（錯的）', en:'greedy (wrong)'}],
+      idea:{zh:'格子從「走法數」換成「最少硬幣數」，合併從 + 換成 min，骨架完全沒動。填 dp[a] 時只問一個問題：最後一枚是什麼？剩下的 a-c 早就算好。coins = [1,5,6,9] 是經典反例：貪心先拿 9，只能湊成 9+1+1 三枚，DP 給的是 6+5 兩枚。',
+            en:'A cell now holds the fewest coins instead of a count of ways and the combine step becomes min instead of plus - the skeleton is untouched. Filling dp[a] asks one question: what was the last coin? Whatever remains, a-c, is already solved. The coin set [1,5,6,9] is the classic counterexample: greedy grabs 9 and needs 9+1+1, while the DP finds 6+5.'},
+      legend:[['#ff9736', {zh:'候選的前一格 dp[a-c]', en:'candidate predecessor dp[a-c]'}],
+              ['#9d6bff', {zh:'正在填的金額', en:'amount being filled'}],
+              ['#3fe0dd', {zh:'最佳解的路徑', en:'the optimal path'}],
+              ['#ff5c5c', {zh:'貪心選的硬幣', en:'coin chosen by greedy'}]],
+      code:CODE_COIN, build:coinFrames
+    },
+    {
+      id:'order', label:{zh:'組合 vs 排列', en:'combinations vs permutations'},
+      stage:{zh:'同一行更新、兩種迴圈順序：答案是 4 還是 9？',
+             en:'one update line, two loop orders: is the answer 4 or 9?'},
+      view:VIEW,
+      variants:[{zh:'硬幣在外（LC 518）', en:'coin outside (LC 518)'}, {zh:'金額在外（LC 377）', en:'amount outside (LC 377)'}],
+      idea:{zh:'這是今天最該記住的失敗案例。dp[a] += dp[a-c] 一個字都沒改，只是把兩個 for 交換位置：硬幣在外層時每種硬幣只被開放一次，順序被鎖死，算出來的是組合；金額在外層時每一枚硬幣都有機會當最後一枚，1+2 和 2+1 各算一次，算出來的是排列。程式不會報錯，它只是回答了另一個問題 —— 而爬樓梯正好就是 coins = {1,2} 的排列版硬幣找零。',
+            en:'This is the failure worth memorising. Not a character of dp[a] += dp[a-c] changes; only the two for-loops swap places. With the coin loop outside, each coin is released exactly once and the order is frozen, so you count multisets. With the amount loop outside, every coin gets a turn at being the last one, so 1+2 and 2+1 are counted separately and you get permutations. Nothing errors - the program simply answers a different question. And climbing stairs is precisely the permutation version of coin change with coins {1, 2}.'},
+      legend:[['#ff9736', {zh:'讀到的 dp[a-c]', en:'the dp[a-c] being read'}],
+              ['#9d6bff', {zh:'正在更新的 dp[a]', en:'the dp[a] being updated'}],
+              ['#3fe0dd', {zh:'最後的答案', en:'the final answer'}],
+              ['#ff5c5c', {zh:'另一種順序給的數字', en:'what the other order returns'}]],
+      code:CODE_ORDER, build:orderFrames
+    },
+    {
+      id:'wb', label:{zh:'LC 139 word break', en:'LC 139 word break'},
+      stage:{zh:'同一張表，合併換成 or 或 +：能不能切、有幾種切法',
+             en:'the same table with `or` or `+`: can it be split, and in how many ways'},
+      view:VIEW,
+      variants:[{zh:'能不能切（or）', en:'can it split (or)'},
+                {zh:'有幾種切法（+）', en:'how many ways (+)'},
+                {zh:'catsandog（切不開）', en:'catsandog (fails)'}],
+      idea:{zh:'Day 08 的 word break 換個角度看就是今天的表：格子排在字串的切點上，dp[i] 問前 i 個字元能不能切開，轉移是「找一個 j 讓 dp[j] 為真且 s[j:i] 在字典裡」。把 or 換成 +，同一張表就回答「有幾種切法」；換成 min，就是「最少切成幾個字」。三題一張表，差別只在格子裡放什麼、以及兩格怎麼合併。',
+            en:'Seen from today\'s angle, the word break from Day 08 is this same table: cells sit at the cut points of the string, dp[i] asks whether the first i characters split, and the transition looks for a j where dp[j] holds and s[j:i] is a word. Replace `or` with `+` and the identical table counts segmentations; replace it with `min` and it returns the fewest words. Three problems, one table - only the contents of a cell and the way two cells combine ever change.'},
+      legend:[['#ff9736', {zh:'成立的切點 / 對到的字', en:'the cut point / matched word'}],
+              ['#9d6bff', {zh:'正在算的 dp[i]', en:'the dp[i] being computed'}],
+              ['#3fe0dd', {zh:'可以切開', en:'splits successfully'}],
+              ['#ff5c5c', {zh:'切不開', en:'cannot be split'}]],
+      code:CODE_WB, build:wbFrames
+    }
+  ]
+};
+
+</script>
+<script>
+/* =========================================================================
+   100 Days of Python - shared demo engine
+   palette: teal/blue-green base, purple pointers, orange "current step"
+   ========================================================================= */
+const T = {
+  title:{zh:DAY_META.title.zh, en:DAY_META.title.en},
+  sub:{zh:DAY_META.sub.zh, en:DAY_META.sub.en},
+  play:{zh:'▶ 播放', en:'▶ Play'}, pause:{zh:'❚❚ 暫停', en:'❚❚ Pause'},
+  speed:{zh:'速度', en:'Speed'}, state:{zh:'演算法狀態', en:'Algorithm state'},
+  code:{zh:'程式碼', en:'Code'}, idea:{zh:'重點', en:'The idea'}
+};
+let LANG = 'zh';
+const tr = o => (o == null ? '' : (typeof o === 'string' ? o : (o[LANG] != null ? o[LANG] : o.en)));
+const $ = id => document.getElementById(id);
+
+function setLang(l){
+  LANG = l;
+  document.documentElement.lang = l === 'zh' ? 'zh-Hant' : 'en';
+  $('btn-zh').classList.toggle('on', l === 'zh');
+  $('btn-en').classList.toggle('on', l === 'en');
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.getAttribute('data-i18n');
+    if (T[k]) el.textContent = tr(T[k]);
+  });
+  buildTabs(); render();
+}
+
+/* --------------------------------------------------------------- palette */
+const STY = {
+  idle :{fill:'#07293a', stroke:'#0a6b74', text:'#dff2f5', w:.045, glow:0},
+  soft :{fill:'#052330', stroke:'#0a6b74', text:'#a8c8d0', w:.035, glow:0},
+  hot  :{fill:'#3a2109', stroke:'#ff9736', text:'#ffbe6b', w:.075, glow:.65},
+  act  :{fill:'#241542', stroke:'#9d6bff', text:'#c7a6ff', w:.070, glow:.55},
+  ok   :{fill:'#08414a', stroke:'#3fe0dd', text:'#d9ffff', w:.070, glow:.5},
+  done :{fill:'#062430', stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0},
+  bad  :{fill:'#3a0d0d', stroke:'#ff5c5c', text:'#ff9a9a', w:.070, glow:.4},
+  ghost:{fill:'none',    stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0, dash:'.12 .10'}
+};
+const COL = {teal:'#12b3b8', tealL:'#3fe0dd', purple:'#9d6bff', purpleL:'#c7a6ff',
+             orange:'#ff9736', orangeL:'#ffbe6b', red:'#ff5c5c', grey:'#8fa3ac',
+             pale:'#dff2f5', white:'#ffffff'};
+const LEGEND = {
+  hot:[COL.orange, {zh:'目前這一步', en:'current step'}],
+  act:[COL.purple, {zh:'指標 / 走訪位置', en:'pointer / cursor'}],
+  ok:[COL.tealL,  {zh:'完成 / 結果', en:'done / result'}],
+  bad:[COL.red,   {zh:'失敗 / 要避開的寫法', en:'failure / the wrong way'}],
+  done:['#2f5661', {zh:'已處理完', en:'already done'}],
+  soft:['#0a6b74', {zh:'其他元素', en:'other items'}],
+  idle:['#0a6b74', {zh:'尚未處理', en:'untouched'}],
+  ghost:['#123f4d', {zh:'尚未處理', en:'not yet reached'}]
+};
+const leg = (...keys) => keys.map(k => LEGEND[k]);
+
+/* ---------------------------------------------------------- frame buffer */
+function Frames(){
+  this.list = [];
+  this.push = (o) => this.list.push({
+    shapes:JSON.parse(JSON.stringify(o.shapes || [])),
+    panels:JSON.parse(JSON.stringify(o.panels || [])),
+    view:(o.view || null), line:(o.line == null ? 0 : o.line), msg:o.msg
+  });
+}
+/* shape helpers - engines call these, the renderer just draws */
+const S = {
+  r:(x, y, w, h, s, lab, o) => Object.assign({t:'r', x:x, y:y, w:w, h:h, s:s || 'idle', lab:lab}, o || {}),
+  c:(x, y, r, s, lab, o) => Object.assign({t:'c', x:x, y:y, r:r, s:s || 'idle', lab:lab}, o || {}),
+  e:(x1, y1, x2, y2, o) => Object.assign({t:'e', x1:x1, y1:y1, x2:x2, y2:y2}, o || {}),
+  t:(x, y, s, o) => Object.assign({t:'t', x:x, y:y, s:s}, o || {})
+};
+/* a labelled row of array cells; returns shapes */
+function cellRow(vals, x0, y, w, h, opt){
+  opt = opt || {};
+  const out = [], st = opt.states || {};
+  vals.forEach((v, i) => {
+    out.push(S.r(x0 + i * w, y, w - (opt.gap == null ? .06 : opt.gap), h, st[i] || 'idle',
+                 v == null ? '' : String(v), {fs:opt.fs || h * .52}));
+    if (opt.index !== false)
+      out.push(S.t(x0 + i * w + (w - .06) / 2, y + h + (opt.ilift || .34),
+                   opt.labels ? opt.labels[i] : String(i),
+                   {c:st[i] && st[i] !== 'idle' ? COL.orangeL : COL.grey, fs:opt.ifs || .30}));
+  });
+  if (opt.title) out.push(S.t(x0 - .22, y + h * .62, opt.title, {c:COL.tealL, fs:.32, anchor:'end'}));
+  return out;
+}
+/* binary-tree layout from a heap-style array (index 0 = root, 2i+1 / 2i+2) */
+function heapTreeShapes(arr, x0, y0, w, rowH, states, opt){
+  opt = opt || {};
+  const n = arr.length, out = [], R = opt.r || .34;
+  const depth = i => Math.floor(Math.log2(i + 1));
+  const maxD = n ? depth(n - 1) : 0;
+  const px = i => {
+    const d = depth(i), first = Math.pow(2, d) - 1, k = i - first;
+    const slots = Math.pow(2, d), span = w;
+    return x0 + span * (k + .5) / slots;
+  };
+  const py = i => y0 + depth(i) * rowH;
+  for (let i = 1; i < n; i++){
+    if (arr[i] == null) continue;
+    const p = Math.floor((i - 1) / 2);
+    out.push(S.e(px(p), py(p), px(i), py(i), {pad:R + .04,
+      s:(states && (states[i] === 'hot' || states[i] === 'act')) ? states[i] : 'idle'}));
+  }
+  for (let i = 0; i < n; i++){
+    if (arr[i] == null) continue;
+    out.push(S.c(px(i), py(i), R, (states && states[i]) || 'idle', String(arr[i]), {fs:R * .95}));
+    if (opt.showIndex)
+      out.push(S.t(px(i), py(i) + R + .34, String(i), {c:COL.grey, fs:.26}));
+  }
+  return out;
+}
+
+/* -------------------------------------------------------------- renderer */
+const svgNS = 'http://www.w3.org/2000/svg';
+const mk = (tag, a) => { const e = document.createElementNS(svgNS, tag);
+  for (const k in a) e.setAttribute(k, a[k]); return e; };
+const clear = svg => { while (svg.firstChild) svg.removeChild(svg.firstChild); };
+
+function defs(svg){
+  const d = mk('defs', {});
+  const f = mk('filter', {id:'glow', x:'-70%', y:'-70%', width:'240%', height:'240%'});
+  f.appendChild(mk('feGaussianBlur', {stdDeviation:'.055', result:'b'}));
+  const m = mk('feMerge', {});
+  m.appendChild(mk('feMergeNode', {in:'b'}));
+  m.appendChild(mk('feMergeNode', {in:'SourceGraphic'}));
+  f.appendChild(m); d.appendChild(f);
+  Object.keys(STY).forEach(k => {
+    const mk2 = mk('marker', {id:'ar-' + k, viewBox:'0 0 10 10', refX:'8.5', refY:'5',
+      markerWidth:'5.2', markerHeight:'5.2', orient:'auto-start-reverse'});
+    mk2.appendChild(mk('path', {d:'M 0 1 L 9 5 L 0 9 z', fill:STY[k].stroke}));
+    d.appendChild(mk2);
+  });
+  svg.appendChild(d);
+}
+
+function drawShape(svg, sh){
+  const st = STY[sh.s || 'idle'];
+  if (sh.t === 'e'){
+    let {x1, y1, x2, y2} = sh;
+    if (sh.pad){
+      const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+      x1 += dx / L * sh.pad; y1 += dy / L * sh.pad;
+      x2 -= dx / L * sh.pad; y2 -= dy / L * sh.pad;
+    }
+    const a = {x1:x1.toFixed(3), y1:y1.toFixed(3), x2:x2.toFixed(3), y2:y2.toFixed(3),
+      stroke:st.stroke, 'stroke-width':(sh.w || st.w || .05), 'stroke-linecap':'round',
+      opacity:(sh.o == null ? (sh.s && sh.s !== 'idle' ? 1 : .75) : sh.o)};
+    if (sh.dash || st.dash) a['stroke-dasharray'] = sh.dash || st.dash;
+    if (sh.arrow !== false) a['marker-end'] = 'url(#ar-' + (sh.s || 'idle') + ')';
+    svg.appendChild(mk('line', a));
+    if (sh.lab != null)
+      svg.appendChild(txt((x1 + x2) / 2 + (sh.lx || 0), (y1 + y2) / 2 + (sh.ly || -.16),
+        tr(sh.lab), st.stroke, sh.fs || .30, 'middle'));
+    return;
+  }
+  if (sh.t === 't'){
+    svg.appendChild(txt(sh.x, sh.y, tr(sh.s), sh.c || COL.pale, sh.fs || .32,
+      sh.anchor || 'middle', sh.o));
+    return;
+  }
+  let node;
+  if (sh.t === 'c'){
+    node = mk('circle', {cx:sh.x.toFixed(3), cy:sh.y.toFixed(3), r:sh.r.toFixed(3),
+      fill:st.fill, stroke:st.stroke, 'stroke-width':st.w});
+  } else {
+    node = mk('rect', {x:sh.x.toFixed(3), y:sh.y.toFixed(3), width:sh.w.toFixed(3),
+      height:sh.h.toFixed(3), rx:(sh.rx == null ? .09 : sh.rx), fill:st.fill,
+      stroke:st.stroke, 'stroke-width':st.w});
+  }
+  if (st.dash || sh.dash) node.setAttribute('stroke-dasharray', sh.dash || st.dash);
+  if (st.glow) node.setAttribute('filter', 'url(#glow)');
+  if (sh.o != null) node.setAttribute('opacity', sh.o);
+  svg.appendChild(node);
+  const cx = sh.t === 'c' ? sh.x : sh.x + sh.w / 2;
+  const cy = sh.t === 'c' ? sh.y : sh.y + sh.h / 2;
+  if (sh.lab != null && sh.lab !== '')
+    svg.appendChild(txt(cx + (sh.dx || 0), cy + (sh.fs || .40) * .35, tr(sh.lab), st.text,
+      sh.fs || .40, 'middle'));
+  if (sh.sub != null)
+    svg.appendChild(txt(cx, cy + (sh.t === 'c' ? sh.r : sh.h) + .34, tr(sh.sub),
+      sh.subc || COL.grey, sh.subfs || .28, 'middle'));
+  if (sh.top != null)
+    svg.appendChild(txt(cx, cy - (sh.t === 'c' ? sh.r : sh.h / 2) - .22, tr(sh.top),
+      sh.topc || COL.purpleL, sh.topfs || .28, 'middle'));
+}
+function txt(x, y, s, c, fs, anchor, o){
+  const t = mk('text', {x:(+x).toFixed(3), y:(+y).toFixed(3), 'text-anchor':anchor || 'middle',
+    fill:c, 'font-size':(+fs).toFixed(3)});
+  if (o != null) t.setAttribute('opacity', o);
+  t.textContent = s;
+  return t;
+}
+
+function renderStage(frame){
+  const svg = $('stage');
+  clear(svg); defs(svg);
+  const v = frame.view || curTab().view || [10, 6.4];
+  svg.setAttribute('viewBox', '0 0 ' + v[0] + ' ' + v[1]);
+  (frame.shapes || []).forEach(sh => drawShape(svg, sh));
+}
+
+function drawPanels(frame){
+  const box = $('panels'); box.innerHTML = '';
+  (frame.panels || []).forEach(p => {
+    const d = document.createElement('div'); d.className = 'panel';
+    const l = document.createElement('div'); l.className = 'lbl'; l.textContent = tr(p.lbl);
+    const c = document.createElement('div'); c.className = 'chips';
+    (p.chips.length ? p.chips : [{t:'—', cls:'empty'}]).forEach(ch => {
+      const s = document.createElement('span');
+      s.className = 'chip ' + (ch.cls || ''); s.textContent = ch.t; c.appendChild(s);
+    });
+    d.appendChild(l); d.appendChild(c); box.appendChild(d);
+  });
+}
+function drawCode(frame){
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  $('code').innerHTML = curTab().code.map((ln, i) => {
+    const h = esc(ln).replace(/(#.*)$/, '<span class="cm">$1</span>');
+    return '<span class="ln' + (i === frame.line ? ' on' : '') + '">' + (h || ' ') + '</span>';
+  }).join('');
+}
+function drawLegend(){
+  const keys = curTab().legend || ['hot', 'act', 'ok', 'idle'];
+  $('legend').innerHTML = keys.map(k => {
+    const [c, txt] = Array.isArray(k) ? k : LEGEND[k];
+    return '<span><i style="background:' + c + '"></i>' + tr(txt) + '</span>';
+  }).join('');
+}
+
+let tabIx = 0, varIx = 0, frames = [], cur = 0, timer = null;
+const TABS = DAY_META.tabs;
+const curTab = () => TABS[tabIx];
+
+function render(){
+  if (!frames.length) return;
+  cur = Math.max(0, Math.min(cur, frames.length - 1));
+  const f = frames[cur];
+  $('stage-title').textContent = tr(curTab().stage);
+  renderStage(f); drawPanels(f); drawCode(f); drawLegend();
+  $('narr').innerHTML = tr(f.msg);
+  $('idea').innerHTML = tr(curTab().idea);
+  $('stepno').textContent = (cur + 1) + ' / ' + frames.length;
+  $('prev').disabled = cur === 0;
+  $('next').disabled = cur === frames.length - 1;
+}
+function buildTabs(){
+  $('tabs').innerHTML = '';
+  TABS.forEach((t, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(t.label);
+    if (i === tabIx) b.classList.add('on');
+    b.onclick = () => { tabIx = i; varIx = 0; load(); };
+    $('tabs').appendChild(b);
+  });
+  const ex = $('extra'); ex.innerHTML = '';
+  const vs = curTab().variants;
+  if (vs) vs.forEach((v, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(v);
+    if (i === varIx) b.classList.add('on');
+    b.onclick = () => { varIx = i; load(); };
+    ex.appendChild(b);
+  });
+}
+function load(){
+  stop();
+  frames = curTab().build(varIx) || [];
+  cur = 0; buildTabs(); render();
+}
+function step(d){ stop(); cur += d; render(); }
+function reset(){ stop(); cur = 0; render(); }
+function stop(){ if (timer){ clearInterval(timer); timer = null; $('play').textContent = tr(T.play); } }
+function togglePlay(){
+  if (timer){ stop(); return; }
+  if (cur >= frames.length - 1) cur = 0;
+  $('play').textContent = tr(T.pause);
+  timer = setInterval(() => {
+    if (cur >= frames.length - 1){ stop(); return; }
+    cur++; render();
+  }, Number($('speed').value));
+}
+$('speed').addEventListener('input', () => { if (timer){ stop(); togglePlay(); } });
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight'){ step(1); e.preventDefault(); }
+  else if (e.key === 'ArrowLeft'){ step(-1); e.preventDefault(); }
+  else if (e.key === ' '){ togglePlay(); e.preventDefault(); }
+});
+setLang('zh');
+load();
+
+</script>
+</body>
+</html>
