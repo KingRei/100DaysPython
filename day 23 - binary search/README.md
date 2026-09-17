@@ -117,6 +117,80 @@ and nothing is padded, while `bisect_right` steps to the next bucket and pays fo
 graph's worth of empty rows - 6.07% average padding instead of 4.25%, from one character - and
 runs off the end of the list at the largest batch.
 
+## The problems, stated in full
+
+Restated in my own words - what is being asked, what goes in and comes out, one worked
+example, and the constraints that actually change which algorithm is allowed.
+
+### LeetCode 33 - Search in Rotated Sorted Array
+
+**The task.** An ascending array of distinct integers was rotated at some unknown pivot -
+`[0,1,2,4,5,6,7]` may arrive as `[4,5,6,7,0,1,2]`. Given the rotated array and a `target`,
+return the index of `target`, or `-1` if it is not there.
+
+**Input / output.** Input is `nums` and `target`; output is an index (or `-1`).
+
+**Example.** `nums = [4,5,6,7,0,1,2]`, `target = 0` → `4`. With `target = 3` → `-1`.
+
+**Constraints.** `1 <= len(nums) <= 5000`, values in `[-10^4, 10^4]`, **all distinct**, and
+the array is guaranteed to be a rotation of a sorted array. The runtime must be `O(log n)`,
+so a linear scan is not an accepted answer.
+
+[leetcode.com/problems/search-in-rotated-sorted-array](https://leetcode.com/problems/search-in-rotated-sorted-array/)
+
+### LeetCode 34 - Find First and Last Position of Element in Sorted Array
+
+**The task.** Given a non-decreasing array and a `target`, return the first and the last
+index at which `target` appears, as `[first, last]`. If the target is absent return
+`[-1, -1]`.
+
+**Input / output.** Input is `nums` and `target`; output is a two-element list.
+
+**Example.** `nums = [5,7,7,8,8,10]`, `target = 8` → `[3,4]`. With `target = 6` → `[-1,-1]`.
+
+**Constraints.** `0 <= len(nums) <= 10^5`, values in `[-10^9, 10^9]`, the array is sorted
+non-decreasing (duplicates allowed). Again `O(log n)` is required - which is exactly the
+"find the boundary, not the element" flavour of binary search.
+
+[leetcode.com/problems/find-first-and-last-position-of-element-in-sorted-array](https://leetcode.com/problems/find-first-and-last-position-of-element-in-sorted-array/)
+
+### LeetCode 410 - Split Array Largest Sum
+
+**The task.** Cut an array of non-negative integers into exactly `k` non-empty
+**contiguous** pieces. Each cut has a cost: the largest piece sum. Return the smallest
+largest-piece-sum achievable over all ways of cutting.
+
+**Input / output.** Input is `nums` and `k`; output is one integer.
+
+**Example.** `nums = [7,2,5,10,8]`, `k = 2`. The best cut is `[7,2,5] | [10,8]` with sums
+`14` and `18`, so the answer is `18` - every other cut has a larger maximum.
+
+**Constraints.** `1 <= len(nums) <= 1000`, `0 <= nums[i] <= 10^6`,
+`1 <= k <= min(50, len(nums))`. The answer lives between `max(nums)` and `sum(nums)`, and
+"can I do it with a budget of `x`?" is monotone in `x` - which is what makes this a binary
+search *on the answer* rather than on an array.
+
+[leetcode.com/problems/split-array-largest-sum](https://leetcode.com/problems/split-array-largest-sum/)
+
+### LeetCode 875 - Koko Eating Bananas
+
+**The task.** There are `n` piles of bananas and `h` hours before the guards come back.
+Koko picks an eating speed `k` (bananas per hour). Each hour she chooses one pile and eats
+`k` bananas from it; if the pile has fewer than `k` left she eats the whole pile and then
+*stops for that hour* - she never moves on to a second pile within the same hour. Return
+the smallest integer `k` that lets her finish every pile within `h` hours.
+
+**Input / output.** Input is `piles` and `h`; output is the minimum speed `k`.
+
+**Example.** `piles = [3,6,7,11]`, `h = 8` → `4`. At speed `4` the hours needed are
+`1 + 2 + 2 + 3 = 8`; at speed `3` they are `1 + 2 + 3 + 4 = 10`, which is too slow.
+
+**Constraints.** `1 <= len(piles) <= 10^4`, `len(piles) <= h <= 10^9`,
+`1 <= piles[i] <= 10^9`. Note the search space is the *value* `k` up to `10^9`, not the
+array - another binary search on the answer.
+
+[leetcode.com/problems/koko-eating-bananas](https://leetcode.com/problems/koko-eating-bananas/)
+
 ## Complexity
 
 | Operation | Probes | Elements touched | Space |

@@ -94,6 +94,26 @@ for i in range(1, n + 1):
 <h2>Why this matters later</h2>
 <p>Edit distance is the shape of every alignment problem: sequence alignment in bioinformatics is the same recurrence with a scoring matrix, dynamic time warping is it with a different step set, and beam-search rescoring in ASR is it with a language model bolted on. MinHash and LSH point the other way - toward approximate nearest neighbour search, where embeddings replace shingles, cosine similarity replaces Jaccard, and the same &quot;cheap filter, exact verify&quot; contract shows up in HNSW graphs and IVF/PQ indexes. When a vector database says it is &quot;approximate&quot;, this is the trade it is describing.</p>
 <p>Both stories also converge on the same engineering discipline: know what your filter&#x27;s false-negative rate is, and verify the survivors exactly.</p>
+<h2>Appendix: the LeetCode problems in full</h2>
+<p>Restated in my own words - what is being asked, what goes in and comes out, one worked example, and the constraints that actually change which algorithm is allowed.</p>
+<h3>LeetCode 72 - Edit Distance</h3>
+<p><strong>The task.</strong> Given two words, return the minimum number of operations needed to turn the first into the second. Three operations are allowed, each costing one: insert a character, delete a character, replace a character.</p>
+<p><strong>Input / output.</strong> Two strings in, one integer out.</p>
+<p><strong>Example.</strong> <code>word1 = &quot;horse&quot;</code>, <code>word2 = &quot;ros&quot;</code> → <code>3</code>: <code>horse -&gt; rorse</code> (replace <code>h</code>), <code>rorse -&gt; rose</code> (delete <code>r</code>), <code>rose -&gt; ros</code> (delete <code>e</code>).</p>
+<p><strong>Constraints.</strong> <code>0 &lt;= len(word1), len(word2) &lt;= 500</code>, lowercase English letters. At <code>500</code> by <code>500</code> the full table is only a quarter of a million cells, so the interesting question is not speed but whether you can do it in <code>O(min(m, n))</code> space.</p>
+<p><a href="https://leetcode.com/problems/edit-distance/">leetcode.com/problems/edit-distance</a></p>
+<h3>LeetCode 161 - One Edit Distance</h3>
+<p><strong>The task.</strong> Return <code>True</code> if the two strings are <strong>exactly</strong> one edit apart - one insert, one delete or one replace. Two identical strings are zero edits apart, so they return <code>False</code>.</p>
+<p><strong>Input / output.</strong> Two strings in, a boolean out.</p>
+<p><strong>Example.</strong> <code>s = &quot;ab&quot;</code>, <code>t = &quot;acb&quot;</code> → <code>True</code> (insert <code>c</code>). <code>s = &quot;&quot;</code>, <code>t = &quot;&quot;</code> → <code>False</code>. <code>s = &quot;abc&quot;</code>, <code>t = &quot;abc&quot;</code> → <code>False</code>.</p>
+<p><strong>Constraints.</strong> <code>0 &lt;= len(s), len(t) &lt;= 10^4</code>. Lengths differing by more than one make the answer <code>False</code> immediately; the rest is a single scan, so this problem is the argument for <em>not</em> building the whole edit-distance table when you only need a yes/no about a fixed threshold.</p>
+<p><a href="https://leetcode.com/problems/one-edit-distance/">leetcode.com/problems/one-edit-distance</a></p>
+<h3>LeetCode 1143 - Longest Common Subsequence</h3>
+<p><strong>The task.</strong> Return the length of the longest common subsequence of two strings. A subsequence keeps the original order but may skip characters; it does <strong>not</strong> have to be contiguous. If there is no common subsequence the answer is <code>0</code>.</p>
+<p><strong>Input / output.</strong> Two strings in, one integer out.</p>
+<p><strong>Example.</strong> <code>text1 = &quot;abcde&quot;</code>, <code>text2 = &quot;ace&quot;</code> → <code>3</code>, the subsequence <code>&quot;ace&quot;</code>. <code>text1 = &quot;abc&quot;</code>, <code>text2 = &quot;def&quot;</code> → <code>0</code>.</p>
+<p><strong>Constraints.</strong> <code>1 &lt;= len(text1), len(text2) &lt;= 1000</code>, lowercase English letters. It is the same <code>O(m * n)</code> table as edit distance with a different recurrence - which is exactly why the two problems belong on the same day.</p>
+<p><a href="https://leetcode.com/problems/longest-common-subsequence/">leetcode.com/problems/longest-common-subsequence</a></p>
 <p>Tomorrow: balanced trees - AVL, red-black and B-tree, all in one day.</p>
 <p>Code and diagrams: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2027%20-%20edit%20distance%20and%20similarity">day 27 on GitHub</a></p>
 </body>

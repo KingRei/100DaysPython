@@ -139,6 +139,47 @@ barely moves:
 
 16x the data, 1.1x the work.
 
+## The problems, stated in full
+
+Restated in my own words - what is being asked, what goes in and comes out, one worked
+example, and the constraints that actually change which algorithm is allowed.
+
+### LeetCode 1206 - Design Skiplist
+
+**The task.** Implement a skip list from scratch, without using any built-in balanced-tree
+or sorted-container library. It must support `search(target)` returning a boolean,
+`add(num)` inserting a value (duplicates are allowed, so the same number can be present
+several times), and `erase(num)` removing **one** occurrence and returning whether anything
+was removed.
+
+**Input / output.** Operation list in, booleans out of `search` and `erase`.
+
+**Example.** `add(1)`, `add(2)`, `add(3)`, `search(0)` → `False`, `add(4)`, `search(1)` →
+`True`, `erase(0)` → `False`, `erase(1)` → `True`, `erase(1)` → `False`.
+
+**Constraints.** `0 <= num, target <= 2 * 10^4`, up to `5 * 10^4` calls. Duplicates are the
+trap: the comparison used while descending the levels has to be a strict `<`, not `<=`, or
+`erase` will delete the wrong copy and `add` will place duplicates on the wrong side.
+
+[leetcode.com/problems/design-skiplist](https://leetcode.com/problems/design-skiplist/)
+
+### LeetCode 315 - Count of Smaller Numbers After Self
+
+**The task.** For every position `i`, count how many elements to the **right** of `nums[i]`
+are strictly smaller than it, and return those counts as an array.
+
+**Input / output.** Input is `nums`; output is a list of the same length.
+
+**Example.** `nums = [5,2,6,1]` → `[2,1,1,0]`: to the right of `5` sit `2` and `1`; to the
+right of `2` sits `1`; to the right of `6` sits `1`; nothing is to the right of `1`.
+
+**Constraints.** `1 <= len(nums) <= 10^5`, values in `[-10^4, 10^4]`. The quadratic double
+loop is `10^10` operations, so it will not pass. Scanning from the right while inserting
+into a Fenwick tree indexed by value gives `O(n log U)`; a merge sort that counts
+inversions, or an order-statistic skip list, get there too.
+
+[leetcode.com/problems/count-of-smaller-numbers-after-self](https://leetcode.com/problems/count-of-smaller-numbers-after-self/)
+
 ## Complexity
 
 | Operation | Time | Space |

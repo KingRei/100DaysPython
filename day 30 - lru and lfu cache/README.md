@@ -134,6 +134,72 @@ find the longest prefix it shares with an old one, and when GPU memory fills up,
 to go. The victim is chosen by exactly the policies on this page, over tree nodes rather than
 plain keys - an eviction there throws away compute, not just bytes.
 
+## The problems, stated in full
+
+Restated in my own words - what is being asked, what goes in and comes out, one worked
+example, and the constraints that actually change which algorithm is allowed.
+
+### LeetCode 146 - LRU Cache
+
+**The task.** Design a fixed-capacity cache with `get(key)` and `put(key, value)`. `get`
+returns the value or `-1` if the key is absent. `put` inserts or overwrites, and when the
+insertion pushes the size past the capacity the **least recently used** key is evicted.
+Both a `get` and a `put` count as a use.
+
+**Input / output.** Constructor takes `capacity`; `get` returns an integer, `put` returns
+nothing.
+
+**Example.** With capacity `2`: `put(1,1)`, `put(2,2)`, `get(1)` → `1`, `put(3,3)` evicts
+key `2` (it is the least recently used, because `get(1)` refreshed key `1`), so `get(2)` →
+`-1`.
+
+**Constraints.** `1 <= capacity <= 3000`, `0 <= key <= 10^4`, `0 <= value <= 10^5`, up to
+`2 * 10^5` calls. Both operations must run in **`O(1)` average time**, which is what forces
+the hash map plus doubly linked list rather than anything that scans or sorts timestamps.
+
+[leetcode.com/problems/lru-cache](https://leetcode.com/problems/lru-cache/)
+
+### LeetCode 460 - LFU Cache
+
+**The task.** Same shape as LRU, different eviction rule. Each key carries a use counter,
+incremented by every `get` and every `put` on that key. When the cache is full, evict the
+key with the **smallest counter**; if several tie, evict the least recently used among
+them.
+
+**Input / output.** Constructor takes `capacity`; `get` returns the value or `-1`, `put`
+returns nothing.
+
+**Example.** Capacity `2`: `put(1,1)`, `put(2,2)`, `get(1)` → `1` (key `1` now has count
+2, key `2` has count 1), `put(3,3)` evicts key `2`. Then `get(2)` → `-1` and `get(3)` → `3`.
+
+**Constraints.** `0 <= capacity <= 10^4`, keys and values up to `10^9`, up to `2 * 10^5`
+calls, and again **`O(1)` average** for both operations. The `O(1)` requirement is the
+whole problem: finding the minimum counter cannot involve a search, which is why the
+standard solution keeps one list per frequency and a `min_freq` that only ever moves by one.
+
+[leetcode.com/problems/lfu-cache](https://leetcode.com/problems/lfu-cache/)
+
+### LeetCode 432 - All O`one Data Structure
+
+**The task.** Design a structure holding string keys with positive counts, supporting four
+operations: `inc(key)` adds one (inserting the key with count 1 if new), `dec(key)`
+subtracts one and removes the key when the count reaches zero, `getMaxKey()` returns any
+key with the largest count, and `getMinKey()` returns any key with the smallest count. Both
+getters return `""` when the structure is empty.
+
+**Input / output.** Operation list in, the getters' strings out.
+
+**Example.** `inc("hello")`, `inc("hello")`, `getMaxKey()` → `"hello"`,
+`getMinKey()` → `"hello"`, `inc("leet")`, then `getMaxKey()` → `"hello"` and
+`getMinKey()` → `"leet"`.
+
+**Constraints.** `1 <= len(key) <= 10`, up to `5 * 10^4` calls, and `dec` is only ever
+called with a key that currently exists. **Every operation must be `O(1)`** - this is LFU's
+bucket structure taken to its logical end, a doubly linked list of count-buckets where the
+maximum and minimum are simply the two ends.
+
+[leetcode.com/problems/all-oone-data-structure](https://leetcode.com/problems/all-oone-data-structure/)
+
 ## Complexity
 
 | Operation | Time | Space |

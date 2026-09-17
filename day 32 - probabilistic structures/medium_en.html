@@ -104,6 +104,14 @@ Count-Min     how often is x?      over-count only            108740</code></pre
 <p>These structures also keep appearing in the parts of an LLM stack that have to stay cheap: sketching which prefixes are hot enough to be worth keeping in a cache, estimating the number of distinct n-grams in a corpus without materialising them, deduplicating a training set - the last one being precisely where a Bloom filter&#x27;s false positive stops being free and starts deleting documents.</p>
 <p>Tomorrow: dynamic programming from the ground up - climbing stairs and coin change.</p>
 <p>Everything here runs: <code>python probabilistic.py</code> prints all of it, the notebook carries the outputs, and <code>demo.html</code> animates the false positive, the delete that erases a neighbour, the HyperLogLog registers, the Count-Min minimum and LeetCode 347 side by side.</p>
+<h2>Appendix: the LeetCode problems in full</h2>
+<p>Restated in my own words - what is being asked, what goes in and comes out, one worked example, and the constraints that actually change which algorithm is allowed.</p>
+<h3>LeetCode 347 - Top K Frequent Elements</h3>
+<p><strong>The task.</strong> Given an integer array and an integer <code>k</code>, return the <code>k</code> most frequent elements. The order of the returned elements does not matter.</p>
+<p><strong>Input / output.</strong> Input is <code>nums</code> and <code>k</code>; output is a list of <code>k</code> values.</p>
+<p><strong>Example.</strong> <code>nums = [1,1,1,2,2,3]</code>, <code>k = 2</code> → <code>[1,2]</code>. <code>nums = [1]</code>, <code>k = 1</code> → <code>[1]</code>.</p>
+<p><strong>Constraints.</strong> <code>1 &lt;= len(nums) &lt;= 10^5</code>, values in <code>[-10^4, 10^4]</code>, <code>k</code> is between <code>1</code> and the number of distinct values, and the answer is guaranteed to be unique. The problem explicitly demands better than <code>O(n log n)</code>, so sorting the whole frequency table is out - a size-<code>k</code> heap or bucket-by-count works. The version worth thinking about is the one the constraints hide: the same question over a stream too large to hold a counter for, which is where a Count-Min sketch plus a small heap takes over and the answer becomes approximate.</p>
+<p><a href="https://leetcode.com/problems/top-k-frequent-elements/">leetcode.com/problems/top-k-frequent-elements</a></p>
 <p><a href="https://github.com/KingRei/100DaysPython/tree/master/day%2032%20-%20probabilistic%20structures">day 32 on GitHub</a></p>
 </body>
 </html>

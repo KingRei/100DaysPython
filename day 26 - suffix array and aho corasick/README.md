@@ -125,6 +125,67 @@ hashing and no randomness, because sorting has already placed every repeat next 
 616 / 758 (Add Bold Tag) is the multi-pattern case - mark the covered intervals in one
 Aho-Corasick pass, then merge them.
 
+## The problems, stated in full
+
+Restated in my own words - what is being asked, what goes in and comes out, one worked
+example, and the constraints that actually change which algorithm is allowed.
+
+### LeetCode 616 - Add Bold Tag in String
+
+**The task.** Given a string `s` and a list of `words`, wrap every substring of `s` that
+appears in `words` with `<b>` and `</b>`. Overlapping or adjacent bold regions must be
+merged into a single pair of tags, and the tags must be as few as possible.
+
+**Input / output.** Input is `s` and `words`; output is the tagged string.
+
+**Example.** `s = "abcxyz123"`, `words = ["abc","123"]` → `"<b>abc</b>xyz<b>123</b>"`.
+With `s = "aaabbb"`, `words = ["aa","b"]` the matches overlap and run together, so the
+answer is `"<b>aaabbb</b>"`.
+
+**Constraints.** `1 <= len(s) <= 1000`, `0 <= len(words) <= 100`, each word up to `1000`
+characters, lowercase letters and digits. (The same problem appears as LeetCode 758,
+*Bold Words in String*.) Marking every match with one Aho-Corasick pass and then merging
+intervals is the clean solution.
+
+[leetcode.com/problems/add-bold-tag-in-string](https://leetcode.com/problems/add-bold-tag-in-string/)
+
+### LeetCode 1032 - Stream of Characters
+
+**The task.** Build a `StreamChecker` initialised with a list of `words`. Then characters
+arrive one at a time through `query(letter)`, and each call must return `True` if **some
+suffix** of everything received so far spells one of the words.
+
+**Input / output.** Constructor takes `words`; every `query` returns a boolean.
+
+**Example.** With `words = ["cd","f","kl"]`, querying `a`, `b`, `c`, `d`, `e`, `f` returns
+`False, False, False, True, False, True` - `True` at `d` because the stream ends in `"cd"`,
+and at `f` because it ends in `"f"`.
+
+**Constraints.** `1 <= len(words) <= 2000`, each word `1..200` characters, up to `4 * 10^4`
+queries. Because you only ever get one new character per call, the answer has to be
+maintained *incrementally* - this is Aho-Corasick's automaton state, or a trie over the
+reversed words.
+
+[leetcode.com/problems/stream-of-characters](https://leetcode.com/problems/stream-of-characters/)
+
+### LeetCode 1044 - Longest Duplicate Substring
+
+**The task.** Find a longest substring that occurs **at least twice** in `s`; the two
+occurrences are allowed to overlap. Return any one of them, or the empty string if no
+substring repeats.
+
+**Input / output.** One string in, one string out.
+
+**Example.** `s = "banana"` → `"ana"` (it occurs at index `1` and index `3`, overlapping).
+`s = "abcd"` → `""`.
+
+**Constraints.** `2 <= len(s) <= 3 * 10^4`, lowercase English letters. "Does a duplicate of
+length `L` exist?" is monotone in `L`, so the standard solution binary-searches `L` and
+answers each question with Rabin-Karp rolling hashes - or, without any randomness, reads
+the answer straight off a suffix array plus its LCP array.
+
+[leetcode.com/problems/longest-duplicate-substring](https://leetcode.com/problems/longest-duplicate-substring/)
+
 ## Complexity
 
 `n` = text length, `m` = pattern length, `k` = number of patterns, `L` = total pattern length.

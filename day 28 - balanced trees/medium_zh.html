@@ -116,6 +116,26 @@ parent.children.insert(i + 1, right)</code></pre>
 <p>代價是那個陣列的 <code>O(n)</code> 額外空間。如果連這個都不能花，還有 <strong>Day-Stout-Warren</strong> 演算法：先把整棵樹旋轉成一條向右的藤蔓，再轉回平衡，<code>O(1)</code> 空間 — 而且用的就是本文開頭那個一模一樣的旋轉。</p>
 <h2>這些東西後面會用到</h2>
 <p>旋轉和中序不變式，在樹除了 key 之外還帶著聚合資料的那一刻就會回來：interval tree 在每個節點存子樹的最大值，旋轉時必須用跟 <code>update_height</code> 完全相同的「先算下面那個」順序重算它。Segment tree 和 Fenwick tree 則乾脆不要旋轉，改用<strong>索引的算術</strong>直接得到平衡 — 這其實跟 B-tree 做的是同一筆交易：形狀先固定好，就永遠不用修。而 B-tree 本身也不是歷史文物，它就是 PostgreSQL、SQLite、MySQL InnoDB 和幾乎每個檔案系統的磁碟索引；它的對手 LSM-tree 只差在對「讀貴還是寫貴」做了相反的假設。</p>
+<h2>附錄：LeetCode 題目完整題敘</h2>
+<p>以下用我自己的話重寫一遍：題目在問什麼、輸入輸出是什麼、一個算過的例子，以及那些真的會 改變「可以用哪種演算法」的限制。</p>
+<h3>LeetCode 108 - Convert Sorted Array to Binary Search Tree（將有序陣列轉換為二元搜尋樹）</h3>
+<p><strong>題目。</strong> 給一個遞增排序的陣列，用它建出一棵<strong>高度平衡</strong>的二元搜尋樹。任何一個合法答案都算對。</p>
+<p><strong>輸入／輸出。</strong> 輸入 <code>nums</code>，輸出樹的 root。</p>
+<p><strong>範例。</strong> <code>nums = [-10,-3,0,5,9]</code> → 一個合法答案是以 <code>0</code> 為 root，左子樹是 <code>-3</code>（其左子是 <code>-10</code>）、 右子樹是 <code>9</code>（其左子是 <code>5</code>）。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(nums) &lt;= 10^4</code>，數值在 <code>[-10^4, 10^4]</code>，嚴格遞增。遞迴地「取中間當 root， 兩半各自遞迴」就是全部的解法，而它也最乾淨地示範了：平衡是可以*一開始就建出來*的性質，不是只能 事後修補。</p>
+<p><a href="https://leetcode.com/problems/convert-sorted-array-to-binary-search-tree/">leetcode.com/problems/convert-sorted-array-to-binary-search-tree</a></p>
+<h3>LeetCode 110 - Balanced Binary Tree（平衡二元樹）</h3>
+<p><strong>題目。</strong> 判斷一棵二元樹是否高度平衡，也就是<strong>每一個</strong>節點的左右子樹高度差都不超過 1。</p>
+<p><strong>輸入／輸出。</strong> 輸入 root，輸出布林值。</p>
+<p><strong>範例。</strong> <code>[3,9,20,null,null,15,7]</code> 是平衡的 → <code>True</code>；<code>[1,2,2,3,3,null,null,4,4]</code> 不平衡 → <code>False</code>。空樹算平衡。</p>
+<p><strong>限制。</strong> 節點數 <code>0</code> 到 <code>5000</code>，數值在 <code>[-10^4, 10^4]</code>。每個節點各自算一次高度是 <code>O(n^2)</code>； 改成用一趟後序走訪回傳「高度，或一個代表不平衡的哨兵值」就是 <code>O(n)</code> —— 這就是 AVL 的不變量， 只是這裡是拿來檢查而不是拿來維護。</p>
+<p><a href="https://leetcode.com/problems/balanced-binary-tree/">leetcode.com/problems/balanced-binary-tree</a></p>
+<h3>LeetCode 1382 - Balance a Binary Search Tree（將二元搜尋樹變平衡）</h3>
+<p><strong>題目。</strong> 給一棵二元搜尋樹的 root，回傳<strong>一棵</strong>裝著完全相同數值的平衡二元搜尋樹。這裡的平衡是 指每個節點的左右子樹深度差不超過 1。任何合法答案都算對。</p>
+<p><strong>輸入／輸出。</strong> 輸入 root，輸出重建後的 root。</p>
+<p><strong>範例。</strong> 退化成鏈狀的 <code>1 -&gt; 2 -&gt; 3 -&gt; 4</code>（每個值都是前一個的右子）可以回傳成以 <code>2</code> 為 root、 左右子是 <code>1</code> 與 <code>3</code>，而 <code>4</code> 掛在 <code>3</code> 的右邊。</p>
+<p><strong>限制。</strong> 節點數 <code>1</code> 到 <code>10^4</code>，數值在 <code>[1, 10^5]</code> 且互不相同。兩行解 —— 中序走訪成排序陣列、 再套 LeetCode 108 —— 就是一個很好的 <code>O(n)</code> 重建；而它剛好可以拿來對照 AVL 或紅黑樹的做法：在 *每一次*插入時付一點點代價，就永遠不需要這個重建。</p>
+<p><a href="https://leetcode.com/problems/balance-a-binary-search-tree/">leetcode.com/problems/balance-a-binary-search-tree</a></p>
 <p>明天：怎麼對一段區間持續維護一個答案，以及為什麼一棵完全沒有指標的樹，可以贏過有指標的那棵。</p>
 <p>完整可執行的模組、notebook、圖檔和互動式演示都在 <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2028%20-%20balanced%20trees">day 28 on GitHub</a>。</p>
 </body>

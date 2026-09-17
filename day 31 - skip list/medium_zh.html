@@ -114,6 +114,20 @@ range(lo, hi)                 O(log n + k)        -
 排序 linked list，同樣的搜尋  O(n)                O(n)</code></pre>
 <p>明天：用準確度換空間的機率型結構 —— Bloom Filter、HyperLogLog、Count-Min Sketch。今天隨機性 買到的是形狀，明天買到的是記憶體。</p>
 <p>這裡的每一段都跑得起來：<code>python skip_list.py</code> 會把上面全部印出來，notebook 裡存著輸出， <code>demo.html</code> 則把搜尋樓梯、插入的接線、span、漏掉的那一行，以及 LeetCode 1206 兩種比較的差別 並排動畫出來。</p>
+<h2>附錄：LeetCode 題目完整題敘</h2>
+<p>以下用我自己的話重寫一遍：題目在問什麼、輸入輸出是什麼、一個算過的例子，以及那些真的會 改變「可以用哪種演算法」的限制。</p>
+<h3>LeetCode 1206 - Design Skiplist（設計跳表）</h3>
+<p><strong>題目。</strong> 從零實作一個 skip list，不能用任何內建的平衡樹或排序容器。需支援 <code>search(target)</code> 回傳布林值、<code>add(num)</code> 插入一個值（<strong>允許重複</strong>，同一個數字可以存在多份）、<code>erase(num)</code> 移除 <strong>一份</strong>並回傳有沒有真的移除。</p>
+<p><strong>輸入／輸出。</strong> 輸入操作串列，<code>search</code> 與 <code>erase</code> 回傳布林值。</p>
+<p><strong>範例。</strong> <code>add(1)</code>、<code>add(2)</code>、<code>add(3)</code>、<code>search(0)</code> → <code>False</code>、<code>add(4)</code>、<code>search(1)</code> → <code>True</code>、 <code>erase(0)</code> → <code>False</code>、<code>erase(1)</code> → <code>True</code>、<code>erase(1)</code> → <code>False</code>。</p>
+<p><strong>限制。</strong> <code>0 &lt;= num, target &lt;= 2 * 10^4</code>，最多 <code>5 * 10^4</code> 次呼叫。重複值就是陷阱：往下層走時的 比較必須是嚴格的 <code>&lt;</code> 而不是 <code>&lt;=</code>，否則 <code>erase</code> 會刪錯那一份、<code>add</code> 也會把重複值放到錯的一邊。</p>
+<p><a href="https://leetcode.com/problems/design-skiplist/">leetcode.com/problems/design-skiplist</a></p>
+<h3>LeetCode 315 - Count of Smaller Numbers After Self（計算右側小於當前元素的個數）</h3>
+<p><strong>題目。</strong> 對每個位置 <code>i</code>，數出 <code>nums[i]</code> <strong>右邊</strong>有幾個元素嚴格小於它，把這些數字組成陣列回傳。</p>
+<p><strong>輸入／輸出。</strong> 輸入 <code>nums</code>，輸出同長度的串列。</p>
+<p><strong>範例。</strong> <code>nums = [5,2,6,1]</code> → <code>[2,1,1,0]</code>：<code>5</code> 的右邊有 <code>2</code> 和 <code>1</code>；<code>2</code> 的右邊有 <code>1</code>；<code>6</code> 的 右邊有 <code>1</code>；<code>1</code> 的右邊沒有東西。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(nums) &lt;= 10^5</code>，數值在 <code>[-10^4, 10^4]</code>。雙層迴圈是 <code>10^10</code> 次運算，不可能過。 從右往左掃、同時把值插進以「數值」為索引的 Fenwick tree，可以做到 <code>O(n log U)</code>；用 merge sort 數 逆序對、或用支援 order statistic 的 skip list，也都到得了。</p>
+<p><a href="https://leetcode.com/problems/count-of-smaller-numbers-after-self/">leetcode.com/problems/count-of-smaller-numbers-after-self</a></p>
 <p><a href="https://github.com/KingRei/100DaysPython/tree/master/day%2031%20-%20skip%20list">day 31 on GitHub</a></p>
 </body>
 </html>

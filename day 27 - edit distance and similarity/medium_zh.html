@@ -94,6 +94,26 @@ for i in range(1, n + 1):
 <h2>這些之後會用在哪</h2>
 <p>編輯距離是所有 alignment 問題的形狀：生物資訊的序列比對就是同一個遞迴式配一張 scoring matrix，dynamic time warping 是換一組 step，ASR 的 beam search rescoring 是再掛上一個語言模型。MinHash 和 LSH 則指向另一邊 — approximate nearest neighbour 檢索：embedding 取代 shingle、cosine 相似度取代 Jaccard，而「便宜過濾、精確驗證」這份同樣的合約會再出現在 HNSW 圖和 IVF/PQ 索引裡。向量資料庫說自己是「近似」的時候，講的就是這個 trade。</p>
 <p>兩條線最後也收在同一個工程紀律上：知道你的過濾器漏掉多少（false negative），然後把活下來的那些精確驗證一次。</p>
+<h2>附錄：LeetCode 題目完整題敘</h2>
+<p>以下用我自己的話重寫一遍：題目在問什麼、輸入輸出是什麼、一個算過的例子，以及那些真的會 改變「可以用哪種演算法」的限制。</p>
+<h3>LeetCode 72 - Edit Distance（編輯距離）</h3>
+<p><strong>題目。</strong> 給兩個單字，回傳把第一個變成第二個所需的最少操作次數。可用的操作有三種，每種算一次： 插入一個字元、刪除一個字元、替換一個字元。</p>
+<p><strong>輸入／輸出。</strong> 輸入兩個字串，輸出一個整數。</p>
+<p><strong>範例。</strong> <code>word1 = &quot;horse&quot;</code>、<code>word2 = &quot;ros&quot;</code> → <code>3</code>：<code>horse -&gt; rorse</code>（把 <code>h</code> 換成 <code>r</code>）、 <code>rorse -&gt; rose</code>（刪掉 <code>r</code>）、<code>rose -&gt; ros</code>（刪掉 <code>e</code>）。</p>
+<p><strong>限制。</strong> <code>0 &lt;= len(word1), len(word2) &lt;= 500</code>，小寫英文字母。<code>500 x 500</code> 的表也才二十五萬格， 所以有趣的不是速度，而是你能不能只用 <code>O(min(m, n))</code> 的空間做完。</p>
+<p><a href="https://leetcode.com/problems/edit-distance/">leetcode.com/problems/edit-distance</a></p>
+<h3>LeetCode 161 - One Edit Distance（相隔為 1 的編輯距離）</h3>
+<p><strong>題目。</strong> 若兩個字串<strong>剛好</strong>差一次編輯（插入一個、刪除一個或替換一個字元），回傳 <code>True</code>。 完全相同的兩個字串差零次，所以要回傳 <code>False</code>。</p>
+<p><strong>輸入／輸出。</strong> 輸入兩個字串，輸出布林值。</p>
+<p><strong>範例。</strong> <code>s = &quot;ab&quot;</code>、<code>t = &quot;acb&quot;</code> → <code>True</code>（插入 <code>c</code>）；<code>s = &quot;&quot;</code>、<code>t = &quot;&quot;</code> → <code>False</code>； <code>s = &quot;abc&quot;</code>、<code>t = &quot;abc&quot;</code> → <code>False</code>。</p>
+<p><strong>限制。</strong> <code>0 &lt;= len(s), len(t) &lt;= 10^4</code>。長度差超過 1 就直接 <code>False</code>，剩下的只要掃一遍 —— 這題正好說明：當你只需要一個「有沒有超過固定門檻」的是非題時，*不必*把整張編輯距離表算出來。</p>
+<p><a href="https://leetcode.com/problems/one-edit-distance/">leetcode.com/problems/one-edit-distance</a></p>
+<h3>LeetCode 1143 - Longest Common Subsequence（最長共同子序列）</h3>
+<p><strong>題目。</strong> 回傳兩個字串的最長共同子序列長度。子序列保持原來的順序但可以跳過字元，<strong>不需要</strong>連續； 如果沒有任何共同子序列，答案是 <code>0</code>。</p>
+<p><strong>輸入／輸出。</strong> 輸入兩個字串，輸出一個整數。</p>
+<p><strong>範例。</strong> <code>text1 = &quot;abcde&quot;</code>、<code>text2 = &quot;ace&quot;</code> → <code>3</code>，子序列是 <code>&quot;ace&quot;</code>；<code>text1 = &quot;abc&quot;</code>、 <code>text2 = &quot;def&quot;</code> → <code>0</code>。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(text1), len(text2) &lt;= 1000</code>，小寫英文字母。它和編輯距離是同一張 <code>O(m * n)</code> 的表、只是遞迴式不同 —— 這也正是這兩題該放在同一天的原因。</p>
+<p><a href="https://leetcode.com/problems/longest-common-subsequence/">leetcode.com/problems/longest-common-subsequence</a></p>
 <p>明天：平衡樹一次講完 — AVL、red-black、B-tree。</p>
 <p>程式碼與圖：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2027%20-%20edit%20distance%20and%20similarity">day 27 on GitHub</a></p>
 </body>

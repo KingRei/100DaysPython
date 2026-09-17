@@ -116,6 +116,26 @@ parent.children.insert(i + 1, right)</code></pre>
 <p>The price is <code>O(n)</code> extra space for that array. If you cannot spend it, the <strong>Day-Stout-Warren</strong> algorithm rotates the whole tree into a right-leaning vine and then back into balance in <code>O(1)</code> space - built out of the very same rotation primitive from the top of this article.</p>
 <h2>Why this matters later</h2>
 <p>Rotations and the in-order invariant come back the moment a tree carries aggregate data rather than just keys: an interval tree stores a subtree maximum in every node, and a rotation has to recompute it in exactly the same &quot;lower node first&quot; order as <code>update_height</code>. Segment trees and Fenwick trees drop rotations entirely and get their balance from the <em>index arithmetic</em> instead, which is the same trade the B-tree makes - fix the shape up front and you never have to repair it. And the B-tree itself is not a historical curiosity: it is the on-disk index in PostgreSQL, SQLite, MySQL&#x27;s InnoDB and essentially every filesystem, and its LSM-tree rival makes exactly one different assumption about which is more expensive, reads or writes.</p>
+<h2>Appendix: the LeetCode problems in full</h2>
+<p>Restated in my own words - what is being asked, what goes in and comes out, one worked example, and the constraints that actually change which algorithm is allowed.</p>
+<h3>LeetCode 108 - Convert Sorted Array to Binary Search Tree</h3>
+<p><strong>The task.</strong> Given an array sorted in ascending order, build a <strong>height-balanced</strong> binary search tree from it. Any valid answer is accepted.</p>
+<p><strong>Input / output.</strong> Input is <code>nums</code>; output is the root of the tree.</p>
+<p><strong>Example.</strong> <code>nums = [-10,-3,0,5,9]</code> → one valid answer is the tree rooted at <code>0</code> with left child <code>-3</code> (whose left child is <code>-10</code>) and right child <code>9</code> (whose left child is <code>5</code>).</p>
+<p><strong>Constraints.</strong> <code>1 &lt;= len(nums) &lt;= 10^4</code>, values in <code>[-10^4, 10^4]</code>, strictly increasing. The recursive &quot;take the middle element as the root, recurse on both halves&quot; is the whole solution, and it is the cleanest possible demonstration that balance is a property you can <em>construct</em> rather than repair.</p>
+<p><a href="https://leetcode.com/problems/convert-sorted-array-to-binary-search-tree/">leetcode.com/problems/convert-sorted-array-to-binary-search-tree</a></p>
+<h3>LeetCode 110 - Balanced Binary Tree</h3>
+<p><strong>The task.</strong> Decide whether a binary tree is height-balanced, meaning that for <strong>every</strong> node the heights of its two subtrees differ by at most one.</p>
+<p><strong>Input / output.</strong> Input is the root; output is a boolean.</p>
+<p><strong>Example.</strong> The tree <code>[3,9,20,null,null,15,7]</code> is balanced → <code>True</code>. The tree <code>[1,2,2,3,3,null,null,4,4]</code> is not → <code>False</code>. An empty tree is balanced.</p>
+<p><strong>Constraints.</strong> <code>0 &lt;= number of nodes &lt;= 5000</code>, values in <code>[-10^4, 10^4]</code>. Computing the height at every node separately is <code>O(n^2)</code>; returning &quot;height, or a sentinel meaning unbalanced&quot; from one post-order pass makes it <code>O(n)</code> - the AVL invariant, checked instead of maintained.</p>
+<p><a href="https://leetcode.com/problems/balanced-binary-tree/">leetcode.com/problems/balanced-binary-tree</a></p>
+<h3>LeetCode 1382 - Balance a Binary Search Tree</h3>
+<p><strong>The task.</strong> Given the root of a binary search tree, return <strong>a</strong> balanced binary search tree holding exactly the same values. Balanced here means the depth of the two subtrees of every node never differs by more than one. Any valid answer is accepted.</p>
+<p><strong>Input / output.</strong> Input is the root; output is the root of the rebuilt tree.</p>
+<p><strong>Example.</strong> The degenerate chain <code>1 -&gt; 2 -&gt; 3 -&gt; 4</code> (each value the right child of the previous) can be returned as the tree rooted at <code>2</code> with children <code>1</code> and <code>3</code>, and <code>4</code> as the right child of <code>3</code>.</p>
+<p><strong>Constraints.</strong> <code>1 &lt;= number of nodes &lt;= 10^4</code>, values in <code>[1, 10^5]</code> and unique. The two-line solution - in-order traversal into a sorted array, then LeetCode 108 - is a perfectly good <code>O(n)</code> rebuild, and it is worth contrasting with what an AVL or red-black tree does instead: pay a little on <em>every</em> insert so this rebuild is never needed.</p>
+<p><a href="https://leetcode.com/problems/balance-a-binary-search-tree/">leetcode.com/problems/balance-a-binary-search-tree</a></p>
 <p>Tomorrow: keeping a running answer over ranges, and why a tree with no pointers at all can beat one with them.</p>
 <p>The full runnable module, notebook, figures and an interactive walkthrough are in <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2028%20-%20balanced%20trees">day 28 on GitHub</a>.</p>
 </body>

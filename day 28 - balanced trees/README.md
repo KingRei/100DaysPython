@@ -148,6 +148,64 @@ array; when that is not available, the **Day-Stout-Warren** algorithm rotates th
 into a right-leaning vine and then back into balance in `O(1)` space, built out of the same
 rotation primitive from the top of this page.
 
+## The problems, stated in full
+
+Restated in my own words - what is being asked, what goes in and comes out, one worked
+example, and the constraints that actually change which algorithm is allowed.
+
+### LeetCode 108 - Convert Sorted Array to Binary Search Tree
+
+**The task.** Given an array sorted in ascending order, build a **height-balanced** binary
+search tree from it. Any valid answer is accepted.
+
+**Input / output.** Input is `nums`; output is the root of the tree.
+
+**Example.** `nums = [-10,-3,0,5,9]` → one valid answer is the tree rooted at `0` with left
+child `-3` (whose left child is `-10`) and right child `9` (whose left child is `5`).
+
+**Constraints.** `1 <= len(nums) <= 10^4`, values in `[-10^4, 10^4]`, strictly increasing.
+The recursive "take the middle element as the root, recurse on both halves" is the whole
+solution, and it is the cleanest possible demonstration that balance is a property you can
+*construct* rather than repair.
+
+[leetcode.com/problems/convert-sorted-array-to-binary-search-tree](https://leetcode.com/problems/convert-sorted-array-to-binary-search-tree/)
+
+### LeetCode 110 - Balanced Binary Tree
+
+**The task.** Decide whether a binary tree is height-balanced, meaning that for **every**
+node the heights of its two subtrees differ by at most one.
+
+**Input / output.** Input is the root; output is a boolean.
+
+**Example.** The tree `[3,9,20,null,null,15,7]` is balanced → `True`. The tree
+`[1,2,2,3,3,null,null,4,4]` is not → `False`. An empty tree is balanced.
+
+**Constraints.** `0 <= number of nodes <= 5000`, values in `[-10^4, 10^4]`. Computing the
+height at every node separately is `O(n^2)`; returning "height, or a sentinel meaning
+unbalanced" from one post-order pass makes it `O(n)` - the AVL invariant, checked instead
+of maintained.
+
+[leetcode.com/problems/balanced-binary-tree](https://leetcode.com/problems/balanced-binary-tree/)
+
+### LeetCode 1382 - Balance a Binary Search Tree
+
+**The task.** Given the root of a binary search tree, return **a** balanced binary search
+tree holding exactly the same values. Balanced here means the depth of the two subtrees of
+every node never differs by more than one. Any valid answer is accepted.
+
+**Input / output.** Input is the root; output is the root of the rebuilt tree.
+
+**Example.** The degenerate chain `1 -> 2 -> 3 -> 4` (each value the right child of the
+previous) can be returned as the tree rooted at `2` with children `1` and `3`, and `4` as
+the right child of `3`.
+
+**Constraints.** `1 <= number of nodes <= 10^4`, values in `[1, 10^5]` and unique. The
+two-line solution - in-order traversal into a sorted array, then LeetCode 108 - is a
+perfectly good `O(n)` rebuild, and it is worth contrasting with what an AVL or red-black
+tree does instead: pay a little on *every* insert so this rebuild is never needed.
+
+[leetcode.com/problems/balance-a-binary-search-tree](https://leetcode.com/problems/balance-a-binary-search-tree/)
+
 ## Complexity
 
 `n` = number of keys, `h` = height, `t` = B-tree minimum degree, `B` = page size.

@@ -163,6 +163,63 @@ longer side (or both, when the lengths match) makes the tails equal. `O(n)` time
 the general algorithm is the wrong tool once `k` is nailed down to 1, which is the bounded-band
 idea taken to its limit.
 
+## The problems, stated in full
+
+Restated in my own words - what is being asked, what goes in and comes out, one worked
+example, and the constraints that actually change which algorithm is allowed.
+
+### LeetCode 72 - Edit Distance
+
+**The task.** Given two words, return the minimum number of operations needed to turn the
+first into the second. Three operations are allowed, each costing one: insert a character,
+delete a character, replace a character.
+
+**Input / output.** Two strings in, one integer out.
+
+**Example.** `word1 = "horse"`, `word2 = "ros"` → `3`: `horse -> rorse` (replace `h`),
+`rorse -> rose` (delete `r`), `rose -> ros` (delete `e`).
+
+**Constraints.** `0 <= len(word1), len(word2) <= 500`, lowercase English letters. At `500`
+by `500` the full table is only a quarter of a million cells, so the interesting question
+is not speed but whether you can do it in `O(min(m, n))` space.
+
+[leetcode.com/problems/edit-distance](https://leetcode.com/problems/edit-distance/)
+
+### LeetCode 161 - One Edit Distance
+
+**The task.** Return `True` if the two strings are **exactly** one edit apart - one insert,
+one delete or one replace. Two identical strings are zero edits apart, so they return
+`False`.
+
+**Input / output.** Two strings in, a boolean out.
+
+**Example.** `s = "ab"`, `t = "acb"` → `True` (insert `c`). `s = ""`, `t = ""` → `False`.
+`s = "abc"`, `t = "abc"` → `False`.
+
+**Constraints.** `0 <= len(s), len(t) <= 10^4`. Lengths differing by more than one make the
+answer `False` immediately; the rest is a single scan, so this problem is the argument for
+*not* building the whole edit-distance table when you only need a yes/no about a fixed
+threshold.
+
+[leetcode.com/problems/one-edit-distance](https://leetcode.com/problems/one-edit-distance/)
+
+### LeetCode 1143 - Longest Common Subsequence
+
+**The task.** Return the length of the longest common subsequence of two strings. A
+subsequence keeps the original order but may skip characters; it does **not** have to be
+contiguous. If there is no common subsequence the answer is `0`.
+
+**Input / output.** Two strings in, one integer out.
+
+**Example.** `text1 = "abcde"`, `text2 = "ace"` → `3`, the subsequence `"ace"`.
+`text1 = "abc"`, `text2 = "def"` → `0`.
+
+**Constraints.** `1 <= len(text1), len(text2) <= 1000`, lowercase English letters. It is
+the same `O(m * n)` table as edit distance with a different recurrence - which is exactly
+why the two problems belong on the same day.
+
+[leetcode.com/problems/longest-common-subsequence](https://leetcode.com/problems/longest-common-subsequence/)
+
 ## Complexity
 
 `n`, `m` = lengths of the two inputs; `k` = distance threshold; `K` = MinHash signature length;

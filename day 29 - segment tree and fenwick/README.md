@@ -172,6 +172,65 @@ six lines. If they are and it does not, build the segment tree.
 
 ![img](https://github.com/KingRei/100DaysPython/blob/master/day%2029%20-%20segment%20tree%20and%20fenwick/imgs/day29_6.png?raw=true)
 
+## The problems, stated in full
+
+Restated in my own words - what is being asked, what goes in and comes out, one worked
+example, and the constraints that actually change which algorithm is allowed.
+
+### LeetCode 307 - Range Sum Query - Mutable
+
+**The task.** Build a `NumArray` over an integer array supporting two operations mixed in
+any order: `update(index, val)` sets one element, and `sumRange(left, right)` returns the
+sum of the inclusive slice.
+
+**Input / output.** Constructor takes `nums`; `update` returns nothing, `sumRange` returns
+an integer.
+
+**Example.** With `nums = [1,3,5]`: `sumRange(0, 2)` is `9`; after `update(1, 2)` the array
+is `[1,2,5]` and `sumRange(0, 2)` is `8`.
+
+**Constraints.** `1 <= len(nums) <= 3 * 10^4`, `-100 <= nums[i] <= 100`, up to `3 * 10^4`
+calls to `update` and `sumRange` combined. Both of the obvious answers fail: a plain array
+makes `sumRange` `O(n)`, a prefix-sum array makes `update` `O(n)`. This is exactly the
+problem a Fenwick tree or a segment tree exists to solve, at `O(log n)` for both.
+
+[leetcode.com/problems/range-sum-query-mutable](https://leetcode.com/problems/range-sum-query-mutable/)
+
+### LeetCode 315 - Count of Smaller Numbers After Self
+
+**The task.** For every position `i`, count how many elements to the **right** of `nums[i]`
+are strictly smaller than it, and return those counts as an array.
+
+**Input / output.** Input is `nums`; output is a list of the same length.
+
+**Example.** `nums = [5,2,6,1]` → `[2,1,1,0]`: to the right of `5` sit `2` and `1`; to the
+right of `2` sits `1`; to the right of `6` sits `1`; nothing is to the right of `1`.
+
+**Constraints.** `1 <= len(nums) <= 10^5`, values in `[-10^4, 10^4]`. The quadratic double
+loop is `10^10` operations, so it will not pass. Scanning from the right while inserting
+into a Fenwick tree indexed by value gives `O(n log U)`; a merge sort that counts
+inversions, or an order-statistic skip list, get there too.
+
+[leetcode.com/problems/count-of-smaller-numbers-after-self](https://leetcode.com/problems/count-of-smaller-numbers-after-self/)
+
+### LeetCode 370 - Range Addition
+
+**The task.** You start with an array of `n` zeros and a list of updates, each of the form
+`[start, end, inc]`, meaning "add `inc` to every element from index `start` to index `end`,
+inclusive". Apply them all and return the final array.
+
+**Input / output.** Input is `length` and `updates`; output is the resulting array.
+
+**Example.** `length = 5`, `updates = [[1,3,2],[2,4,3],[0,2,-2]]` → `[-2,0,3,5,3]`.
+
+**Constraints.** `1 <= length <= 10^5`, `0 <= len(updates) <= 10^4`, indices inside the
+array and `-1000 <= inc <= 1000`. Applying each update literally is `O(length * updates)`.
+The difference array - add `inc` at `start`, subtract it at `end + 1`, then take one prefix
+sum at the end - makes every update `O(1)`, and it is the same trick a Fenwick tree
+generalises into range-update plus point-query.
+
+[leetcode.com/problems/range-addition](https://leetcode.com/problems/range-addition/)
+
 ## Complexity
 
 `n` = number of elements, `k` = number of updates.

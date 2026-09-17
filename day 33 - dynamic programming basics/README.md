@@ -134,6 +134,101 @@ counts coincide (1005 states against 1001 cells), and tabulation wins on the con
 overhead, and no 1000-deep call stack. The recursive version there needs
 `sys.setrecursionlimit`, because the chain 1000, 999, 998, … is exactly Python's default limit.
 
+## The problems, stated in full
+
+Restated in my own words - what is being asked, what goes in and comes out, one worked
+example, and the constraints that actually change which algorithm is allowed.
+
+### LeetCode 70 - Climbing Stairs
+
+**The task.** You are climbing a staircase of `n` steps and can move either 1 or 2 steps at
+a time. How many distinct ways are there to reach the top?
+
+**Input / output.** One integer in, one integer out.
+
+**Example.** `n = 2` → `2` (`1+1`, `2`). `n = 3` → `3` (`1+1+1`, `1+2`, `2+1`).
+
+**Constraints.** `1 <= n <= 45`. The bound is small precisely so that the naive recursion
+*almost* works and then does not - which makes it the cleanest possible illustration of
+overlapping subproblems, and of the fact that the answer is just the Fibonacci sequence
+with a shifted index.
+
+[leetcode.com/problems/climbing-stairs](https://leetcode.com/problems/climbing-stairs/)
+
+### LeetCode 322 - Coin Change
+
+**The task.** Given coin denominations and a target `amount`, return the fewest coins that
+add up to exactly `amount`, or `-1` if no combination does. You have an unlimited supply of
+each denomination.
+
+**Input / output.** Input is `coins` and `amount`; output is an integer.
+
+**Example.** `coins = [1,2,5]`, `amount = 11` → `3` (`5 + 5 + 1`).
+`coins = [2]`, `amount = 3` → `-1`. `amount = 0` → `0`.
+
+**Constraints.** `1 <= len(coins) <= 12`, `1 <= coins[i] <= 2^31 - 1`, `0 <= amount <= 10^4`.
+Greedy - always take the biggest coin that fits - is wrong here: with `coins = [1,3,4]` and
+`amount = 6` greedy gives `4 + 1 + 1 = 3` coins while the optimum is `3 + 3 = 2`. The table
+is over amounts, and each amount reads from the *same* row, which makes it an unbounded
+knapsack.
+
+[leetcode.com/problems/coin-change](https://leetcode.com/problems/coin-change/)
+
+### LeetCode 518 - Coin Change II
+
+**The task.** Same coins, different question: count **how many combinations** of coins add
+up to `amount`. Order does not matter, so `1 + 2` and `2 + 1` are the same combination and
+are counted once. Return `0` if the amount cannot be made. Supply is unlimited.
+
+**Input / output.** Input is `amount` and `coins`; output is an integer count.
+
+**Example.** `amount = 5`, `coins = [1,2,5]` → `4`: `5`, `2+2+1`, `2+1+1+1`, `1+1+1+1+1`.
+`amount = 3`, `coins = [2]` → `0`. `amount = 0` → `1`, the empty combination.
+
+**Constraints.** `1 <= len(coins) <= 300`, `1 <= coins[i] <= 5000`, coins distinct,
+`0 <= amount <= 5000`; the answer fits in a signed 32-bit integer. Compare this with
+LeetCode 377 - the only difference in the code is which loop is on the outside, and that
+single swap is the difference between counting combinations and counting permutations.
+
+[leetcode.com/problems/coin-change-ii](https://leetcode.com/problems/coin-change-ii/)
+
+### LeetCode 377 - Combination Sum IV
+
+**The task.** Given an array of **distinct** positive integers and a `target`, count the
+number of ways to add elements up to `target`. Despite the name, **order matters** here -
+different orderings of the same multiset are counted separately. Elements may be reused.
+
+**Input / output.** Input is `nums` and `target`; output is an integer count.
+
+**Example.** `nums = [1,2,3]`, `target = 4` → `7`: `1+1+1+1`, `1+1+2`, `1+2+1`, `2+1+1`,
+`1+3`, `3+1`, `2+2`.
+
+**Constraints.** `1 <= len(nums) <= 200`, `1 <= nums[i] <= 1000`, all distinct,
+`1 <= target <= 1000`; the answer fits in 32 bits. The follow-up asks what changes if
+negative numbers are allowed - the answer is that it breaks, because a zero-sum cycle makes
+the count infinite, and you would have to bound the number of terms.
+
+[leetcode.com/problems/combination-sum-iv](https://leetcode.com/problems/combination-sum-iv/)
+
+### LeetCode 139 - Word Break
+
+**The task.** Given a string `s` and a dictionary of words, decide whether `s` can be cut
+into a sequence of dictionary words separated by spaces. Words may be reused as many times
+as you like, and not every dictionary word has to be used.
+
+**Input / output.** Input is `s` and `wordDict`; output is a boolean.
+
+**Example.** `s = "leetcode"`, `wordDict = ["leet","code"]` → `True`.
+`s = "catsandog"`, `wordDict = ["cats","dog","sand","and","cat"]` → `False`, because every
+segmentation runs out of string in the middle of a word.
+
+**Constraints.** `1 <= len(s) <= 300`, `1 <= len(wordDict) <= 1000`, each word at most `20`
+characters, all lowercase, dictionary words distinct. The subproblem is "is the prefix of
+length `i` breakable?", which is `O(n * m)` - the shape of the whole day's lesson, only the
+table holds booleans instead of counts.
+
+[leetcode.com/problems/word-break](https://leetcode.com/problems/word-break/)
+
 ## Complexity
 
 | Operation | Time | Space |

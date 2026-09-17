@@ -129,6 +129,78 @@ answers it in one pass; the separator must appear in neither half, or the border
 the join and over-count. LC 1044 (longest duplicate substring) is the Rabin-Karp side: binary
 search on the length, and a verified rolling hash at each candidate.
 
+## The problems, stated in full
+
+Restated in my own words - what is being asked, what goes in and comes out, one worked
+example, and the constraints that actually change which algorithm is allowed.
+
+### LeetCode 28 - Find the Index of the First Occurrence in a String
+
+**The task.** Given two strings `haystack` and `needle`, return the index of the first
+occurrence of `needle` inside `haystack`, or `-1` if it does not occur.
+
+**Input / output.** Two strings in, one integer out.
+
+**Example.** `haystack = "sadbutsad"`, `needle = "sad"` → `0` (it also occurs at `6`, but
+we want the first). `haystack = "leetcode"`, `needle = "leeto"` → `-1`.
+
+**Constraints.** `1 <= len(haystack), len(needle) <= 10^4`, lowercase English letters. The
+naive double loop passes at this size, which is exactly why it is the right place to
+*compare* it against KMP rather than to be forced into KMP.
+
+[leetcode.com/problems/find-the-index-of-the-first-occurrence-in-a-string](https://leetcode.com/problems/find-the-index-of-the-first-occurrence-in-a-string/)
+
+### LeetCode 214 - Shortest Palindrome
+
+**The task.** You may only add characters **in front of** the given string. Return the
+shortest palindrome you can produce that way.
+
+**Input / output.** One string in, one string out.
+
+**Example.** `s = "aacecaaa"` → `"aaacecaaa"` (one `a` added). `s = "abcd"` → `"dcbabcd"`
+(three characters added).
+
+**Constraints.** `0 <= len(s) <= 5 * 10^4`, lowercase English letters. The reformulation is
+the trick: adding as little as possible in front means finding the *longest palindromic
+prefix* of `s`, which is a prefix-function question in disguise once you run KMP over
+`s + '#' + reversed(s)`.
+
+[leetcode.com/problems/shortest-palindrome](https://leetcode.com/problems/shortest-palindrome/)
+
+### LeetCode 459 - Repeated Substring Pattern
+
+**The task.** Decide whether the string can be built by taking some proper substring and
+concatenating two or more copies of it.
+
+**Input / output.** One string in, a boolean out.
+
+**Example.** `"abab"` → `True` (`"ab"` twice). `"aba"` → `False`.
+`"abcabcabcabc"` → `True` (`"abc"` four times, or `"abcabc"` twice).
+
+**Constraints.** `1 <= len(s) <= 10^4`, lowercase English letters. The one-line solution
+`s in (s + s)[1:-1]` is cute, but the KMP reading is the one that generalises: the string
+is periodic exactly when `n - failure[n-1]` divides `n` and is smaller than `n`.
+
+[leetcode.com/problems/repeated-substring-pattern](https://leetcode.com/problems/repeated-substring-pattern/)
+
+### LeetCode 1044 - Longest Duplicate Substring
+
+**The task.** Find a longest substring that occurs **at least twice** in `s`; the two
+occurrences are allowed to overlap. Return any one of them, or the empty string if no
+substring repeats.
+
+**Input / output.** One string in, one string out.
+
+**Example.** `s = "banana"` → `"ana"` (it occurs at index `1` and index `3`, overlapping).
+`s = "abcd"` → `""`.
+
+**Constraints.** `2 <= len(s) <= 3 * 10^4`, lowercase English letters. "Does a duplicate of
+length `L` exist?" is monotone in `L`, so the standard solution binary-searches `L` and
+answers each question with Rabin-Karp rolling hashes - or, without any randomness, reads
+the answer straight off a suffix array plus its LCP array.
+
+[leetcode.com/problems/longest-duplicate-substring](https://leetcode.com/problems/longest-duplicate-substring/)
+
 ## Complexity
 
 `n` = text length, `m` = pattern length, `sigma` = alphabet size, `k` = number of patterns.

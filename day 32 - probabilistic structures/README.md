@@ -204,6 +204,29 @@ HyperLogLog is what Redis `PFCOUNT`, BigQuery `APPROX_COUNT_DISTINCT` and Presto
 network flow monitoring, trending topics and per-key rate limiting, wherever heavy hitters
 matter and one counter per key does not fit.
 
+## The problems, stated in full
+
+Restated in my own words - what is being asked, what goes in and comes out, one worked
+example, and the constraints that actually change which algorithm is allowed.
+
+### LeetCode 347 - Top K Frequent Elements
+
+**The task.** Given an integer array and an integer `k`, return the `k` most frequent
+elements. The order of the returned elements does not matter.
+
+**Input / output.** Input is `nums` and `k`; output is a list of `k` values.
+
+**Example.** `nums = [1,1,1,2,2,3]`, `k = 2` → `[1,2]`. `nums = [1]`, `k = 1` → `[1]`.
+
+**Constraints.** `1 <= len(nums) <= 10^5`, values in `[-10^4, 10^4]`, `k` is between `1` and
+the number of distinct values, and the answer is guaranteed to be unique. The problem
+explicitly demands better than `O(n log n)`, so sorting the whole frequency table is out -
+a size-`k` heap or bucket-by-count works. The version worth thinking about is the one the
+constraints hide: the same question over a stream too large to hold a counter for, which is
+where a Count-Min sketch plus a small heap takes over and the answer becomes approximate.
+
+[leetcode.com/problems/top-k-frequent-elements](https://leetcode.com/problems/top-k-frequent-elements/)
+
 ## Complexity
 
 | Operation | Time | Space |

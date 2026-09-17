@@ -114,6 +114,20 @@ forward pointers per node        1 / (1 - p) expected  -
 sorted linked list, same search  O(n)                  O(n)</code></pre>
 <p>Tomorrow: probabilistic structures that trade accuracy for space - Bloom filters, HyperLogLog and Count-Min Sketch. Today randomness bought us a shape; tomorrow it buys memory.</p>
 <p>Everything here runs: <code>python skip_list.py</code> prints all of it, the notebook carries the outputs, and <code>demo.html</code> animates the search staircase, the insert splice, the spans, the missing bump and LeetCode 1206 side by side.</p>
+<h2>Appendix: the LeetCode problems in full</h2>
+<p>Restated in my own words - what is being asked, what goes in and comes out, one worked example, and the constraints that actually change which algorithm is allowed.</p>
+<h3>LeetCode 1206 - Design Skiplist</h3>
+<p><strong>The task.</strong> Implement a skip list from scratch, without using any built-in balanced-tree or sorted-container library. It must support <code>search(target)</code> returning a boolean, <code>add(num)</code> inserting a value (duplicates are allowed, so the same number can be present several times), and <code>erase(num)</code> removing <strong>one</strong> occurrence and returning whether anything was removed.</p>
+<p><strong>Input / output.</strong> Operation list in, booleans out of <code>search</code> and <code>erase</code>.</p>
+<p><strong>Example.</strong> <code>add(1)</code>, <code>add(2)</code>, <code>add(3)</code>, <code>search(0)</code> → <code>False</code>, <code>add(4)</code>, <code>search(1)</code> → <code>True</code>, <code>erase(0)</code> → <code>False</code>, <code>erase(1)</code> → <code>True</code>, <code>erase(1)</code> → <code>False</code>.</p>
+<p><strong>Constraints.</strong> <code>0 &lt;= num, target &lt;= 2 * 10^4</code>, up to <code>5 * 10^4</code> calls. Duplicates are the trap: the comparison used while descending the levels has to be a strict <code>&lt;</code>, not <code>&lt;=</code>, or <code>erase</code> will delete the wrong copy and <code>add</code> will place duplicates on the wrong side.</p>
+<p><a href="https://leetcode.com/problems/design-skiplist/">leetcode.com/problems/design-skiplist</a></p>
+<h3>LeetCode 315 - Count of Smaller Numbers After Self</h3>
+<p><strong>The task.</strong> For every position <code>i</code>, count how many elements to the <strong>right</strong> of <code>nums[i]</code> are strictly smaller than it, and return those counts as an array.</p>
+<p><strong>Input / output.</strong> Input is <code>nums</code>; output is a list of the same length.</p>
+<p><strong>Example.</strong> <code>nums = [5,2,6,1]</code> → <code>[2,1,1,0]</code>: to the right of <code>5</code> sit <code>2</code> and <code>1</code>; to the right of <code>2</code> sits <code>1</code>; to the right of <code>6</code> sits <code>1</code>; nothing is to the right of <code>1</code>.</p>
+<p><strong>Constraints.</strong> <code>1 &lt;= len(nums) &lt;= 10^5</code>, values in <code>[-10^4, 10^4]</code>. The quadratic double loop is <code>10^10</code> operations, so it will not pass. Scanning from the right while inserting into a Fenwick tree indexed by value gives <code>O(n log U)</code>; a merge sort that counts inversions, or an order-statistic skip list, get there too.</p>
+<p><a href="https://leetcode.com/problems/count-of-smaller-numbers-after-self/">leetcode.com/problems/count-of-smaller-numbers-after-self</a></p>
 <p><a href="https://github.com/KingRei/100DaysPython/tree/master/day%2031%20-%20skip%20list">day 31 on GitHub</a></p>
 </body>
 </html>

@@ -105,6 +105,44 @@ wide and cannot lie inside a bucket. Keep one min and one max per bucket, never 
 order within a bucket, sweep once. The linear answer is not a cleverer sort - it comes from
 noticing which part of the sort can be skipped.
 
+## The problems, stated in full
+
+Restated in my own words - what is being asked, what goes in and comes out, one worked
+example, and the constraints that actually change which algorithm is allowed.
+
+### LeetCode 75 - Sort Colors
+
+**The task.** You are given an array whose every element is `0`, `1` or `2` - think red,
+white and blue objects thrown in a box. Rearrange the array *in place* so that all the
+`0`s come first, then all the `1`s, then all the `2`s. You may not call the library sort.
+
+**Input / output.** Input is the array `nums`; there is no return value, the array itself
+must end up sorted.
+
+**Example.** `nums = [2,0,2,1,1,0]` becomes `[0,0,1,1,2,2]`.
+
+**Constraints.** `1 <= len(nums) <= 300`, and every `nums[i]` is one of `0`, `1`, `2`.
+The interesting part is the follow-up: do it in one pass with `O(1)` extra space.
+
+[leetcode.com/problems/sort-colors](https://leetcode.com/problems/sort-colors/)
+
+### LeetCode 164 - Maximum Gap
+
+**The task.** Given an unsorted integer array, return the largest difference between two
+*successive* elements once the array is sorted. If the array has fewer than two elements
+the answer is `0`.
+
+**Input / output.** Input is `nums`; output is a single integer.
+
+**Example.** `nums = [3,6,9,1]`. Sorted it is `[1,3,6,9]`, the successive gaps are
+`2, 3, 3`, so the answer is `3`.
+
+**Constraints.** `1 <= len(nums) <= 10^5` and `0 <= nums[i] <= 10^9`. The problem
+explicitly asks for **linear time and linear extra space**, which is what rules out
+"just sort it" and forces a bucket/radix argument.
+
+[leetcode.com/problems/maximum-gap](https://leetcode.com/problems/maximum-gap/)
+
 ## Complexity
 | Operation | Time | Space |
 |---|---|---|

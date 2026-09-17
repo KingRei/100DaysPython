@@ -95,6 +95,38 @@ for a in range(1, amount + 1):      # 金額迴圈在外層
 <p><code>70</code> 爬樓梯（n = 10 是 89）、<code>322</code> 硬幣找零（<code>[1,2,5]</code> 湊 11 是 3，<code>[2]</code> 湊 3 是 -1）、<code>518</code> 組合（4）、<code>377</code> 排列（<code>[1,2,3]</code> 湊 4 是 7）、<code>139</code> word break。五題、一張表、三個運算子。面試時值得講出來的那個 caveat 就是上面那段：計數題要的是組合就把「物品」迴圈放外層，要的是序列就把「目標」迴圈放外層 —— 動手打字之前，先把你在數哪一種唸出來。</p>
 <h2>這件事之後會用在哪</h2>
 <p>Part 5 接下來全都是同一個改寫，換的只是狀態。背包問題把「金額」換成「容量」，並且把物品那個維度攤開來寫；編輯距離與 LCS 把表變成二維，填表順序變成雙層迴圈。再遠一點，Viterbi 解碼就是在隱藏狀態上做硬幣找零，beam search 是表大到填不完時的折衷，而 transformer 的 KV cache 其實就是「有固定預算的 memoization」—— 同樣是不要重算已經知道的東西，只是被迫住在有限的記憶體裡。</p>
+<h2>附錄：LeetCode 題目完整題敘</h2>
+<p>以下用我自己的話重寫一遍：題目在問什麼、輸入輸出是什麼、一個算過的例子，以及那些真的會 改變「可以用哪種演算法」的限制。</p>
+<h3>LeetCode 70 - Climbing Stairs（爬樓梯）</h3>
+<p><strong>題目。</strong> 你要爬一段 <code>n</code> 階的樓梯，每次可以走 1 階或 2 階。總共有幾種不同的爬法？</p>
+<p><strong>輸入／輸出。</strong> 輸入一個整數，輸出一個整數。</p>
+<p><strong>範例。</strong> <code>n = 2</code> → <code>2</code>（<code>1+1</code>、<code>2</code>）；<code>n = 3</code> → <code>3</code>（<code>1+1+1</code>、<code>1+2</code>、<code>2+1</code>）。</p>
+<p><strong>限制。</strong> <code>1 &lt;= n &lt;= 45</code>。上限刻意設得很小，剛好讓樸素遞迴*差一點*就能過、然後過不了 —— 這使它成為「重疊子問題」最乾淨的示範，也順便讓人看見答案其實就是位移過的費氏數列。</p>
+<p><a href="https://leetcode.com/problems/climbing-stairs/">leetcode.com/problems/climbing-stairs</a></p>
+<h3>LeetCode 322 - Coin Change（零錢兌換）</h3>
+<p><strong>題目。</strong> 給一組硬幣面額和一個目標金額 <code>amount</code>，回傳湊出剛好 <code>amount</code> 所需的最少硬幣數；湊不 出來就回 <code>-1</code>。每種面額的數量無限。</p>
+<p><strong>輸入／輸出。</strong> 輸入 <code>coins</code> 與 <code>amount</code>，輸出一個整數。</p>
+<p><strong>範例。</strong> <code>coins = [1,2,5]</code>、<code>amount = 11</code> → <code>3</code>（<code>5 + 5 + 1</code>）；<code>coins = [2]</code>、<code>amount = 3</code> → <code>-1</code>；<code>amount = 0</code> → <code>0</code>。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(coins) &lt;= 12</code>、<code>1 &lt;= coins[i] &lt;= 2^31 - 1</code>、<code>0 &lt;= amount &lt;= 10^4</code>。貪心 （每次都拿放得下的最大面額）在這裡是錯的：<code>coins = [1,3,4]</code>、<code>amount = 6</code> 時貪心給 <code>4 + 1 + 1</code> 共 3 枚，最佳解卻是 <code>3 + 3</code> 兩枚。表格是沿著金額建的，而且每個金額都讀*同一列* —— 這就是完全背包。</p>
+<p><a href="https://leetcode.com/problems/coin-change/">leetcode.com/problems/coin-change</a></p>
+<h3>LeetCode 518 - Coin Change II（零錢兌換 II）</h3>
+<p><strong>題目。</strong> 同樣的硬幣，不同的問題：數出有<strong>幾種組合</strong>可以湊出 <code>amount</code>。順序不算，所以 <code>1 + 2</code> 和 <code>2 + 1</code> 是同一種、只算一次。湊不出來就回 <code>0</code>。每種面額數量無限。</p>
+<p><strong>輸入／輸出。</strong> 輸入 <code>amount</code> 與 <code>coins</code>，輸出一個計數。</p>
+<p><strong>範例。</strong> <code>amount = 5</code>、<code>coins = [1,2,5]</code> → <code>4</code>：<code>5</code>、<code>2+2+1</code>、<code>2+1+1+1</code>、<code>1+1+1+1+1</code>。 <code>amount = 3</code>、<code>coins = [2]</code> → <code>0</code>；<code>amount = 0</code> → <code>1</code>，也就是空組合。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(coins) &lt;= 300</code>、<code>1 &lt;= coins[i] &lt;= 5000</code>、面額互不相同、<code>0 &lt;= amount &lt;= 5000</code>， 答案保證放得進 32 位元有號整數。拿它跟 LeetCode 377 對照：程式碼唯一的差別是哪一層迴圈在外面， 而這一個交換就決定了你數的是組合還是排列。</p>
+<p><a href="https://leetcode.com/problems/coin-change-ii/">leetcode.com/problems/coin-change-ii</a></p>
+<h3>LeetCode 377 - Combination Sum IV（組合總和 IV）</h3>
+<p><strong>題目。</strong> 給一組<strong>互不相同</strong>的正整數和一個 <code>target</code>，數出總和等於 <code>target</code> 的方法數。名字雖然 叫 combination，但這題<strong>順序有差</strong> —— 同一組數字的不同排列要分開算。元素可以重複使用。</p>
+<p><strong>輸入／輸出。</strong> 輸入 <code>nums</code> 與 <code>target</code>，輸出一個計數。</p>
+<p><strong>範例。</strong> <code>nums = [1,2,3]</code>、<code>target = 4</code> → <code>7</code>：<code>1+1+1+1</code>、<code>1+1+2</code>、<code>1+2+1</code>、<code>2+1+1</code>、<code>1+3</code>、 <code>3+1</code>、<code>2+2</code>。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(nums) &lt;= 200</code>、<code>1 &lt;= nums[i] &lt;= 1000</code>、互不相同、<code>1 &lt;= target &lt;= 1000</code>， 答案放得進 32 位元。follow-up 問：如果允許負數會怎樣？答案是整題會壞掉 —— 只要出現一個總和為零 的循環，方法數就變成無限多，你必須額外限制項數。</p>
+<p><a href="https://leetcode.com/problems/combination-sum-iv/">leetcode.com/problems/combination-sum-iv</a></p>
+<h3>LeetCode 139 - Word Break（單字拆分）</h3>
+<p><strong>題目。</strong> 給一個字串 <code>s</code> 和一本字典，判斷 <code>s</code> 能不能被切成一串以空白分隔的字典單字。單字可以 重複使用任意多次，也不必把字典裡的字都用上。</p>
+<p><strong>輸入／輸出。</strong> 輸入 <code>s</code> 與 <code>wordDict</code>，輸出布林值。</p>
+<p><strong>範例。</strong> <code>s = &quot;leetcode&quot;</code>、<code>wordDict = [&quot;leet&quot;,&quot;code&quot;]</code> → <code>True</code>。 <code>s = &quot;catsandog&quot;</code>、<code>wordDict = [&quot;cats&quot;,&quot;dog&quot;,&quot;sand&quot;,&quot;and&quot;,&quot;cat&quot;]</code> → <code>False</code>，因為每一種切法都會 在某個單字中間把字串用完。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(s) &lt;= 300</code>、<code>1 &lt;= len(wordDict) &lt;= 1000</code>，每個單字最長 <code>20</code> 個字元，全小寫， 字典中的字互不相同。子問題是「長度 <code>i</code> 的前綴切不切得開」，複雜度 <code>O(n * m)</code> —— 和這一天其他題 是同一個形狀，只是表格裡放的是布林值而不是計數。</p>
+<p><a href="https://leetcode.com/problems/word-break/">leetcode.com/problems/word-break</a></p>
 <p>明天：背包問題三兄弟 —— 0/1、完全、多重。迴圈順序的問題會換一頂帽子再回來一次，而「這個物品能不能重複拿」會發現自己跟「內層迴圈往哪個方向跑」是同一個問題。</p>
 <p>所有程式碼、notebook、圖檔與互動式演示都在 repo： <a href="https://github.com/KingRei/100DaysPython">github.com/KingRei/100DaysPython</a></p>
 </body>

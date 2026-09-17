@@ -126,6 +126,26 @@ victim = heapq.nsmallest(1, entries, key=strategy.get_priority)[0]</code></pre>
 <h2>這些東西後面會用在哪</h2>
 <p>這套機制不是推論引擎旁邊的裝飾品，它是承重牆。KV cache 存的是每段 prompt 前綴已經算好的 attention key/value，所以跟舊請求共用前綴的新請求可以整段跳過不算。radix tree（Day 24）負責找出最長的共用前綴。而當 GPU 記憶體滿掉時，總得丟掉一些東西——丟誰，就是上面那幾條策略決定的，只是對象從單純的 key 換成樹的節點。</p>
 <p>只是那邊的賭注不一樣。網頁快取丟掉一個 key，代價是多一趟資料庫。丟掉一個前綴節點，代價是當初算它的那段 GPU 時間；而「一堆彼此無關的 prompt 連續打進來」這種掃描形狀的流量，正好就是把純 LRU 的樹逼到零重用的那種模式。這也是為什麼它是一個啟動參數：正確答案取決於引擎事先看不到的流量。</p>
+<h2>附錄：LeetCode 題目完整題敘</h2>
+<p>以下用我自己的話重寫一遍：題目在問什麼、輸入輸出是什麼、一個算過的例子，以及那些真的會 改變「可以用哪種演算法」的限制。</p>
+<h3>LeetCode 146 - LRU Cache（LRU 快取）</h3>
+<p><strong>題目。</strong> 設計一個固定容量的快取，提供 <code>get(key)</code> 與 <code>put(key, value)</code>。<code>get</code> 回傳值，key 不在 就回 <code>-1</code>。<code>put</code> 新增或覆寫；如果插入後超過容量，就淘汰<strong>最久沒被用到</strong>的 key。<code>get</code> 和 <code>put</code> 都算「用到」。</p>
+<p><strong>輸入／輸出。</strong> 建構子吃 <code>capacity</code>；<code>get</code> 回傳整數，<code>put</code> 沒有回傳值。</p>
+<p><strong>範例。</strong> 容量為 <code>2</code>：<code>put(1,1)</code>、<code>put(2,2)</code>、<code>get(1)</code> → <code>1</code>，接著 <code>put(3,3)</code> 會淘汰 key <code>2</code> （因為 <code>get(1)</code> 剛剛把 key <code>1</code> 刷新了），所以 <code>get(2)</code> → <code>-1</code>。</p>
+<p><strong>限制。</strong> <code>1 &lt;= capacity &lt;= 3000</code>、<code>0 &lt;= key &lt;= 10^4</code>、<code>0 &lt;= value &lt;= 10^5</code>，最多 <code>2 * 10^5</code> 次呼叫。兩個操作都必須是<strong>平均 <code>O(1)</code></strong>，這一條就把「掃過去找最舊的」或「對時間戳排序」全部排除， 只剩下 hash map 加雙向鏈結串列。</p>
+<p><a href="https://leetcode.com/problems/lru-cache/">leetcode.com/problems/lru-cache</a></p>
+<h3>LeetCode 460 - LFU Cache（LFU 快取）</h3>
+<p><strong>題目。</strong> 外型和 LRU 一樣，淘汰規則不同。每個 key 帶一個使用次數，對該 key 的每次 <code>get</code> 和 <code>put</code> 都加一。快取滿的時候，淘汰<strong>次數最小</strong>的 key；如果有多個並列，就淘汰其中最久沒用的那個。</p>
+<p><strong>輸入／輸出。</strong> 建構子吃 <code>capacity</code>；<code>get</code> 回傳值或 <code>-1</code>，<code>put</code> 沒有回傳值。</p>
+<p><strong>範例。</strong> 容量 <code>2</code>：<code>put(1,1)</code>、<code>put(2,2)</code>、<code>get(1)</code> → <code>1</code>（此時 key <code>1</code> 次數為 2、key <code>2</code> 為 1）， <code>put(3,3)</code> 淘汰 key <code>2</code>。之後 <code>get(2)</code> → <code>-1</code>、<code>get(3)</code> → <code>3</code>。</p>
+<p><strong>限制。</strong> <code>0 &lt;= capacity &lt;= 10^4</code>，key 與 value 最大到 <code>10^9</code>，最多 <code>2 * 10^5</code> 次呼叫，而且兩個 操作一樣要求<strong>平均 <code>O(1)</code></strong>。這個 <code>O(1)</code> 就是整題的難處：找最小次數不能用搜尋 —— 所以標準解是 每個頻次各掛一條串列，再維護一個每次最多只動一格的 <code>min_freq</code>。</p>
+<p><a href="https://leetcode.com/problems/lfu-cache/">leetcode.com/problems/lfu-cache</a></p>
+<h3>LeetCode 432 - All O`one Data Structure（全 O(1) 的資料結構）</h3>
+<p><strong>題目。</strong> 設計一個存「字串 key → 正整數次數」的結構，支援四個操作：<code>inc(key)</code> 加一（key 不存在 就以次數 1 建立）、<code>dec(key)</code> 減一並在次數歸零時把 key 移除、<code>getMaxKey()</code> 回傳次數最大的任一個 key、<code>getMinKey()</code> 回傳次數最小的任一個 key。結構為空時兩個 getter 都回傳 <code>&quot;&quot;</code>。</p>
+<p><strong>輸入／輸出。</strong> 輸入操作串列，輸出兩個 getter 的字串。</p>
+<p><strong>範例。</strong> <code>inc(&quot;hello&quot;)</code>、<code>inc(&quot;hello&quot;)</code>、<code>getMaxKey()</code> → <code>&quot;hello&quot;</code>、<code>getMinKey()</code> → <code>&quot;hello&quot;</code>， 再 <code>inc(&quot;leet&quot;)</code> 之後，<code>getMaxKey()</code> → <code>&quot;hello&quot;</code>、<code>getMinKey()</code> → <code>&quot;leet&quot;</code>。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(key) &lt;= 10</code>，最多 <code>5 * 10^4</code> 次呼叫，而且 <code>dec</code> 保證只會用在目前存在的 key。 <strong>每個操作都必須是 <code>O(1)</code></strong> —— 這是把 LFU 的桶子結構推到極致：一條由「次數桶」組成的雙向鏈結串列， 最大值和最小值就是兩端。</p>
+<p><a href="https://leetcode.com/problems/all-oone-data-structure/">leetcode.com/problems/all-oone-data-structure</a></p>
 <p>明天換一個放棄平衡、改用擲硬幣的排序結構——而且它照樣是 <code>O(log n)</code>。</p>
 <p>可執行的模組、notebook、兩篇文章，以及一頁把上面每個結構都動起來的互動演示，都在 repo：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2030%20-%20lru%20and%20lfu%20cache">day 30 on GitHub</a>。</p>
 </body>

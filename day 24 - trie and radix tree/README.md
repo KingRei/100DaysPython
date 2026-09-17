@@ -94,6 +94,66 @@ depth is still the pattern length, but no longer a single path. LC 648 (replace 
 longest prefix match on English: walk the trie until you hit a marked node and stop, which is
 the routing table again with roots instead of subnets.
 
+## The problems, stated in full
+
+Restated in my own words - what is being asked, what goes in and comes out, one worked
+example, and the constraints that actually change which algorithm is allowed.
+
+### LeetCode 208 - Implement Trie (Prefix Tree)
+
+**The task.** Implement a trie class with three methods: `insert(word)` stores a word,
+`search(word)` returns `True` only if that exact word was inserted, and
+`startsWith(prefix)` returns `True` if any stored word begins with that prefix.
+
+**Input / output.** The judge sends a list of operations and arguments and compares the
+returned values; the constructor takes nothing.
+
+**Example.** After `insert("apple")`: `search("apple")` is `True`, `search("app")` is
+`False`, `startsWith("app")` is `True`. After a further `insert("app")`, `search("app")`
+becomes `True`.
+
+**Constraints.** `1 <= len(word) <= 2000`, lowercase English letters only, and up to
+`3 * 10^4` calls in total. The whole point is that `search` and `startsWith` must cost
+`O(len(word))` regardless of how many words are stored.
+
+[leetcode.com/problems/implement-trie-prefix-tree](https://leetcode.com/problems/implement-trie-prefix-tree/)
+
+### LeetCode 211 - Design Add and Search Words Data Structure
+
+**The task.** Build a `WordDictionary` supporting `addWord(word)` and `search(word)`, where
+the *search* string may contain `.` characters, each of which matches any single letter.
+`search` returns `True` if at least one stored word matches.
+
+**Input / output.** Same operation-list format as LeetCode 208.
+
+**Example.** Add `"bad"`, `"dad"`, `"mad"`. Then `search("pad")` is `False`,
+`search("bad")` is `True`, `search(".ad")` is `True`, and `search("b..")` is `True`.
+
+**Constraints.** `1 <= len(word) <= 25`; added words are lowercase letters, searched words
+are lowercase letters and dots, with **at most 2 dots**; up to `10^4` calls. That dot-limit
+is the reason a branching DFS over the trie stays cheap enough.
+
+[leetcode.com/problems/design-add-and-search-words-data-structure](https://leetcode.com/problems/design-add-and-search-words-data-structure/)
+
+### LeetCode 648 - Replace Words
+
+**The task.** You get a dictionary of roots and a sentence. Every word in the sentence that
+has a root as a prefix must be replaced by that root; if several roots match, use the
+**shortest** one. Words with no matching root are left alone.
+
+**Input / output.** Input is `dictionary` (a list of roots) and `sentence` (words separated
+by single spaces); output is the rewritten sentence.
+
+**Example.** `dictionary = ["cat","bat","rat"]`,
+`sentence = "the cattle was rattled by the battery"` →
+`"the cat was rat by the bat"`.
+
+**Constraints.** `1 <= len(dictionary) <= 1000`, each root `1..100` characters, the sentence
+up to `10^6` characters, all lowercase letters and single spaces. The size of the sentence
+is what makes "for each word, test every root" too slow and a trie walk the right answer.
+
+[leetcode.com/problems/replace-words](https://leetcode.com/problems/replace-words/)
+
 ## Complexity
 
 `L` = key length, `n` = number of keys, `T` = total characters stored, `sigma` = alphabet size.

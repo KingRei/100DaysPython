@@ -199,6 +199,102 @@ this table is not a counterexample. It also tells you exactly when to reach for 
 capacities, small integer weights. Floating-point or astronomically large capacities need
 branch and bound or an approximation scheme instead.
 
+## The problems, stated in full
+
+Restated in my own words - what is being asked, what goes in and comes out, one worked
+example, and the constraints that actually change which algorithm is allowed.
+
+### LeetCode 416 - Partition Equal Subset Sum
+
+**The task.** Given an array of positive integers, decide whether it can be split into two
+subsets whose sums are equal. Every element must go into exactly one of the two subsets.
+
+**Input / output.** Input is `nums`; output is a boolean.
+
+**Example.** `nums = [1,5,11,5]` → `True`, as `[1,5,5]` and `[11]` both sum to `11`.
+`nums = [1,2,3,5]` → `False`, the total `11` is odd so it cannot even be halved.
+`nums = [2,2,3,5]` → `False`: the total `12` is even, but no subset reaches `6`.
+
+**Constraints.** `1 <= len(nums) <= 200`, `1 <= nums[i] <= 100`, so the total is at most
+`20000`. Halve the total (bail out if it is odd) and the question becomes "is there a subset
+summing to exactly half?" - a 0/1 knapsack where the weight *is* the value and you only care
+whether a cell is reachable, which is why a bitset can answer it 64 numbers at a time.
+
+[leetcode.com/problems/partition-equal-subset-sum](https://leetcode.com/problems/partition-equal-subset-sum/)
+
+### LeetCode 494 - Target Sum
+
+**The task.** Put a `+` or a `-` in front of every number in the array and concatenate them
+into an expression. Count how many of the `2^n` sign assignments evaluate to `target`.
+
+**Input / output.** Input is `nums` and `target`; output is an integer count.
+
+**Example.** `nums = [1,1,1,1,1]`, `target = 3` → `5`: flip exactly one of the five ones to
+`-` and the rest to `+`, and there are five ways to choose which.
+
+**Constraints.** `1 <= len(nums) <= 20`, `0 <= nums[i] <= 1000`, `0 <= sum(nums) <= 1000`,
+`-1000 <= target <= 1000`. Let `P` be the numbers given a `+`; then
+`P - (total - P) = target`, so `P = (total + target) / 2`. If that is negative or odd there
+are zero ways; otherwise the problem is exactly "count the subsets summing to `P`" - the
+same table as LeetCode 416, counting instead of testing reachability.
+
+[leetcode.com/problems/target-sum](https://leetcode.com/problems/target-sum/)
+
+### LeetCode 1049 - Last Stone Weight II
+
+**The task.** You repeatedly pick any two stones `x <= y`, smash them together, and they
+become a single stone of weight `y - x` (both vanish if they are equal). Return the smallest
+possible weight of the stone left at the end, or `0` if nothing is left.
+
+**Input / output.** Input is `stones`; output is an integer.
+
+**Example.** `stones = [2,7,4,1,8,1]` → `1`. `stones = [31,26,33,21,40]` → `5`.
+
+**Constraints.** `1 <= len(stones) <= 30`, `1 <= stones[i] <= 100`, so the total is at most
+`3000`. The reformulation is the whole problem: every smashing schedule amounts to giving
+each stone a `+` or a `-` sign, so the surviving weight is `|sum(A) - sum(B)|` over a split
+into two groups. Minimising that means finding the subset sum closest to `total / 2` from
+below - a 0/1 knapsack with capacity `total // 2`. Note this is *not* the same as the greedy
+LeetCode 1046, where you must always smash the two heaviest.
+
+[leetcode.com/problems/last-stone-weight-ii](https://leetcode.com/problems/last-stone-weight-ii/)
+
+### LeetCode 474 - Ones and Zeroes
+
+**The task.** Given an array of binary strings and two budgets `m` and `n`, return the size
+of the largest subset of the strings that uses at most `m` zeros and at most `n` ones in
+total.
+
+**Input / output.** Input is `strs`, `m`, `n`; output is an integer.
+
+**Example.** `strs = ["10","0001","111001","1","0"]`, `m = 5`, `n = 3` → `4`, the subset
+`{"10","0001","1","0"}`, which uses five `0`s and three `1`s exactly. With `m = 1`, `n = 1`
+the answer is `2`, namely `{"0","1"}`.
+
+**Constraints.** `1 <= len(strs) <= 600`, each string at most `100` characters of `0`/`1`,
+`1 <= m, n <= 100`. It is a 0/1 knapsack with **two** capacities instead of one: the table
+is `dp[zeros][ones]`, and both loops run downwards for exactly the same reason the one-
+dimensional 0/1 loop does - so that each string is taken at most once.
+
+[leetcode.com/problems/ones-and-zeroes](https://leetcode.com/problems/ones-and-zeroes/)
+
+### LeetCode 279 - Perfect Squares
+
+**The task.** Given an integer `n`, return the least number of perfect squares
+(`1, 4, 9, 16, ...`) that sum to exactly `n`. Squares may be repeated.
+
+**Input / output.** One integer in, one integer out.
+
+**Example.** `n = 12` → `3` (`4 + 4 + 4`). `n = 13` → `2` (`4 + 9`).
+
+**Constraints.** `1 <= n <= 10^4`. It is an unbounded knapsack whose "coins" are the squares
+below `n`, so `O(n * sqrt(n))` falls straight out. Lagrange's four-square theorem says the
+answer is never more than `4`, and Legendre's three-square theorem pins down exactly when
+it is `4`, which gives an `O(sqrt(n))` mathematical answer - a nice reminder that DP is a
+general hammer, not always the sharpest tool.
+
+[leetcode.com/problems/perfect-squares](https://leetcode.com/problems/perfect-squares/)
+
 ## Complexity
 
 | Operation | Time | Space |

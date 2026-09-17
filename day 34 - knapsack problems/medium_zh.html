@@ -118,6 +118,38 @@ tent  0 0 0 50 50 70 80 90 120 130 130</code></pre>
 <p>這段常常被跳過。把所有重量和容量都乘以 10，答案還是 130，但表格從 44 格變成 404、4,004、40,004 —— 而<strong>輸入</strong>只從 15 bits 長到 30、47、64 bits。執行時間是對數字的「大小」成多項式，不是對數字的「長度」。這就是 pseudo-polynomial 的意思，也是 0/1 背包仍然是 NP-complete 的原因。它同時是一條實用規則：這張表適合小整數重量、小容量；浮點數或超大容量要換 branch and bound 或近似演算法。</p>
 <h2>這件事之後還會用到</h2>
 <p>二進位拆分跟 sparse table、jump pointer 的 binary lifting 是同一個把戲：把任何數量表示成 2 的次方之和，於是 <code>k</code> 的工作量變成 <code>log k</code>。bitset 那一列則會出現在任何「DP 狀態是一組布林值」的地方，也就是大部分的 bitmask DP。而「內層迴圈方向」這個反射動作 —— 去問一格是<strong>什麼時候</strong>被寫的，而不只是它現在裝什麼 —— 會在接下來的 DP 章節裡，一路守住所有滾動陣列的正確性。</p>
+<h2>附錄：LeetCode 題目完整題敘</h2>
+<p>以下用我自己的話重寫一遍：題目在問什麼、輸入輸出是什麼、一個算過的例子，以及那些真的會 改變「可以用哪種演算法」的限制。</p>
+<h3>LeetCode 416 - Partition Equal Subset Sum（分割等和子集）</h3>
+<p><strong>題目。</strong> 給一個正整數陣列，判斷能不能把它分成兩個總和相等的子集。每個元素都必須剛好落在其中 一邊。</p>
+<p><strong>輸入／輸出。</strong> 輸入 <code>nums</code>，輸出布林值。</p>
+<p><strong>範例。</strong> <code>nums = [1,5,11,5]</code> → <code>True</code>，<code>[1,5,5]</code> 與 <code>[11]</code> 的和都是 <code>11</code>。 <code>nums = [1,2,3,5]</code> → <code>False</code>，總和 <code>11</code> 是奇數，連對半分都做不到。 <code>nums = [2,2,3,5]</code> → <code>False</code>：總和 <code>12</code> 是偶數，但沒有任何子集湊得出 <code>6</code>。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(nums) &lt;= 200</code>、<code>1 &lt;= nums[i] &lt;= 100</code>，所以總和最多 <code>20000</code>。把總和除以二 （是奇數就直接失敗），問題就變成「有沒有子集的和剛好是一半」—— 這是一個「重量*就是*價值、而且只 在乎某一格到不到得了」的 0/1 背包，也是為什麼可以用 bitset 一次處理 64 個數字。</p>
+<p><a href="https://leetcode.com/problems/partition-equal-subset-sum/">leetcode.com/problems/partition-equal-subset-sum</a></p>
+<h3>LeetCode 494 - Target Sum（目標和）</h3>
+<p><strong>題目。</strong> 在陣列每個數字前面放 <code>+</code> 或 <code>-</code>，串成一個算式。數出 <code>2^n</code> 種符號配置裡，有幾種算出來 剛好等於 <code>target</code>。</p>
+<p><strong>輸入／輸出。</strong> 輸入 <code>nums</code> 與 <code>target</code>，輸出一個計數。</p>
+<p><strong>範例。</strong> <code>nums = [1,1,1,1,1]</code>、<code>target = 3</code> → <code>5</code>：把五個 1 裡的其中一個變成 <code>-</code>、其餘為 <code>+</code>， 選哪一個共有五種。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(nums) &lt;= 20</code>、<code>0 &lt;= nums[i] &lt;= 1000</code>、<code>0 &lt;= sum(nums) &lt;= 1000</code>、 <code>-1000 &lt;= target &lt;= 1000</code>。令 <code>P</code> 是被配到 <code>+</code> 的那些數字之和，則 <code>P - (total - P) = target</code>， 也就是 <code>P = (total + target) / 2</code>。如果它是負數或奇數，方法數為 0；否則問題就剛好是「和為 <code>P</code> 的子集有幾個」—— 和 LeetCode 416 同一張表，只是從判斷可達性改成計數。</p>
+<p><a href="https://leetcode.com/problems/target-sum/">leetcode.com/problems/target-sum</a></p>
+<h3>LeetCode 1049 - Last Stone Weight II（最後一塊石頭的重量 II）</h3>
+<p><strong>題目。</strong> 你可以不斷挑任意兩顆石頭 <code>x &lt;= y</code> 對撞，撞完變成一顆重量 <code>y - x</code> 的石頭（相等就一起 消失）。回傳最後剩下那顆石頭可能的最小重量；沒剩就回 <code>0</code>。</p>
+<p><strong>輸入／輸出。</strong> 輸入 <code>stones</code>，輸出一個整數。</p>
+<p><strong>範例。</strong> <code>stones = [2,7,4,1,8,1]</code> → <code>1</code>；<code>stones = [31,26,33,21,40]</code> → <code>5</code>。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(stones) &lt;= 30</code>、<code>1 &lt;= stones[i] &lt;= 100</code>，所以總和最多 <code>3000</code>。整題的關鍵在 換句話說：任何一種對撞順序，效果都等於給每顆石頭一個 <code>+</code> 或 <code>-</code>，所以最後剩下的重量就是把石頭 分成兩堆後的 <code>|sum(A) - sum(B)|</code>。要讓它最小，就是找出「不超過 <code>total / 2</code> 的最大子集和」—— 一個容量為 <code>total // 2</code> 的 0/1 背包。注意這跟貪心的 LeetCode 1046 <em>不一樣</em>，那一題規定每次都得 撞最重的兩顆。</p>
+<p><a href="https://leetcode.com/problems/last-stone-weight-ii/">leetcode.com/problems/last-stone-weight-ii</a></p>
+<h3>LeetCode 474 - Ones and Zeroes（一和零）</h3>
+<p><strong>題目。</strong> 給一組只含 0/1 的字串，以及兩個預算 <code>m</code> 和 <code>n</code>，回傳「總共最多用 <code>m</code> 個 0、<code>n</code> 個 1」 的前提下，最大子集的大小。</p>
+<p><strong>輸入／輸出。</strong> 輸入 <code>strs</code>、<code>m</code>、<code>n</code>，輸出一個整數。</p>
+<p><strong>範例。</strong> <code>strs = [&quot;10&quot;,&quot;0001&quot;,&quot;111001&quot;,&quot;1&quot;,&quot;0&quot;]</code>、<code>m = 5</code>、<code>n = 3</code> → <code>4</code>，子集是 <code>{&quot;10&quot;,&quot;0001&quot;,&quot;1&quot;,&quot;0&quot;}</code>，剛好用掉五個 <code>0</code> 和三個 <code>1</code>。若 <code>m = 1</code>、<code>n = 1</code>，答案是 <code>2</code>，也就是 <code>{&quot;0&quot;,&quot;1&quot;}</code>。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(strs) &lt;= 600</code>，每個字串最長 <code>100</code> 個 <code>0</code>/<code>1</code> 字元，<code>1 &lt;= m, n &lt;= 100</code>。 它是一個有<strong>兩個</strong>容量的 0/1 背包：表是 <code>dp[zeros][ones]</code>，而且兩層迴圈都要往下跑，理由和一維 0/1 背包完全一樣 —— 確保每個字串最多只被拿一次。</p>
+<p><a href="https://leetcode.com/problems/ones-and-zeroes/">leetcode.com/problems/ones-and-zeroes</a></p>
+<h3>LeetCode 279 - Perfect Squares（完全平方數）</h3>
+<p><strong>題目。</strong> 給一個整數 <code>n</code>，回傳總和剛好等於 <code>n</code> 的完全平方數（<code>1, 4, 9, 16, ...</code>）最少要幾個。 平方數可以重複使用。</p>
+<p><strong>輸入／輸出。</strong> 輸入一個整數，輸出一個整數。</p>
+<p><strong>範例。</strong> <code>n = 12</code> → <code>3</code>（<code>4 + 4 + 4</code>）；<code>n = 13</code> → <code>2</code>（<code>4 + 9</code>）。</p>
+<p><strong>限制。</strong> <code>1 &lt;= n &lt;= 10^4</code>。它就是一個「硬幣是小於 <code>n</code> 的平方數」的完全背包，所以 <code>O(n * sqrt(n))</code> 直接掉出來。拉格朗日四平方和定理告訴我們答案永遠不超過 <code>4</code>，勒讓德三平方和定理 則精確指出什麼時候等於 <code>4</code> —— 於是存在一個 <code>O(sqrt(n))</code> 的數學解，剛好提醒我們 DP 是一把通用的 槌子，但不一定是最鋒利的工具。</p>
+<p><a href="https://leetcode.com/problems/perfect-squares/">leetcode.com/problems/perfect-squares</a></p>
 <p>明天：最長遞增子序列與最長公共子序列，表格會從一列變回一整張格子。</p>
 <p>今天的完整程式碼、notebook、圖檔與互動式演示：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2034%20-%20knapsack%20problems">100DaysPython on GitHub</a></p>
 </body>
