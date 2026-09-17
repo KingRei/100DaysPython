@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 34 — 背包問題：0/1、完全與多重背包</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 34 — 背包問題：0/1、完全與多重背包</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2034%20-%20knapsack%20problems">day 34 on GitHub</a></p>
+<p><em>100 Days of Python - day 34</em></p>
+<p>昨天結尾那個 bug 從來不會自己出聲：把硬幣找零的兩個 <code>for</code> 交換位置，「有幾種組合」就安靜地變成「有幾種排列」。今天這把刀更小。不是迴圈的順序，而是<strong>內層迴圈的方向</strong>。</p>
+<p>四個物品，一個容量 10 的背包：</p>
+<pre><code>物品  重量  價值
+----  ----  ----
+rope  3     50
+book  4     40
+pan   5     70
+tent  6     80</code></pre>
+<p>同樣那八行程式碼，內層迴圈倒著跑，答案是 <strong>130</strong>；正著跑，答案是 <strong>150</strong>。兩個都對。它們回答的是不同的問題，而 Python 兩次都不會吭一聲。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2034%20-%20knapsack%20problems/imgs/day34_1.png">
+<h2>每個人都先畫的那張表</h2>
+<p><code>dp[i][c]</code> 是「只用前 i 個物品、容量 c」時能拿到的最大價值。每個物品只有兩種命運：不拿，這一格就繼承上一列；拿，這一格就是上一列容量 <code>c - w</code> 那格加上價值。</p>
+<pre><code>def knap01_table(weights, values, cap):
+    n = len(weights)
+    dp = [[0] * (cap + 1) for _ in range(n + 1)]
+    for i in range(1, n + 1):
+        w, v = weights[i - 1], values[i - 1]
+        for c in range(cap + 1):
+            dp[i][c] = dp[i - 1][c]                       # leave it
+            if w &lt;= c and dp[i - 1][c - w] + v &gt; dp[i][c]:
+                dp[i][c] = dp[i - 1][c - w] + v           # take it
+    return dp[n][cap]</code></pre>
+<p>兩個要讀的值都在第 <code>i - 1</code> 列，所以由上往下填是合法的：永遠不會讀到還沒算完的格子。這跟昨天那條唯一規則是同一件事，只是換了個樣子。</p>
+<pre><code>none  0 0 0  0  0  0  0  0   0   0   0
+rope  0 0 0 50 50 50 50 50  50  50  50
+book  0 0 0 50 50 50 50 90  90  90  90
+pan   0 0 0 50 50 70 70 90 120 120 120
+tent  0 0 0 50 50 70 80 90 120 130 130</code></pre>
+<p>填完的表只給你一個數字，不是一組解。要把「拿了哪些」找回來，得倒著往上走：某一格跟正上方那格不一樣，就代表那個物品被拿了。這裡走出來的是 rope 和 tent，總重 9，容量是 10。</p>
+<p>停一下看這件事。最佳解<strong>故意</strong>留了一格空間沒用。rope + pan 剛好把背包裝到 8，卻只值 120。任何把「空間用好用滿」當目標的啟發式，在一個四件物品的例子上就輸了。</p>
+<h2>一列就夠，而方向決定一切</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2034%20-%20knapsack%20problems/imgs/day34_2.png">
+<p>第 <code>i</code> 列只會讀第 <code>i - 1</code> 列，所以二維表格是奢侈品，一列就夠 —— 前提是讀到它的那一瞬間，它還「長得像上一列」。</p>
+<pre><code>def knap01_rolling(weights, values, cap):
+    dp = [0] * (cap + 1)
+    for w, v in zip(weights, values):
+        for c in range(cap, w - 1, -1):          # descending: read the old row
+            if dp[c - w] + v &gt; dp[c]:
+                dp[c] = dp[c - w] + v
+    return dp[cap]</code></pre>
+<p>倒著跑的時候，<code>dp[c - w]</code> 的索引比正在寫的那格小，而比較小的索引這一輪還沒被碰過。所以讀到的還是上一輪的值，每個物品剛好只被放進去一次，滾動的每一列都跟二維表格一列一列對得起來。130。</p>
+<h2>同一段程式碼，正著跑</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2034%20-%20knapsack%20problems/imgs/day34_3.png">
+<pre><code>def knap_unbounded(weights, values, cap):
+    dp = [0] * (cap + 1)
+    for w, v in zip(weights, values):
+        for c in range(w, cap + 1):              # ascending: read the new row
+            if dp[c - w] + v &gt; dp[c]:
+                dp[c] = dp[c - w] + v
+    return dp[cap]</code></pre>
+<p>差別只有一個 <code>reversed()</code>。現在 <code>dp[c - w]</code> 這一輪已經被改過，裡面可能已經放了一個同樣的物品 —— 於是它被拿第二次、第三次：</p>
+<pre><code>+rope  0 0 0 50 50 50 100 100 100 150 150
++pan   0 0 0 50 50 70 100 100 120 150 150</code></pre>
+<p>150，而回推答案告訴你原因：三條 rope。這就是<strong>完全背包</strong>，每種物品可以拿無限個，它本身是一個很有用的演算法。危險的是，你本來想寫 0/1、結果忘了迴圈要往哪邊跑時，拿到的也正好是它。沒有錯誤、沒有警告、不會 crash，只有一個看起來很合理、卻在回答沒人問過的問題的數字。</p>
+<p>所以：內層迴圈的方向，<strong>就是</strong>「這個物品能不能重複拿」的答案。這是今天最該記住的一句話。</p>
+<h2>多重背包：k 個複本與二進位拆分</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2034%20-%20knapsack%20problems/imgs/day34_4.png">
+<p>現實中的數量通常既不是 1 也不是無限，而是 <code>k</code> 個。數量為 <code>[2, 1, 3, 1]</code> 時，同樣這四個物品值 140 —— 同一份資料的第三個答案。</p>
+<p>把 <code>k</code> 個複本攤成 <code>k</code> 個 0/1 物品是對的，但它的成本跟 <code>k</code> 這個<strong>數值</strong>成正比，而那是不該成正比的東西。二進位拆分把複本綁成 1、2、4、8… 加上一個餘數：</p>
+<pre><code>def binary_split(k):
+    parts, p = [], 1
+    while p &lt;= k:
+        parts.append(p)
+        k -= p
+        p *= 2
+    if k:
+        parts.append(k)
+    return parts</code></pre>
+<p><code>binary_split(13)</code> 是 <code>[1, 2, 4, 6]</code>，而 0 到 13 的任何一個數量，都剛好是這四個包的某一個子集合 —— 3 拿 1 + 2，10 拿 4 + 6，13 全拿。所以 <code>log k</code> 個物品可以完整取代 <code>k</code> 個，是精確等價不是近似，而拆完之後跑的還是原本那個倒序迴圈。<code>binary_split(1000)</code> 只有十個包。</p>
+<p>實測：重量 <code>[3, 4, 5, 6, 7]</code>、數量 <code>[300, 500, 800, 1200, 2000]</code>、容量 4000，兩條路的答案都是 58,400，但硬攤開會產生 4,800 個物品、花 3,441 ms，二進位拆分只產生 50 個、花 22 ms。</p>
+<h2>為什麼這裡不能用貪心</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2034%20-%20knapsack%20problems/imgs/day34_5.png">
+<p>按「價值 / 重量」排序 —— rope 16.67、pan 14.00、tent 13.33、book 10.00 —— 然後一路拿到滿。如果物品可以切，這被證明是最佳解（交換論證），背包剛好裝滿，價值 146.67：整條 rope、整個 pan、三分之一的 tent。</p>
+<p>把剪刀收起來，同一條規則、同一組物品，答案變成 120。拿完 rope 和 pan 之後只剩 2 格容量，而 tent 要 6 格。DP 給的是 130。</p>
+<p>差距是 10，但重點不是差多少。重點是貪心不會告訴你它輸了。「每單位重量價值最高的先拿」聽起來像個理由，而它確實是 —— 對分數背包而言，那裡有證明。0/1 沒有證明，而「聽起來合理」不是證據。</p>
+<h2>同一列，換個運算子</h2>
+<p>把 <code>max</code> 換成 <code>or</code>，這張表就完全忘記價值，只剩下「哪些總和湊得出來」。LeetCode 416 問一個陣列能不能切成總和相等的兩堆，也就是「有沒有子集合總和剛好是 <code>sum/2</code>」—— 一個容量 <code>sum/2</code> 的 0/1 背包，一樣要倒著掃，否則同一個數字會被用第二次。<code>[1, 5, 11, 5]</code> 切得開；<code>[2, 2, 3, 5]</code> 總和是偶數，仍然切不開。</p>
+<p>而一整列布林值就是一個 bit vector，Python 的整數又要多長有多長：</p>
+<pre><code>def subset_sum_bits(nums, target):
+    bits = 1                       # bit 0 set: the empty subset sums to 0
+    for x in nums:
+        bits |= bits &lt;&lt; x          # offer x to every reachable sum at once
+    return (bits &gt;&gt; target) &amp; 1 == 1</code></pre>
+<p>位移讀的是舊值的快照，所以連「一定要倒著跑」這個顧慮都消失了。400 個數字、目標 9545 時，list 版約 190 ms，這個約 0.2 ms —— 大約一千倍，純粹來自把內層迴圈搬進 C 層的大整數運算。Target Sum、Last Stone Weight II、Ones and Zeroes、Perfect Squares 也都是同一列換個運算子。</p>
+<h2><code>O(n · cap)</code> 不是多項式</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2034%20-%20knapsack%20problems/imgs/day34_6.png">
+<p>這段常常被跳過。把所有重量和容量都乘以 10，答案還是 130，但表格從 44 格變成 404、4,004、40,004 —— 而<strong>輸入</strong>只從 15 bits 長到 30、47、64 bits。執行時間是對數字的「大小」成多項式，不是對數字的「長度」。這就是 pseudo-polynomial 的意思，也是 0/1 背包仍然是 NP-complete 的原因。它同時是一條實用規則：這張表適合小整數重量、小容量；浮點數或超大容量要換 branch and bound 或近似演算法。</p>
+<h2>這件事之後還會用到</h2>
+<p>二進位拆分跟 sparse table、jump pointer 的 binary lifting 是同一個把戲：把任何數量表示成 2 的次方之和，於是 <code>k</code> 的工作量變成 <code>log k</code>。bitset 那一列則會出現在任何「DP 狀態是一組布林值」的地方，也就是大部分的 bitmask DP。而「內層迴圈方向」這個反射動作 —— 去問一格是<strong>什麼時候</strong>被寫的，而不只是它現在裝什麼 —— 會在接下來的 DP 章節裡，一路守住所有滾動陣列的正確性。</p>
+<p>明天：最長遞增子序列與最長公共子序列，表格會從一列變回一整張格子。</p>
+<p>今天的完整程式碼、notebook、圖檔與互動式演示：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2034%20-%20knapsack%20problems">100DaysPython on GitHub</a></p>
+</body>
+</html>

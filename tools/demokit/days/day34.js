@@ -1,0 +1,767 @@
+// DAY: 34
+// TITLE_ZH: Day 34 — 背包問題：0/1、完全與多重背包
+// TITLE_EN: The knapsack family - 0/1, unbounded and bounded
+// SUB_ZH: Day 33 說「兩個迴圈交換位置，程式不會報錯，只是回答了另一個問題」。今天那句話會縮小到一個字：內層迴圈倒著跑，每個物品只能拿一次；正著跑，同一個物品可以拿到飽。同一份程式碼、同四個物品，答案是 130 還是 150，只差一個 reversed()。
+// SUB_EN: Day 33 said that swapping two loops does not raise, it just answers a different question. Today that shrinks to a single word: run the inner loop downwards and each item may be taken once; run it upwards and the same item may be taken forever. Same code, same four items, and the answer is either 130 or 150 - the difference is one reversed().
+// FOLDER: day%2034%20-%20knapsack%20problems
+// MEDIUM: https://medium.com/100-days-of-python
+
+const VIEW = [9.8, 6.4];
+function chip(t, cls){ return {t:t, cls:cls || ''}; }
+
+const NAMES = ['rope', 'book', 'pan', 'tent'];
+const W = [3, 4, 5, 6];
+const V = [50, 40, 70, 80];
+const CAP = 10;
+
+/* geometry shared by the table tabs */
+const CX0 = 1.28, CW = 0.74, CH = 0.66;
+const cx = c => CX0 + c * CW;
+const midx = c => CX0 + c * CW + (CW - .06) / 2;
+
+function indexRow(y, hot){
+  const out = [];
+  for (let c = 0; c <= CAP; c++)
+    out.push(S.t(midx(c), y, String(c),
+      {c:(hot && hot.indexOf(c) >= 0) ? COL.orangeL : COL.grey, fs:.30}));
+  return out;
+}
+
+/* ======================================================================== *
+ * Tab 1 - the two-dimensional table, then walk it backwards for the items
+ * ======================================================================== */
+const CODE_TABLE = [
+  'def knap01_table(weights, values, cap):',
+  '    n = len(weights)',
+  '    dp = [[0] * (cap + 1) for _ in range(n + 1)]',
+  '    for i in range(1, n + 1):',
+  '        w, v = weights[i - 1], values[i - 1]',
+  '        for c in range(cap + 1):',
+  '            dp[i][c] = dp[i - 1][c]              # leave it',
+  '            if w <= c and dp[i - 1][c - w] + v > dp[i][c]:',
+  '                dp[i][c] = dp[i - 1][c - w] + v  # take it',
+  '    return dp',
+  '',
+  '# walk back: the row changed => that item was taken',
+  'if dp[i][c] != dp[i - 1][c]:',
+  '    chosen.append(i - 1); c -= weights[i - 1]'
+];
+
+function tableShapes(dp, filled, st, extra){
+  let out = indexRow(1.02, Object.keys(st).filter(k => k.indexOf(':') > 0)
+                              .map(k => +k.split(':')[1]));
+  for (let i = 0; i <= 4; i++){
+    const vals = [];
+    for (let c = 0; c <= CAP; c++)
+      vals.push(filled[i + ':' + c] ? dp[i][c] : '');
+    const rst = {};
+    for (let c = 0; c <= CAP; c++) if (st[i + ':' + c]) rst[c] = st[i + ':' + c];
+    out = out.concat(cellRow(vals, CX0, 1.22 + i * (CH + .10), CW, CH,
+      {states:rst, index:false, fs:.30, title:(i ? NAMES[i - 1] : 'none')}));
+  }
+  return out.concat(extra || []);
+}
+
+function tableFrames(){
+  const F = new Frames();
+  const dp = [], filled = {};
+  for (let i = 0; i <= 4; i++){ dp.push(new Array(CAP + 1).fill(0)); }
+  for (let c = 0; c <= CAP; c++) filled['0:' + c] = true;
+
+  F.push({shapes:tableShapes(dp, filled, {}, [
+      S.t(4.9, .55, {zh:'dp[i][c] = 只用前 i 個物品、容量 c 時的最高價值',
+                     en:'dp[i][c] = best value from the first i items, cap c'},
+          {c:COL.tealL, fs:.34}),
+      S.t(4.9, 6.05, {zh:'第 0 列＝一個物品都不准拿，所以全是 0',
+                      en:'row 0 = no items allowed, so it is all zeros'},
+          {c:COL.grey, fs:.30})]),
+    view:VIEW, line:2, panels:[
+      {lbl:{zh:'物品（重量 / 價值）', en:'items (weight / value)'},
+       chips:NAMES.map((n, i) => chip(n + ' ' + W[i] + '/' + V[i], 'dim'))},
+      {lbl:{zh:'背包容量', en:'capacity'}, chips:[chip(String(CAP), 'hot')]}],
+    msg:{zh:'四個物品、容量 10。表格有 5 列（含空的第 0 列）、11 行，每一格問同一個問題：這些物品、這個容量，最多值多少？',
+         en:'Four items, capacity 10. The table has five rows (including the empty row 0) and eleven columns, and every cell asks the same question: with these items and this capacity, what is the most it can be worth?'}});
+
+  for (let i = 1; i <= 4; i++){
+    const w = W[i - 1], v = V[i - 1];
+    for (let c = 0; c <= CAP; c++){
+      const leave = dp[i - 1][c];
+      const take = (w <= c) ? dp[i - 1][c - w] + v : -1;
+      dp[i][c] = Math.max(leave, take);
+      filled[i + ':' + c] = true;
+      const st = {};
+      st[i + ':' + c] = 'act';
+      st[(i - 1) + ':' + c] = 'hot';
+      if (w <= c) st[(i - 1) + ':' + (c - w)] = take > leave ? 'ok' : 'soft';
+      const took = take > leave;
+      const line = took ? 8 : 6;
+      const ex = [S.t(4.9, 5.92,
+        took ? 'dp[' + i + '][' + c + '] = dp[' + (i - 1) + '][' + (c - w) + '] + ' + v +
+               ' = ' + dp[i - 1][c - w] + ' + ' + v + ' = ' + dp[i][c]
+             : 'dp[' + i + '][' + c + '] = dp[' + (i - 1) + '][' + c + '] = ' + dp[i][c],
+        {c:took ? COL.tealL : COL.grey, fs:.36})];
+      const zh = (w > c)
+        ? NAMES[i - 1] + ' 重 ' + w + '，容量 ' + c + ' 根本放不下，只能照抄上一列。'
+        : (took
+          ? '兩個選項：不拿 = 上一列的 ' + leave + '；拿 = 上一列容量 ' + (c - w) + ' 的 ' +
+            dp[i - 1][c - w] + ' 加上 ' + v + ' = ' + take + '。拿比較好。兩個讀到的格子都在上一列，所以這一列可以放心由左往右填。'
+          : '不拿 = ' + leave + '，拿 = ' + (take < 0 ? '放不下' : take) + '。這次不拿比較好，格子直接繼承上一列。');
+      const en = (w > c)
+        ? NAMES[i - 1] + ' weighs ' + w + ' and will not fit in capacity ' + c + ', so the cell just copies the row above.'
+        : (took
+          ? 'Two options: leave it and inherit ' + leave + ', or take it for ' + dp[i - 1][c - w] + ' + ' + v + ' = ' + take +
+            ' read from the row above at capacity ' + (c - w) + '. Taking wins. Both readings come from row ' + (i - 1) + ', which is why this row can be filled left to right without ever seeing unfinished work.'
+          : 'Leave it: ' + leave + '. Take it: ' + (take < 0 ? 'does not fit' : take) + '. Leaving wins, so the cell inherits the row above.');
+      F.push({shapes:tableShapes(dp, filled, st, ex), view:VIEW, line:line,
+        panels:[
+          {lbl:{zh:'正在放的物品', en:'item being offered'},
+           chips:[chip(NAMES[i - 1] + '  w=' + w + '  v=' + v, 'hot')]},
+          {lbl:{zh:'不拿 / 拿', en:'leave / take'},
+           chips:[chip('leave = ' + leave, took ? 'dim' : 'ok'),
+                  chip('take = ' + (take < 0 ? 'x' : take), took ? 'ok' : 'dim')]},
+          {lbl:{zh:'這一列到目前為止', en:'this row so far'},
+           chips:[chip(dp[i].slice(0, c + 1).join(' '), 'dim')]}],
+        msg:{zh:zh, en:en}});
+    }
+  }
+
+  /* backtrack */
+  let c = CAP; const chosen = [];
+  const bst = {};
+  bst['4:' + CAP] = 'ok';
+  F.push({shapes:tableShapes(dp, filled, bst, [S.t(4.9, 5.92,
+      {zh:'表格填完了：最高價值 130 —— 但「哪些物品」還沒回答',
+       en:'table full: best = 130 - but which items?'},
+      {c:COL.tealL, fs:.36})]),
+    view:VIEW, line:9, panels:[{lbl:{zh:'答案', en:'answer'}, chips:[chip('130', 'ok')]}],
+    msg:{zh:'右下角那一格就是答案：130。這是 DP 的常態 —— 表格給的是「值」，不是「解」。要拿到物品清單，得倒著走回去問每一列：這一格跟上面那格一樣嗎？',
+         en:'The bottom-right cell is the answer: 130. That is the normal state of affairs in DP - a table returns a value, not a solution. To get the actual items you walk back up and ask each row one question: is this cell the same as the one above it?'}});
+
+  for (let i = 4; i >= 1; i--){
+    const same = dp[i][c] === dp[i - 1][c];
+    const st = {};
+    st[i + ':' + c] = same ? 'soft' : 'ok';
+    st[(i - 1) + ':' + c] = 'hot';
+    if (!same) chosen.unshift(i - 1);
+    const nc = same ? c : c - W[i - 1];
+    if (!same) st[(i - 1) + ':' + nc] = 'act';
+    F.push({shapes:tableShapes(dp, filled, st, [S.t(4.9, 5.92,
+        same ? 'dp[' + i + '][' + c + '] == dp[' + (i - 1) + '][' + c + ']  ->  ' + NAMES[i - 1] + ' was NOT taken'
+             : 'dp[' + i + '][' + c + '] != dp[' + (i - 1) + '][' + c + '] -> ' + NAMES[i - 1] + ' taken, c -> ' + nc,
+        {c:same ? COL.grey : COL.tealL, fs:.34})]),
+      view:VIEW, line:12, panels:[
+        {lbl:{zh:'目前容量', en:'capacity cursor'}, chips:[chip('c = ' + c, 'hot')]},
+        {lbl:{zh:'已認出的物品', en:'items recovered'},
+         chips:chosen.length ? chosen.map(k => chip(NAMES[k], 'ok')) : [chip('-', 'dim')]}],
+      msg:{zh:same
+          ? '第 ' + i + ' 列跟第 ' + (i - 1) + ' 列在 c = ' + c + ' 一模一樣，代表加入 ' + NAMES[i - 1] + ' 完全沒有改變結果 —— 它沒被拿。容量指標不動。'
+          : '這一格比上面那格大，唯一可能的原因就是 ' + NAMES[i - 1] + ' 被拿了。把它記下來，容量退回 ' + c + ' - ' + W[i - 1] + ' = ' + nc + ' 繼續問。',
+        en:same
+          ? 'Row ' + i + ' and row ' + (i - 1) + ' agree at c = ' + c + ', so adding ' + NAMES[i - 1] + ' changed nothing - it was not taken. The capacity cursor stays put.'
+          : 'This cell is larger than the one above it, and the only thing that could have made it larger is ' + NAMES[i - 1] + '. Record it and drop the cursor to ' + c + ' - ' + W[i - 1] + ' = ' + nc + '.'}});
+    c = nc;
+  }
+  const fst = {};
+  fst['4:' + CAP] = 'ok';
+  F.push({shapes:tableShapes(dp, filled, fst, [
+      S.t(4.9, 5.92, {zh:'130 = rope + tent，重量 9，故意留下 1 格沒裝滿',
+                      en:'130 = rope + tent, weight 9 of 10'},
+          {c:COL.tealL, fs:.36}),
+      S.t(4.9, 6.22, {zh:'rope + pan 裝到 8 卻只值 120：塞滿不等於最佳',
+                      en:'rope + pan fills 8 and is worth only 120'},
+          {c:COL.orangeL, fs:.30})]),
+    view:VIEW, line:13,
+    panels:[{lbl:{zh:'最佳解', en:'optimal solution'},
+             chips:chosen.map(k => chip(NAMES[k] + ' (' + W[k] + '/' + V[k] + ')', 'ok'))},
+            {lbl:{zh:'總重 / 總值', en:'weight / value'},
+             chips:[chip(chosen.reduce((a, k) => a + W[k], 0) + ' of ' + CAP, 'dim'),
+                    chip(String(dp[4][CAP]), 'ok')]}],
+    msg:{zh:'答案是 rope + tent：130，重量 9。表格沒有把背包塞滿，因為裝得比較滿的 rope + pan 只值 120。這也是為什麼待會的貪心會輸 —— 它追的是錯的東西。',
+         en:'The answer is rope + tent, worth 130, weighing 9. The table does not fill the bag, because the fuller packing (rope + pan, weight 8) is worth only 120. That is also why the greedy in a later tab loses: it optimises the wrong thing.'}});
+  return F.list;
+}
+
+/* ======================================================================== *
+ * Tab 2 - one row, and the direction of the inner loop
+ * ======================================================================== */
+const CODE_ROLL = [
+  'def knapsack(weights, values, cap):',
+  '    dp = [0] * (cap + 1)',
+  '    for w, v in zip(weights, values):',
+  '',
+  '        for c in range(cap, w - 1, -1):   # 0/1: DOWNWARDS',
+  '        # for c in range(w, cap + 1):     # unbounded: UPWARDS',
+  '',
+  '            if dp[c - w] + v > dp[c]:',
+  '                dp[c] = dp[c - w] + v',
+  '    return dp[cap]'
+];
+const RY_PREV = 1.95, RY_NOW = 3.35;
+
+function rollShapes(prev, dp, stPrev, stNow, extra){
+  let out = indexRow(1.75, Object.keys(stNow).map(Number));
+  out = out.concat(cellRow(prev, CX0, RY_PREV, CW, CH,
+      {states:stPrev, index:false, fs:.30, title:{zh:'上一輪', en:'before'}}));
+  out = out.concat(cellRow(dp, CX0, RY_NOW, CW, CH,
+      {states:stNow, index:false, fs:.30, title:{zh:'這一輪', en:'after'}}));
+  return out.concat(extra || []);
+}
+
+function rollFrames(v){
+  const up = (v === 1);
+  const F = new Frames();
+  const dp = new Array(CAP + 1).fill(0);
+  let prev = dp.slice();
+  const arrow = up
+    ? S.e(cx(1) + .1, 5.10, cx(CAP) + CW - .16, 5.10, {s:'bad'})
+    : S.e(cx(CAP) + CW - .16, 5.10, cx(1) + .1, 5.10, {s:'hot'});
+  const dirTxt = up
+    ? S.t(4.9, 5.48, {zh:'c 由小往大跑 → dp[c-w] 已經是「這一輪」的值',
+                      en:'c runs upwards -> dp[c-w] already holds THIS round'}, {c:COL.red, fs:.34})
+    : S.t(4.9, 5.48, {zh:'c 由大往小跑 → dp[c-w] 還是「上一輪」的值',
+                      en:'c runs down -> dp[c-w] is still last round'}, {c:COL.orangeL, fs:.34});
+
+  F.push({shapes:rollShapes(prev, dp, {}, {}, [arrow, dirTxt,
+      S.t(4.9, .60, {zh:'整張表其實只有一列在動：dp[c] 只讀上一列的東西',
+                     en:'one row only: dp[c] reads the row above'},
+          {c:COL.tealL, fs:.34})]),
+    view:VIEW, line:1, panels:[
+      {lbl:{zh:'內層迴圈方向', en:'inner loop direction'},
+       chips:[chip(up ? 'range(w, cap + 1)' : 'range(cap, w - 1, -1)', up ? 'bad' : 'ok')]},
+      {lbl:{zh:'代表的問題', en:'the problem this solves'},
+       chips:[chip(up ? 'unbounded knapsack' : '0/1 knapsack', up ? 'bad' : 'ok')]}],
+    msg:{zh:'一維寫法只留一列 dp。條件只有一個：寫 dp[c] 的時候，左邊的 dp[c-w] 必須還是上一輪的值。迴圈方向就是在決定這件事。',
+         en:'The one-dimensional version keeps a single row. It is correct under exactly one condition: when dp[c] is written, the dp[c-w] on its left must still hold the previous round. The loop direction is what decides that.'}});
+
+  for (let i = 0; i < 4; i++){
+    const w = W[i], vv = V[i];
+    prev = dp.slice();
+    const order = [];
+    if (up) { for (let c = w; c <= CAP; c++) order.push(c); }
+    else { for (let c = CAP; c >= w; c--) order.push(c); }
+    order.forEach(c => {
+      const src = dp[c - w];
+      const fresh = up && src !== prev[c - w];        // already updated this round
+      const took = src + vv > dp[c];
+      const before = dp[c];
+      if (took) dp[c] = src + vv;
+      const stNow = {}; stNow[c] = 'act'; stNow[c - w] = fresh ? 'bad' : 'hot';
+      const stPrev = {}; stPrev[c - w] = 'soft';
+      const ex = [arrow, dirTxt, S.t(4.9, .95,
+        'dp[' + c + '] = max(' + before + ', dp[' + (c - w) + '] + ' + vv + ' = ' + (src + vv) + ') = ' + dp[c],
+        {c:took ? COL.tealL : COL.grey, fs:.34})];
+      if (fresh) ex.push(S.t(4.9, 6.10,
+        {zh:'dp[' + (c - w) + '] 這一輪已經被改過，裡面已經有一個 ' + NAMES[i] + ' 了',
+         en:'dp[' + (c - w) + '] was rewritten this round: it holds a ' + NAMES[i]},
+        {c:COL.red, fs:.32}));
+      F.push({shapes:rollShapes(prev, dp, stPrev, stNow, ex), view:VIEW, line:(up ? 5 : 4),
+        panels:[
+          {lbl:{zh:'正在放的物品', en:'item being offered'},
+           chips:[chip(NAMES[i] + '  w=' + w + '  v=' + vv, 'hot')]},
+          {lbl:{zh:'讀到的那一格', en:'the cell being read'},
+           chips:[chip('dp[' + (c - w) + '] = ' + src, fresh ? 'bad' : 'ok'),
+                  chip(fresh ? (up ? 'already updated' : '') : 'still last round', fresh ? 'bad' : 'dim')]},
+          {lbl:{zh:'這一輪的 dp', en:'dp this round'}, chips:[chip(dp.join(' '), 'dim')]}],
+        msg:{zh:fresh
+            ? 'dp[' + c + '] 讀的是 dp[' + (c - w) + ']，而那一格這一輪已經被 ' + NAMES[i] + ' 更新過了。於是 ' + NAMES[i] +
+              ' 被第二次算進去 —— 這正是「完全背包」的定義：同一個物品要幾個有幾個。'
+            : 'dp[' + c + '] 讀的是 dp[' + (c - w) + ']，比自己左邊 ' + w + ' 格，而由大往小跑代表那一格這一輪還沒被碰過。所以 ' +
+              NAMES[i] + ' 只會被算進去一次。',
+          en:fresh
+            ? 'dp[' + c + '] reads dp[' + (c - w) + '], which ' + NAMES[i] + ' already rewrote this round. So ' + NAMES[i] +
+              ' gets counted a second time - and that is precisely the definition of the unbounded knapsack: as many copies as you like.'
+            : 'dp[' + c + '] reads dp[' + (c - w) + '], ' + w + ' cells to its left, and because c is walking downwards that cell has not been touched this round. So ' +
+              NAMES[i] + ' can only ever be counted once.'}});
+    });
+    const doneSt = {};
+    for (let c = 0; c <= CAP; c++) if (dp[c] !== prev[c]) doneSt[c] = 'done';
+    F.push({shapes:rollShapes(prev, dp, {}, doneSt, [arrow, dirTxt,
+        S.t(4.9, .95, {zh:'放完 ' + NAMES[i] + '，這一列變成下一輪的「上一輪」',
+                       en:NAMES[i] + ' done - this row is the next round\'s before'},
+            {c:COL.tealL, fs:.34})]),
+      view:VIEW, line:2, panels:[
+        {lbl:{zh:'已處理的物品', en:'items processed'},
+         chips:NAMES.slice(0, i + 1).map(n => chip(n, 'ok'))},
+        {lbl:{zh:'目前 dp[10]', en:'dp[10] so far'}, chips:[chip(String(dp[CAP]), 'hot')]}],
+      msg:{zh:'一個物品處理完，被改到的格子標成完成。注意 dp 從頭到尾只有一列 —— 空間從 O(n x cap) 掉到 O(cap)。',
+           en:'One item is finished and the cells it changed are marked done. Note that there has only ever been one row - space drops from O(n x cap) to O(cap).'}});
+  }
+
+  const fin = {}; fin[CAP] = 'ok';
+  F.push({shapes:rollShapes(prev, dp, {}, fin, [arrow, dirTxt,
+      S.t(4.9, .95, up ? 'unbounded answer = 150 = 3 x rope' : '0/1 answer = 130 = rope + tent',
+          {c:up ? COL.red : COL.tealL, fs:.40}),
+      S.t(4.9, 6.10, {zh:'同一份程式碼、同四個物品：130 與 150 都是對的，只是問題不同',
+                      en:'same code, same items: 130 and 150 both correct'},
+          {c:COL.orangeL, fs:.32})]),
+    view:VIEW, line:9, panels:[
+      {lbl:{zh:'答案', en:'answer'}, chips:[chip(String(dp[CAP]), up ? 'bad' : 'ok')]},
+      {lbl:{zh:'另一個方向會給', en:'the other direction returns'},
+       chips:[chip(up ? '130 (0/1)' : '150 (unbounded)', 'dim')]}],
+    msg:{zh:up
+        ? '150 = 三條 rope，重量 9。程式完全沒有報錯，它只是回答了「每個物品可以拿無限多個」。如果你要的是 0/1，這就是一個永遠不會爆出來的 bug。'
+        : '130 = rope + tent。把 range 的方向反過來，同一段程式會變成完全背包並回答 150。Day 33 是「交換兩個迴圈」，今天只差一個字。',
+      en:up
+        ? '150 is three ropes, weight 9. Nothing errored; the program simply answered the question "each item is available in unlimited supply". If you wanted 0/1, this is a bug that will never announce itself.'
+        : '130 = rope + tent. Flip the direction of the range and the very same code becomes the unbounded knapsack and returns 150. Day 33 swapped two loops; today it is one word.'}});
+  return F.list;
+}
+
+/* ======================================================================== *
+ * Tab 3 - bounded knapsack: k copies, and binary splitting
+ * ======================================================================== */
+const CODE_SPLIT = [
+  'def binary_split(k):',
+  '    parts, p = [], 1',
+  '    while p <= k:',
+  '        parts.append(p)          # 1, 2, 4, 8, ...',
+  '        k -= p',
+  '        p *= 2',
+  '    if k:',
+  '        parts.append(k)          # the remainder',
+  '    return parts',
+  '',
+  'for p in binary_split(count):',
+  '    w2.append(w * p); v2.append(v * p)   # one 0/1 item',
+  '# then run the plain descending 0/1 loop'
+];
+const K13 = 13;
+const PARTS = [1, 2, 4, 6];
+const UX0 = 1.35, UW = 0.56, UH = 0.56, UY = 1.70;
+const BY = 3.15, BH = 0.70;
+
+function bundleX(j){
+  let x = UX0;
+  for (let t = 0; t < j; t++) x += PARTS[t] * UW + .34;
+  return x;
+}
+
+function splitShapes(shownUnits, unitSt, shownParts, partSt, extra){
+  const out = [];
+  for (let i = 0; i < K13; i++)
+    out.push(S.r(UX0 + i * UW, UY, UW - .08, UH, i < shownUnits ? (unitSt[i] || 'idle') : 'ghost',
+                 '1', {fs:.28}));
+  for (let j = 0; j < PARTS.length; j++){
+    if (j >= shownParts) continue;
+    out.push(S.r(bundleX(j), BY, PARTS[j] * UW - .08, BH, partSt[j] || 'soft',
+                 String(PARTS[j]), {fs:.34}));
+  }
+  return out.concat(extra || []);
+}
+
+function splitFrames(){
+  const F = new Frames();
+  const counts = [2, 1, 3, 1];
+  F.push({shapes:splitShapes(K13, {}, 0, {}, [
+      S.t(4.9, .60, {zh:'多重背包：每個物品有 k 個，k 不是 1 也不是無限',
+                     en:'bounded: k copies - neither one nor infinite'},
+          {c:COL.tealL, fs:.34}),
+      S.t(4.9, 1.30, {zh:'最直覺的做法：把 13 個複本攤成 13 個獨立的 0/1 物品',
+                      en:'the obvious fix: 13 copies -> 13 0/1 items'},
+          {c:COL.grey, fs:.32}),
+      S.t(4.9, 2.70, 'O(cap x 13)', {c:COL.orangeL, fs:.36})]),
+    view:VIEW, line:11, panels:[
+      {lbl:{zh:'真實的例子', en:'a real instance'},
+       chips:NAMES.map((n, i) => chip(n + ' x' + counts[i], 'dim'))},
+      {lbl:{zh:'展開後的物品數', en:'items after expansion'}, chips:[chip('13', 'bad')]}],
+    msg:{zh:'攤開是對的，但代價是 O(cap x k)：成本跟「k 這個數字有多大」成正比，而不是跟「k 要用幾位數寫」成正比。k = 2000 就是 2000 個物品。',
+         en:'Expanding is correct, but it costs O(cap x k) - proportional to how large the number k is, not to how many digits it takes to write. A count of 2000 really does become 2000 items.'}});
+
+  let left = K13;
+  for (let j = 0; j < PARTS.length; j++){
+    const used = {};
+    let taken = 0;
+    for (let t = 0; t <= j; t++) taken += PARTS[t];
+    for (let i = 0; i < taken; i++) used[i] = (i < taken - PARTS[j]) ? 'done' : 'act';
+    const pst = {}; pst[j] = 'act';
+    for (let t = 0; t < j; t++) pst[t] = 'done';
+    left -= PARTS[j];
+    const last = (j === PARTS.length - 1);
+    F.push({shapes:splitShapes(K13, used, j + 1, pst, [
+        S.t(4.9, .60, {zh:'把 13 個複本綁成 1, 2, 4 ... 加上一個餘數',
+                       en:'bundle 13 copies into 1, 2, 4 + a remainder'},
+            {c:COL.tealL, fs:.34}),
+        S.t(4.9, 4.30, last ? 'remainder ' + PARTS[j] + '  (13 - 1 - 2 - 4)' : 'bundle of ' + PARTS[j],
+            {c:last ? COL.orangeL : COL.tealL, fs:.34})]),
+      view:VIEW, line:last ? 7 : 3, panels:[
+        {lbl:{zh:'已綁好的包', en:'bundles so far'},
+         chips:PARTS.slice(0, j + 1).map(p => chip(String(p), 'ok'))},
+        {lbl:{zh:'還沒綁的複本', en:'copies still loose'}, chips:[chip(String(left), left ? 'hot' : 'dim')]}],
+      msg:{zh:last
+          ? '倍增到 8 就超過剩下的數量了，所以最後一包直接放餘數 ' + PARTS[j] + '。13 = 1 + 2 + 4 + 6，四個包。'
+          : '第 ' + (j + 1) + ' 包綁 ' + PARTS[j] + ' 個複本，價值和重量都乘以 ' + PARTS[j] + '，然後當成「一個」0/1 物品丟進原本的迴圈。',
+        en:last
+          ? 'Doubling to 8 would overshoot what is left, so the last bundle simply takes the remainder ' + PARTS[j] + '. 13 = 1 + 2 + 4 + 6, four bundles.'
+          : 'Bundle ' + (j + 1) + ' holds ' + PARTS[j] + ' copies. Multiply its weight and its value by ' + PARTS[j] + ' and hand it to the ordinary 0/1 loop as a single item.'}});
+  }
+
+  for (let k = 0; k <= K13; k++){
+    /* greedy from the largest part reproduces every count */
+    const pick = []; let rest = k;
+    for (let j = PARTS.length - 1; j >= 0; j--)
+      if (PARTS[j] <= rest){ pick.push(j); rest -= PARTS[j]; }
+    const pst = {}, ust = {};
+    PARTS.forEach((p, j) => pst[j] = pick.indexOf(j) >= 0 ? 'ok' : 'ghost');
+    for (let i = 0; i < k; i++) ust[i] = 'ok';
+    for (let i = k; i < K13; i++) ust[i] = 'ghost';
+    F.push({shapes:splitShapes(K13, ust, PARTS.length, pst, [
+        S.t(4.9, .60, {zh:'0..13 的每一個數量，都剛好是這四個包的某個子集合',
+                       en:'any count 0..13 is a subset of these bundles'},
+            {c:COL.tealL, fs:.34}),
+        S.t(4.9, 4.30, k + ' = ' + (pick.length ? pick.slice().reverse().map(j => PARTS[j]).join(' + ') : '(nothing)'),
+            {c:COL.orangeL, fs:.38})]),
+      view:VIEW, line:10, panels:[
+        {lbl:{zh:'想拿幾個', en:'copies wanted'}, chips:[chip(String(k), 'hot')]},
+        {lbl:{zh:'選中的包', en:'bundles chosen'},
+         chips:pick.length ? pick.slice().reverse().map(j => chip(String(PARTS[j]), 'ok')) : [chip('none', 'dim')]},
+        {lbl:{zh:'剩下', en:'left over'}, chips:[chip(String(rest), rest ? 'bad' : 'dim')]}],
+      msg:{zh:'想拿 ' + k + ' 個 ' + (k === 1 ? '複本' : '複本') + '？選 ' +
+             (pick.length ? pick.slice().reverse().map(j => PARTS[j]).join(' + ') : '一個都不選') +
+             ' 就是了。每個包只有拿或不拿兩種選擇，而 0..13 全部湊得出來 —— 所以四個 0/1 物品可以完整取代 13 個。',
+           en:'Want ' + k + ' copies? Take ' +
+             (pick.length ? pick.slice().reverse().map(j => PARTS[j]).join(' + ') : 'none of them') +
+             '. Each bundle is a plain take-it-or-leave-it choice, and every count from 0 to 13 is reachable - which is why four 0/1 items fully replace thirteen.'}});
+  }
+
+  F.push({shapes:splitShapes(K13, {}, PARTS.length, {0:'ok', 1:'ok', 2:'ok', 3:'ok'}, [
+      S.t(4.9, .60, {zh:'13 個物品變 4 個，O(cap x k) 變 O(cap x log k)',
+                     en:'13 items become 4: O(cap k) -> O(cap log k)'},
+          {c:COL.tealL, fs:.34}),
+      S.t(4.9, 5.25, {zh:'cap 4000：4800 個物品 3441 ms，50 個 22 ms',
+                      en:'at cap 4000: 4800 items 3441 ms vs 50 items 22 ms'},
+          {c:COL.orangeL, fs:.32}),
+      S.t(4.9, 5.70, {zh:'答案一模一樣：58400', en:'identical answer: 58400'}, {c:COL.tealL, fs:.34})]),
+    view:VIEW, line:12, panels:[
+      {lbl:{zh:'展開', en:'expanded'}, chips:[chip('4800 items', 'bad'), chip('3441 ms', 'bad')]},
+      {lbl:{zh:'二進位拆分', en:'binary split'}, chips:[chip('50 items', 'ok'), chip('22 ms', 'ok')]}],
+    msg:{zh:'這不是啟發式，是精確等價：拆完之後還是原本那個由大往小的 0/1 迴圈，一個字都不用改。真實一點的例子裡，4800 個物品變成 50 個，時間差 150 倍。',
+         en:'This is not a heuristic, it is an exact equivalence: after splitting you run the very same descending 0/1 loop, unchanged. On a realistic instance 4800 items become 50 and the run time drops by two orders of magnitude.'}});
+  return F.list;
+}
+
+/* ======================================================================== *
+ * Tab 4 - the greedy: exact when you may cut, quietly wrong when you may not
+ * ======================================================================== */
+const CODE_GREEDY = [
+  'order = sorted(range(n),',
+  '               key=lambda i: values[i] / weights[i],',
+  '               reverse=True)',
+  'total, left = 0, cap',
+  'for i in order:',
+  '    if weights[i] <= left:          # 0/1: all or nothing',
+  '        total += values[i]; left -= weights[i]',
+  '',
+  '    # fractional: take = min(1, left / weights[i])',
+  '    # total += take * values[i]'
+];
+const GSC = 0.62, GX0 = 1.15, RSC = 0.42;
+const ORDER = [0, 2, 3, 1];          // rope, pan, tent, book - by value/weight
+
+function greedyShapes(bars, extra){
+  const out = [];
+  out.push(S.r(GX0, 1.30, CAP * GSC, .80, 'ghost', '', {}));
+  out.push(S.t(GX0 + CAP * GSC / 2, 1.12, {zh:'容量 10', en:'capacity 10'}, {c:COL.grey, fs:.30}));
+  let x = GX0;
+  bars.forEach(b => {
+    out.push(S.r(x, 1.30, b.w * GSC - .04, .80, b.s, b.lab, {fs:.30}));
+    x += b.w * GSC;
+  });
+  return out.concat(extra || []);
+}
+
+function ratioShapes(hi){
+  const out = [];
+  let x = GX0;
+  ORDER.forEach((i, k) => {
+    out.push(S.r(x, 3.05, W[i] * RSC - .10, .70, (hi != null && k <= hi) ? 'hot' : 'soft',
+                 NAMES[i], {fs:.30}));
+    out.push(S.t(x + (W[i] * RSC - .10) / 2, 4.05,
+                 V[i] + '/' + W[i] + ' = ' + (V[i] / W[i]).toFixed(2),
+                 {c:COL.grey, fs:.28}));
+    x += W[i] * RSC + .30;
+  });
+  return out;
+}
+
+function greedyFrames(v){
+  const frac = (v === 0);
+  const F = new Frames();
+  F.push({shapes:greedyShapes([]).concat(ratioShapes(null), [
+      S.t(4.9, .60, {zh:'貪心規則：每單位重量價值最高的先拿',
+                     en:'the greedy rule: best value per unit of weight first'},
+          {c:COL.tealL, fs:.34}),
+      S.t(4.9, 4.65, {zh:'rope 16.67 > pan 14.00 > tent 13.33 > book 10.00',
+                      en:'rope 16.67 > pan 14.00 > tent 13.33 > book 10.00'},
+          {c:COL.orangeL, fs:.32})]),
+    view:VIEW, line:0, panels:[
+      {lbl:{zh:'排序依據', en:'sort key'}, chips:[chip('value / weight', 'hot')]},
+      {lbl:{zh:'可以切嗎', en:'may we cut?'},
+       chips:[chip(frac ? 'yes - fractional' : 'no - 0/1', frac ? 'ok' : 'bad')]}],
+    msg:{zh:'先把四個物品按「價值 / 重量」排好。這個排序本身完全合理 —— 問題在於「拿不下時怎麼辦」。可以切，貪心是最佳解；不能切，它會安靜地輸。',
+         en:'Sort the four items by value per unit of weight. The ordering itself is perfectly sensible; everything hinges on what happens when the next item does not fit. If it may be cut, the greedy is optimal. If it may not, it loses without saying so.'}});
+
+  const bars = [];
+  let left = CAP, total = 0;
+  for (let k = 0; k < ORDER.length; k++){
+    const i = ORDER[k];
+    if (left <= 0) break;
+    let take = 1, skip = false;
+    if (W[i] > left) { if (frac) take = left / W[i]; else { skip = true; take = 0; } }
+    if (!skip && take > 0){
+      bars.push({w:W[i] * take, s:frac ? 'ok' : 'act',
+                 lab:NAMES[i]});
+      total += V[i] * take;
+      left -= W[i] * take;
+    }
+    const ex = [S.t(4.9, .60, frac ? {zh:'可以切：拿滿為止', en:'cutting allowed: fill to the brim'}
+                                   : {zh:'不能切：整個拿或整個不拿', en:'no cutting: all of an item or none of it'},
+                    {c:frac ? COL.tealL : COL.red, fs:.34}),
+                S.t(4.9, 2.55, (frac ? 'value so far ' : 'value so far ') + (frac ? total.toFixed(2) : total) +
+                    '    capacity left ' + (frac ? left.toFixed(2) : left),
+                    {c:COL.orangeL, fs:.34})];
+    F.push({shapes:greedyShapes(bars, ex).concat(ratioShapes(k)), view:VIEW,
+      line:frac ? 8 : 5, panels:[
+        {lbl:{zh:'考慮中的物品', en:'item under consideration'},
+         chips:[chip(NAMES[i] + '  w=' + W[i] + '  v=' + V[i], 'hot')]},
+        {lbl:{zh:'結果', en:'outcome'},
+         chips:[chip(skip ? 'does not fit - skipped' : (take === 1 ? 'taken whole' : 'taken x' + take.toFixed(2)),
+                     skip ? 'bad' : 'ok')]},
+        {lbl:{zh:'累計價值', en:'value so far'},
+         chips:[chip(frac ? total.toFixed(2) : String(total), 'ok')]}],
+      msg:{zh:skip
+          ? NAMES[i] + ' 重 ' + W[i] + '，只剩 ' + left + ' 放不下，直接跳過。貪心到這裡就沒有回頭路了 —— 前面拿走的東西不會再吐出來。'
+          : (take === 1
+            ? NAMES[i] + ' 整個拿走，剩下容量 ' + (frac ? left.toFixed(2) : left) + '。'
+            : '剩下的容量只夠 ' + NAMES[i] + ' 的 ' + take.toFixed(2) + '，切一塊拿走，價值按比例算 ' +
+              (V[i] * take).toFixed(2) + '。背包剛好滿。'),
+        en:skip
+          ? NAMES[i] + ' weighs ' + W[i] + ' and only ' + left + ' is left, so it is skipped. The greedy has no way back: what it already took, it never returns.'
+          : (take === 1
+            ? NAMES[i] + ' is taken whole, leaving capacity ' + (frac ? left.toFixed(2) : left) + '.'
+            : 'Only ' + take.toFixed(2) + ' of ' + NAMES[i] + ' fits in what is left, so a slice is taken and its value is prorated to ' +
+              (V[i] * take).toFixed(2) + '. The bag is now exactly full.')}});
+  }
+
+  const tailEx = frac
+    ? [S.t(4.9, .60, 'fractional greedy = 146.67', {c:COL.tealL, fs:.40}),
+       S.t(4.9, 5.30, {zh:'可以切的時候，這個貪心是可以證明最佳的（交換論證）',
+                       en:'with cutting allowed, this greedy is provably optimal'},
+           {c:COL.tealL, fs:.32}),
+       S.t(4.9, 5.75, {zh:'不能切的話，同樣四個物品只值 120',
+                       en:'no cutting: the same items are worth only 120'},
+           {c:COL.orangeL, fs:.32})]
+    : [S.t(4.9, .60, 'greedy = 120     DP = 130', {c:COL.red, fs:.40}),
+       S.t(4.9, 5.30, {zh:'貪心拿 rope + pan（重 8，值 120），tent 就塞不下了',
+                       en:'greedy takes rope + pan = 120; the tent no longer fits'},
+           {c:COL.red, fs:.32}),
+       S.t(4.9, 5.75, {zh:'DP 拿 rope + tent（重 9，值 130）—— 而且貪心不會告訴你它輸了',
+                       en:'DP takes rope + tent = 130; greedy never says it lost'},
+           {c:COL.orangeL, fs:.32})];
+  F.push({shapes:greedyShapes(bars, tailEx).concat(ratioShapes(3)), view:VIEW, line:frac ? 9 : 6,
+    panels:[
+      {lbl:{zh:'貪心的答案', en:'greedy answer'},
+       chips:[chip(frac ? '146.67' : '120', frac ? 'ok' : 'bad')]},
+      {lbl:{zh:'DP 的答案', en:'DP answer'}, chips:[chip('130', 'ok')]},
+      {lbl:{zh:'差距', en:'gap'}, chips:[chip(frac ? 'n/a - different problem' : '10, silently', frac ? 'dim' : 'bad')]}],
+    msg:{zh:frac
+        ? '146.67 = rope + pan + 1/3 個 tent。可以切的版本沒有「湊不湊得剛好」的問題，所以貪心是對的 —— 這是本篇唯一一個安全的貪心。'
+        : '120 對 130，差 10，而且程式看起來完全正常。這就是為什麼「看起來很合理」不能當作正確性的證據 —— 沒有交換論證，就得填表。',
+      en:frac
+        ? '146.67 = rope + pan + one third of a tent. With cutting there is never a question of whether things fit exactly, so the greedy really is optimal - the one safe greedy in this article.'
+        : '120 against 130, a gap of 10, and the program looks entirely healthy. This is why "it sounds reasonable" is not evidence of correctness: without an exchange argument you have to fill the table.'}});
+  return F.list;
+}
+
+/* ======================================================================== *
+ * Tab 5 - LC 416: the same row with `or` instead of `max`
+ * ======================================================================== */
+const CODE_416 = [
+  'def can_partition(nums):',
+  '    total = sum(nums)',
+  '    if total % 2:',
+  '        return False            # odd total: impossible',
+  '    dp = [False] * (total // 2 + 1)',
+  '    dp[0] = True                # the empty subset',
+  '    for x in nums:',
+  '        for c in range(total // 2, x - 1, -1):',
+  '            if dp[c - x]:',
+  '                dp[c] = True',
+  '    return dp[total // 2]',
+  '',
+  '# or the whole row as one integer:',
+  '# bits = 1',
+  '# for x in nums: bits |= bits << x'
+];
+
+function lcFrames(v){
+  const nums = (v === 0) ? [1, 5, 11, 5] : [2, 2, 3, 5];
+  const total = nums.reduce((a, b) => a + b, 0);
+  const half = Math.floor(total / 2);
+  const F = new Frames();
+  const dp = new Array(half + 1).fill(false);
+  dp[0] = true;
+  const LW = Math.min(.74, 8.4 / (half + 1));
+  const lx = c => 1.10 + c * LW;
+  const lmid = c => 1.10 + c * LW + (LW - .06) / 2;
+  const draw = (st, extra) => {
+    let out = [];
+    for (let c = 0; c <= half; c++)
+      out.push(S.t(lmid(c), 2.30, String(c),
+        {c:(st && st[c]) ? COL.orangeL : COL.grey, fs:.28}));
+    out = out.concat(cellRow(dp.map(b => b ? 'T' : '.'), 1.10, 2.60, LW, .72,
+      {states:st || {}, index:false, fs:.32, title:'dp'}));
+    return out.concat(extra || []);
+  };
+
+  F.push({shapes:draw({0:'ok'}, [
+      S.t(4.9, .60, {zh:'LC 416：能不能把陣列切成兩堆、總和相等',
+                     en:'LC 416: split the array into two equal-sum piles'},
+          {c:COL.tealL, fs:.34}),
+      S.t(4.9, 1.10, 'sum = ' + total + '  ->  target = ' + half,
+          {c:COL.orangeL, fs:.36}),
+      S.t(4.9, 4.10, {zh:'格子裡不再是價值，而是「這個總和湊得出來嗎」—— max 換成 or',
+                      en:'cells hold reachable / not reachable - max becomes or'},
+          {c:COL.grey, fs:.32})]),
+    view:VIEW, line:5, panels:[
+      {lbl:{zh:'輸入', en:'input'}, chips:nums.map(x => chip(String(x), 'dim'))},
+      {lbl:{zh:'目標', en:'target'}, chips:[chip(String(half), 'hot')]},
+      {lbl:{zh:'已知可湊出的總和', en:'reachable sums'}, chips:[chip('0', 'ok')]}],
+    msg:{zh:'兩堆相等，代表其中一堆的總和必須剛好是 ' + total + ' / 2 = ' + half +
+           '。於是「能不能平分」變成「能不能從這些數字裡挑出總和 ' + half + ' 的子集合」—— 背包，只是格子裡放 True/False。',
+         en:'Two equal piles means one of them sums to exactly ' + total + ' / 2 = ' + half +
+           '. So "can it be partitioned" becomes "is there a subset summing to ' + half +
+           '" - the same knapsack, with booleans in the cells.'}});
+
+  for (let i = 0; i < nums.length; i++){
+    const x = nums[i];
+    for (let c = half; c >= x; c--){
+      const st = {};
+      st[c] = 'act'; st[c - x] = dp[c - x] ? 'ok' : 'soft';
+      const gained = dp[c - x] && !dp[c];
+      if (dp[c - x]) dp[c] = true;
+      F.push({shapes:draw(st, [
+          S.t(4.9, .60, {zh:'由大往小掃 → 每個數字只能用一次',
+                         en:'scanning downwards -> each number may be used once'},
+              {c:COL.orangeL, fs:.34}),
+          S.t(4.9, 1.10, 'dp[' + c + '] |= dp[' + (c - x) + ']   (x = ' + x + ')',
+              {c:gained ? COL.tealL : COL.grey, fs:.36})]),
+        view:VIEW, line:9, panels:[
+          {lbl:{zh:'正在用的數字', en:'number being offered'}, chips:[chip(String(x), 'hot')]},
+          {lbl:{zh:'可湊出的總和', en:'reachable sums'},
+           chips:dp.map((b, k) => b ? chip(String(k), k === c && gained ? 'ok' : 'dim') : null).filter(Boolean)},
+          {lbl:{zh:'目標達成？', en:'target reached?'},
+           chips:[chip(dp[half] ? 'yes' : 'not yet', dp[half] ? 'ok' : 'dim')]}],
+        msg:{zh:gained
+            ? '總和 ' + (c - x) + ' 湊得出來，加上 ' + x + ' 就湊得出 ' + c + '。新的可達總和。'
+            : (dp[c - x] ? '總和 ' + c + ' 本來就湊得出來，這次沒有新資訊。'
+                         : '總和 ' + (c - x) + ' 湊不出來，那加上 ' + x + ' 也沒用。'),
+          en:gained
+            ? 'Sum ' + (c - x) + ' is reachable, so adding ' + x + ' makes ' + c + ' reachable too. A new sum lights up.'
+            : (dp[c - x] ? 'Sum ' + c + ' was already reachable, so this pass learns nothing new.'
+                         : 'Sum ' + (c - x) + ' is not reachable, so adding ' + x + ' cannot help.')}});
+    }
+  }
+
+  const fst = {}; fst[half] = dp[half] ? 'ok' : 'bad';
+  F.push({shapes:draw(fst, [
+      S.t(4.9, .60, dp[half] ? 'can_partition([' + nums.join(', ') + ']) = True'
+                             : 'can_partition([' + nums.join(', ') + ']) = False',
+          {c:dp[half] ? COL.tealL : COL.red, fs:.38}),
+      S.t(4.9, 4.10, {zh:'整列布林值可以塞進一個 Python 整數：bits |= bits << x',
+                      en:'the whole row fits in one integer: bits |= bits << x'},
+          {c:COL.orangeL, fs:.32}),
+      S.t(4.9, 4.55, {zh:'400 個數字時，190 ms 變成 0.2 ms —— 約 1000 倍',
+                      en:'400 numbers: 190 ms vs 0.2 ms - about 1000x'},
+          {c:COL.grey, fs:.32})]),
+    view:VIEW, line:14, panels:[
+      {lbl:{zh:'答案', en:'answer'}, chips:[chip(dp[half] ? 'True' : 'False', dp[half] ? 'ok' : 'bad')]},
+      {lbl:{zh:'湊得出來的總和', en:'all reachable sums'},
+       chips:dp.map((b, k) => b ? chip(String(k), k === half ? 'ok' : 'dim') : null).filter(Boolean)}],
+    msg:{zh:dp[half]
+        ? '湊得出 ' + half + '，所以切得開。注意整列布林值其實可以塞進一個 Python 大整數：bits |= bits << x 一行取代整個內層迴圈，而且位移讀的是快照，連「要倒著跑」的顧慮都消失了。'
+        : '總和 ' + total + ' 是奇數或湊不到 ' + half + '，切不開。同一張表、同一個迴圈方向，只是這次答案是 False。',
+      en:dp[half]
+        ? half + ' is reachable, so the array splits. And notice the whole boolean row fits in a single Python big integer: bits |= bits << x replaces the entire inner loop, and because the shift reads a snapshot, the "must run downwards" worry disappears as well.'
+        : 'The target ' + half + ' is unreachable, so no equal split exists. Same table, same loop direction - this time the answer is simply False.'}});
+  return F.list;
+}
+
+/* ======================================================================== */
+const DAY_META = {
+  title:{zh:'Day 34 — 背包問題：0/1、完全與多重背包',
+         en:'The knapsack family - 0/1, unbounded and bounded'},
+  sub:{zh:'同一份程式碼、同四個物品，內層迴圈倒著跑是 130，正著跑是 150。差一個 reversed()，而程式不會報錯。',
+       en:'Same code, same four items: run the inner loop downwards and the answer is 130, upwards and it is 150. One reversed(), and nothing raises.'},
+  tabs:[
+    {
+      id:'table', label:{zh:'二維表格', en:'the 2-D table'},
+      stage:{zh:'dp[i][c]：填表，然後倒著走回去問「哪些物品被拿了」',
+             en:'dp[i][c]: fill the table, then walk back to recover which items were taken'},
+      view:VIEW,
+      idea:{zh:'每個物品只有兩種命運：不拿，這一格就繼承上一列；拿，這一格就是上一列容量 c-w 的那格加上價值。兩個讀到的值都在上一列，所以整張表可以一列一列往下填，永遠不會讀到還沒算完的東西 —— 這就是 DP 的全部規則。表格填完只給你「值」，要拿到「哪些物品」得倒著走：某一格跟上面那格不一樣，就代表那個物品被拿了。',
+            en:'Each item has exactly two fates: leave it, and the cell inherits the row above; or take it, and the cell is the row above at capacity c-w plus the value. Both readings live in row i-1, so the table fills top to bottom and never reads unfinished work - which is the whole rule of DP. A finished table gives you a value, not a solution; to recover the items you walk back up, and any cell that differs from the one above it marks an item that was taken.'},
+      legend:[['#ff9736', {zh:'不拿：繼承的那一格', en:'leave it: the inherited cell'}],
+              ['#3fe0dd', {zh:'拿：dp[i-1][c-w]', en:'take it: dp[i-1][c-w]'}],
+              ['#9d6bff', {zh:'正在填 / 正在回溯', en:'being filled / backtracked'}],
+              ['#2f5661', {zh:'已填好', en:'already filled'}]],
+      code:CODE_TABLE, build:tableFrames
+    },
+    {
+      id:'roll', label:{zh:'一維與方向', en:'one row, two directions'},
+      stage:{zh:'同一段程式碼：由大往小 = 0/1，由小往大 = 完全背包',
+             en:'one piece of code: downwards is 0/1, upwards is the unbounded knapsack'},
+      view:VIEW,
+      variants:[{zh:'倒序（0/1）', en:'descending (0/1)'}, {zh:'正序（完全背包）', en:'ascending (unbounded)'}],
+      idea:{zh:'今天最該記住的一句話：內層迴圈的方向就是「這個物品能不能重複拿」。倒著跑時，dp[c-w] 這一輪還沒被碰過，讀到的是上一列，所以每個物品只被放進去一次；正著跑時，dp[c-w] 這一輪已經更新過，裡面可能已經有一個同樣的物品，於是它被拿第二次、第三次。130 和 150 都是正確答案，只是問題不同 —— 而 Python 一個字都不會說。',
+            en:'The sentence worth memorising: the direction of the inner loop is the same thing as "may this item be taken more than once". Going down, dp[c-w] has not been touched this round, so it still holds the previous row and each item is offered exactly once. Going up, dp[c-w] was already rewritten this round and may already contain a copy of this very item, so it gets taken again, and again. 130 and 150 are both correct answers to different questions - and Python will not say a word about which one you asked.'},
+      legend:[['#ff9736', {zh:'讀到的 dp[c-w]（上一輪）', en:'dp[c-w] read from the previous round'}],
+              ['#ff5c5c', {zh:'讀到的 dp[c-w] 這一輪已被改過', en:'dp[c-w] already rewritten this round'}],
+              ['#9d6bff', {zh:'正在寫的 dp[c]', en:'the dp[c] being written'}],
+              ['#3fe0dd', {zh:'答案', en:'the answer'}]],
+      code:CODE_ROLL, build:rollFrames
+    },
+    {
+      id:'split', label:{zh:'多重背包 / 二進位拆分', en:'bounded / binary splitting'},
+      stage:{zh:'每個物品有 k 個：13 個複本綁成 4 個包',
+             en:'k copies of an item: thirteen copies become four bundles'},
+      view:VIEW,
+      idea:{zh:'現實中的數量通常既不是 1 也不是無限，而是 k 個。把 k 個複本攤成 k 個 0/1 物品是對的，但成本跟 k 這個「數值」成正比。二進位拆分把 k 綁成 1、2、4、8… 加上一個餘數：任何 0 到 k 的數量都剛好是這些包的某個子集合，所以 log k 個 0/1 物品可以完整取代 k 個。這不是近似，是精確等價 —— 拆完之後跑的還是原本那個倒序迴圈。',
+            en:'Real supply is usually neither one nor infinite but k. Expanding k copies into k 0/1 items is correct, but it costs time proportional to the value of k. Binary splitting bundles them into 1, 2, 4, 8 ... plus a remainder: every count from 0 to k is exactly a subset of those bundles, so log k 0/1 items fully replace k of them. This is not an approximation but an exact equivalence - after splitting you run the identical descending loop.'},
+      legend:[['#9d6bff', {zh:'正在綁進這一包的複本', en:'copies going into this bundle'}],
+              ['#ff9736', {zh:'餘數那一包', en:'the remainder bundle'}],
+              ['#3fe0dd', {zh:'湊出這個數量所選的包', en:'bundles chosen for this count'}],
+              ['#2f5661', {zh:'虛線：沒被選到', en:'dashed: not chosen'}]],
+      code:CODE_SPLIT, build:splitFrames
+    },
+    {
+      id:'greedy', label:{zh:'貪心的陷阱', en:'the greedy trap'},
+      stage:{zh:'可以切：貪心是最佳解。不能切：安靜地少 10',
+             en:'cutting allowed: the greedy is optimal. No cutting: quietly 10 short'},
+      view:VIEW,
+      variants:[{zh:'可以切（分數背包）', en:'fractional (cutting allowed)'},
+                {zh:'不能切（0/1）', en:'0/1 (no cutting)'}],
+      idea:{zh:'「每單位重量價值最高的先拿」聽起來非常合理，而且在分數背包裡它真的可以被證明是最佳解（交換論證）。把剪刀收起來，同一條規則在同一組物品上就變成 120，而 DP 給的是 130。差距只有 10，但重點不是差多少，而是貪心不會告訴你它輸了。合不合理不能當正確性的證據；沒有證明，就填表。',
+            en:'"Take the best value per unit of weight first" sounds entirely reasonable, and for the fractional knapsack it is provably optimal by an exchange argument. Put the scissors away and the same rule on the same items returns 120 while the DP returns 130. The gap is only 10, but the size is not the point: the greedy never reports that it lost. Plausibility is not evidence of correctness - without a proof, fill the table.'},
+      legend:[['#3fe0dd', {zh:'切開後拿走的部分', en:'a slice taken after cutting'}],
+              ['#9d6bff', {zh:'整個拿走', en:'taken whole'}],
+              ['#ff5c5c', {zh:'放不下、被跳過', en:'does not fit, skipped'}],
+              ['#2f5661', {zh:'浪費掉的容量', en:'wasted capacity'}]],
+      code:CODE_GREEDY, build:greedyFrames
+    },
+    {
+      id:'lc416', label:{zh:'LC 416 等和分割', en:'LC 416 equal partition'},
+      stage:{zh:'同一張表，max 換成 or：湊不湊得出 sum/2',
+             en:'the same row with `or` instead of `max`: is sum/2 reachable'},
+      view:VIEW,
+      variants:[{zh:'[1,5,11,5] 可以切', en:'[1,5,11,5] splits'},
+                {zh:'[2,2,3,5] 切不開', en:'[2,2,3,5] does not'}],
+      idea:{zh:'Day 33 用過 max（最少硬幣）和 +（有幾種湊法），今天是第三個運算子 or：不管價值，只問哪些總和湊得出來。要把陣列切成總和相等的兩堆，等於問「有沒有子集合總和剛好是 sum/2」，就是一個容量 sum/2 的 0/1 背包。迴圈一樣要倒著跑，否則同一個數字會被用第二次。而且這一列布林值可以整個塞進一個 Python 大整數，bits |= bits << x 一行取代內層迴圈，快上約一千倍。',
+            en:'Day 33 used max (fewest coins) and + (how many ways); today brings the third operator, or: forget the value and just ask which sums are reachable. Splitting an array into two equal piles is the question "is there a subset summing to sum/2", which is a 0/1 knapsack with capacity sum/2. The loop still has to run downwards, or a number gets used twice. And the whole boolean row fits into one Python big integer, where bits |= bits << x replaces the inner loop and runs about a thousand times faster.'},
+      legend:[['#3fe0dd', {zh:'已知可湊出的總和', en:'a sum already known reachable'}],
+              ['#9d6bff', {zh:'正在更新的格子', en:'the cell being updated'}],
+              ['#ff9736', {zh:'目標 sum/2', en:'the target sum/2'}],
+              ['#ff5c5c', {zh:'湊不出來', en:'unreachable'}]],
+      code:CODE_416, build:lcFrames
+    }
+  ]
+};
