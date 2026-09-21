@@ -86,19 +86,6 @@ RadixAttention, and it is a radix tree with an eviction heap bolted on.
 
 ## The LeetCode problems
 
-LC 208 is the trie itself, and the interesting line is `search` versus `startsWith`: both walk
-the same path, and only the final `is_word` check differs. LC 211 adds a `'.'` wildcard, and it
-is the problem that proves a trie is not a compressed hash map. A `'.'` means there is no key to
-look up, so the walk forks into every child and the lookup becomes a DFS - bounded, because the
-depth is still the pattern length, but no longer a single path. LC 648 (replace words) is
-longest prefix match on English: walk the trie until you hit a marked node and stop, which is
-the routing table again with roots instead of subnets.
-
-## The problems, stated in full
-
-Restated in my own words - what is being asked, what goes in and comes out, one worked
-example, and the constraints that actually change which algorithm is allowed.
-
 ### LeetCode 208 - Implement Trie (Prefix Tree)
 
 **The task.** Implement a trie class with three methods: `insert(word)` stores a word,
@@ -153,6 +140,14 @@ up to `10^6` characters, all lowercase letters and single spaces. The size of th
 is what makes "for each word, test every root" too slow and a trie walk the right answer.
 
 [leetcode.com/problems/replace-words](https://leetcode.com/problems/replace-words/)
+
+LC 208 is the trie itself, and the interesting line is `search` versus `startsWith`: both walk
+the same path, and only the final `is_word` check differs. LC 211 adds a `'.'` wildcard, and it
+is the problem that proves a trie is not a compressed hash map. A `'.'` means there is no key to
+look up, so the walk forks into every child and the lookup becomes a DFS - bounded, because the
+depth is still the pattern length, but no longer a single path. LC 648 (replace words) is
+longest prefix match on English: walk the trie until you hit a marked node and stop, which is
+the routing table again with roots instead of subnets.
 
 ## Complexity
 

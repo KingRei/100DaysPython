@@ -99,6 +99,11 @@ expert_ids       [1, 2, 3, 4]</code></pre>
 <p><code>sgl-kernel</code> 為這一個函式準備了<strong>兩個 kernel</strong>，理由跟 day 21 碰到的非決定性是同一個。<code>atomicAdd</code> 版本每次跑出來的排列都不一樣（但每一個都是正確的排列）；per-thread histogram 版本則可重現。兩者 都餵給同一個 GEMM，因為 GEMM 的列根本不在乎自己是以什麼順序進來的。切換條件寫死在程式碼裡： <code>topk_ids.numel() &lt; 1024 &amp;&amp; num_experts &lt;= 64</code> - 小 batch 拿決定性，大 batch 拿 atomic。</p>
 <p>實際尺寸下（4,096 個 token、256 個 expert 取 top-8、block 64），32,768 個 routed token 會變成 40,704 個 slot，其中 19.5% 是 padding。那就是固定 block size 的價格，而 counting sort 的工作， 正是把資料排成讓這個價格付得下去的樣子。</p>
 <h2>LeetCode 75 - Sort Colors</h2>
+<p><strong>題目。</strong> 給一個陣列，裡面每個元素只會是 <code>0</code>、<code>1</code>、<code>2</code>（可以想成紅、白、藍三種球）。請*原地* 重排，讓所有 <code>0</code> 在最前面、接著 <code>1</code>、最後是 <code>2</code>。不可以直接呼叫內建的 sort。</p>
+<p><strong>輸入／輸出。</strong> 輸入是陣列 <code>nums</code>；沒有回傳值，要直接把 <code>nums</code> 本身排好。</p>
+<p><strong>範例。</strong> <code>nums = [2,0,2,1,1,0]</code> → <code>[0,0,1,1,2,2]</code>。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(nums) &lt;= 300</code>，每個 <code>nums[i]</code> 只會是 <code>0</code>、<code>1</code>、<code>2</code>。真正有意思的是 follow-up：只掃一遍、而且只用 <code>O(1)</code> 額外空間。</p>
+<p><a href="https://leetcode.com/problems/sort-colors/">leetcode.com/problems/sort-colors</a></p>
 <p>兩趟（三個計數器的直方圖 + 重寫），或者一趟（三個指標）。follow-up 要的是一趟版本，而它難在一個 不對稱：從高位換下來的值<strong>還沒被檢查過</strong>，所以那一步 <code>mid</code> 不能前進；從低位換上去的值則已經看過了。</p>
 <pre><code>def sort_colors(nums):
     low, mid, high = 0, 0, len(nums) - 1
@@ -112,6 +117,11 @@ expert_ids       [1, 2, 3, 4]</code></pre>
         else:
             mid += 1</code></pre>
 <h2>LeetCode 164 - Maximum Gap</h2>
+<p><strong>題目。</strong> 給一個沒有排序的整數陣列，回傳它排序後*相鄰兩個元素*之間的最大差值。如果陣列 元素少於兩個，答案是 <code>0</code>。</p>
+<p><strong>輸入／輸出。</strong> 輸入是 <code>nums</code>，輸出是一個整數。</p>
+<p><strong>範例。</strong> <code>nums = [3,6,9,1]</code>，排序後是 <code>[1,3,6,9]</code>，相鄰差值為 <code>2, 3, 3</code>，答案是 <code>3</code>。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(nums) &lt;= 10^5</code>、<code>0 &lt;= nums[i] &lt;= 10^9</code>。題目明文要求<strong>線性時間、線性 額外空間</strong>，這一句話就把「先排序再掃一遍」擋掉了，也是為什麼它會變成一題桶子／基數排序的題目。</p>
+<p><a href="https://leetcode.com/problems/maximum-gap/">leetcode.com/problems/maximum-gap</a></p>
 <p>「排序後相鄰兩數的最大差，而且要 O(n)」，翻譯過來就是「不准真的排序」。把 n 個數丟進 n-1 個寬度為 <code>ceil((max - min) / (n - 1))</code> 的桶，鴿籠原理保證<strong>至少有一個桶是空的</strong>，所以最大 gap 至少有一個 桶那麼寬，因此它<strong>不可能落在同一個桶裡面</strong>。每個桶只留 min 和 max，其他值直接扔掉，最後掃一次邊界。</p>
 <pre><code>w  = max(1, ceil((hi - lo) / (n - 1)))
 nb = (hi - lo) // w + 1
@@ -129,20 +139,5 @@ for b in range(1, nb):
 <p>影響最深遠的是 prefix sum。它是每一種平行 counting sort 的骨架，是 fused MoE layer 用來算出每個 expert 的列從哪裡開始的東西；而這裡 work 對 depth 的那套論證，跟一批請求要怎麼排到多個裝置上是 同一套。radix sort 的保序 key，則是量化格式能被當成整數比較的原因。至於「哪一段排序可以省掉」這個 念頭，每次看到 kernel 在每個 tile 上只留一份摘要而不是留整個 tile，你看到的就是它。</p>
 <p>明天：二分搜尋，以及那三種邊界寫法 - 選對了它很簡單，選錯了它會變成一輩子的 off-by-one。</p>
 <p>程式碼、notebook 跟互動式演示都在 repo 裡：</p>
-<h2>附錄：LeetCode 題目完整題敘</h2>
-<p>以下用我自己的話重寫一遍：題目在問什麼、輸入輸出是什麼、一個算過的例子，以及那些真的會 改變「可以用哪種演算法」的限制。</p>
-<h3>LeetCode 75 - Sort Colors（顏色分類）</h3>
-<p><strong>題目。</strong> 給一個陣列，裡面每個元素只會是 <code>0</code>、<code>1</code>、<code>2</code>（可以想成紅、白、藍三種球）。請*原地* 重排，讓所有 <code>0</code> 在最前面、接著 <code>1</code>、最後是 <code>2</code>。不可以直接呼叫內建的 sort。</p>
-<p><strong>輸入／輸出。</strong> 輸入是陣列 <code>nums</code>；沒有回傳值，要直接把 <code>nums</code> 本身排好。</p>
-<p><strong>範例。</strong> <code>nums = [2,0,2,1,1,0]</code> → <code>[0,0,1,1,2,2]</code>。</p>
-<p><strong>限制。</strong> <code>1 &lt;= len(nums) &lt;= 300</code>，每個 <code>nums[i]</code> 只會是 <code>0</code>、<code>1</code>、<code>2</code>。真正有意思的是 follow-up：只掃一遍、而且只用 <code>O(1)</code> 額外空間。</p>
-<p><a href="https://leetcode.com/problems/sort-colors/">leetcode.com/problems/sort-colors</a></p>
-<h3>LeetCode 164 - Maximum Gap（最大間距）</h3>
-<p><strong>題目。</strong> 給一個沒有排序的整數陣列，回傳它排序後*相鄰兩個元素*之間的最大差值。如果陣列 元素少於兩個，答案是 <code>0</code>。</p>
-<p><strong>輸入／輸出。</strong> 輸入是 <code>nums</code>，輸出是一個整數。</p>
-<p><strong>範例。</strong> <code>nums = [3,6,9,1]</code>，排序後是 <code>[1,3,6,9]</code>，相鄰差值為 <code>2, 3, 3</code>，答案是 <code>3</code>。</p>
-<p><strong>限制。</strong> <code>1 &lt;= len(nums) &lt;= 10^5</code>、<code>0 &lt;= nums[i] &lt;= 10^9</code>。題目明文要求<strong>線性時間、線性 額外空間</strong>，這一句話就把「先排序再掃一遍」擋掉了，也是為什麼它會變成一題桶子／基數排序的題目。</p>
-<p><a href="https://leetcode.com/problems/maximum-gap/">leetcode.com/problems/maximum-gap</a></p>
-<p><a href="https://github.com/KingRei/100DaysPython/tree/master/day%2022%20-%20counting%20radix%20and%20bucket%20sort">day 22 on GitHub</a>。</p>
 </body>
 </html>

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>The stop string that a speculative decode jumped over</title>
+<title>String matching: KMP and Rabin-Karp</title>
 <style>
 body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
          font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
@@ -26,7 +26,7 @@ li     { margin: .3em 0; }
 </style>
 </head>
 <body>
-<h1>The stop string that a speculative decode jumped over</h1>
+<h1>String matching: KMP and Rabin-Karp</h1>
 <p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2025%20-%20string%20matching">day 25 on GitHub</a></p>
 <p><em>100 Days of Python - day 25</em></p>
 <p>Finding a substring is the most elementary problem in this whole series, and Python spells it <code>needle in haystack</code>. I still think it deserves a day, because the two classical algorithms for it - KMP and Rabin-Karp - are not really about text. They are about two different ways of not doing work, and both of them show up, unlabelled, in the guts of an LLM inference server. One of them shows up together with a bug that only appears when speculative decoding is switched on.</p>
@@ -88,6 +88,30 @@ li     { margin: .3em 0; }
 <p>Two requests sharing a system prompt get identical ids for the shared pages and diverge exactly where their tokens do. A page containing the same four tokens after a different history gets a <em>different</em> id, deliberately, because attention keys and values depend on the entire prefix.</p>
 <p>Now put it next to Rabin-Karp: <strong>there is no verify step here, and there cannot be one.</strong> The tokens you would compare against are long gone; at hit time the server holds nothing but an id. All the correctness rests on SHA-256 not colliding. Swap in a cheap hash and a collision does not make the server slow - it makes one request read another request&#x27;s KV cache. When choosing a hash, &quot;can I check afterwards?&quot; matters far more than &quot;is it fast?&quot;.</p>
 <h2>LeetCode</h2>
+<h3>LeetCode 28 - Find the Index of the First Occurrence in a String</h3>
+<p><strong>The task.</strong> Given two strings <code>haystack</code> and <code>needle</code>, return the index of the first occurrence of <code>needle</code> inside <code>haystack</code>, or <code>-1</code> if it does not occur.</p>
+<p><strong>Input / output.</strong> Two strings in, one integer out.</p>
+<p><strong>Example.</strong> <code>haystack = &quot;sadbutsad&quot;</code>, <code>needle = &quot;sad&quot;</code> → <code>0</code> (it also occurs at <code>6</code>, but we want the first). <code>haystack = &quot;leetcode&quot;</code>, <code>needle = &quot;leeto&quot;</code> → <code>-1</code>.</p>
+<p><strong>Constraints.</strong> <code>1 &lt;= len(haystack), len(needle) &lt;= 10^4</code>, lowercase English letters. The naive double loop passes at this size, which is exactly why it is the right place to <em>compare</em> it against KMP rather than to be forced into KMP.</p>
+<p><a href="https://leetcode.com/problems/find-the-index-of-the-first-occurrence-in-a-string/">leetcode.com/problems/find-the-index-of-the-first-occurrence-in-a-string</a></p>
+<h3>LeetCode 459 - Repeated Substring Pattern</h3>
+<p><strong>The task.</strong> Decide whether the string can be built by taking some proper substring and concatenating two or more copies of it.</p>
+<p><strong>Input / output.</strong> One string in, a boolean out.</p>
+<p><strong>Example.</strong> <code>&quot;abab&quot;</code> → <code>True</code> (<code>&quot;ab&quot;</code> twice). <code>&quot;aba&quot;</code> → <code>False</code>. <code>&quot;abcabcabcabc&quot;</code> → <code>True</code> (<code>&quot;abc&quot;</code> four times, or <code>&quot;abcabc&quot;</code> twice).</p>
+<p><strong>Constraints.</strong> <code>1 &lt;= len(s) &lt;= 10^4</code>, lowercase English letters. The one-line solution <code>s in (s + s)[1:-1]</code> is cute, but the KMP reading is the one that generalises: the string is periodic exactly when <code>n - failure[n-1]</code> divides <code>n</code> and is smaller than <code>n</code>.</p>
+<p><a href="https://leetcode.com/problems/repeated-substring-pattern/">leetcode.com/problems/repeated-substring-pattern</a></p>
+<h3>LeetCode 214 - Shortest Palindrome</h3>
+<p><strong>The task.</strong> You may only add characters <strong>in front of</strong> the given string. Return the shortest palindrome you can produce that way.</p>
+<p><strong>Input / output.</strong> One string in, one string out.</p>
+<p><strong>Example.</strong> <code>s = &quot;aacecaaa&quot;</code> → <code>&quot;aaacecaaa&quot;</code> (one <code>a</code> added). <code>s = &quot;abcd&quot;</code> → <code>&quot;dcbabcd&quot;</code> (three characters added).</p>
+<p><strong>Constraints.</strong> <code>0 &lt;= len(s) &lt;= 5 * 10^4</code>, lowercase English letters. The reformulation is the trick: adding as little as possible in front means finding the <em>longest palindromic prefix</em> of <code>s</code>, which is a prefix-function question in disguise once you run KMP over <code>s + &#x27;#&#x27; + reversed(s)</code>.</p>
+<p><a href="https://leetcode.com/problems/shortest-palindrome/">leetcode.com/problems/shortest-palindrome</a></p>
+<h3>LeetCode 1044 - Longest Duplicate Substring</h3>
+<p><strong>The task.</strong> Find a longest substring that occurs <strong>at least twice</strong> in <code>s</code>; the two occurrences are allowed to overlap. Return any one of them, or the empty string if no substring repeats.</p>
+<p><strong>Input / output.</strong> One string in, one string out.</p>
+<p><strong>Example.</strong> <code>s = &quot;banana&quot;</code> → <code>&quot;ana&quot;</code> (it occurs at index <code>1</code> and index <code>3</code>, overlapping). <code>s = &quot;abcd&quot;</code> → <code>&quot;&quot;</code>.</p>
+<p><strong>Constraints.</strong> <code>2 &lt;= len(s) &lt;= 3 * 10^4</code>, lowercase English letters. &quot;Does a duplicate of length <code>L</code> exist?&quot; is monotone in <code>L</code>, so the standard solution binary-searches <code>L</code> and answers each question with Rabin-Karp rolling hashes - or, without any randomness, reads the answer straight off a suffix array plus its LCP array.</p>
+<p><a href="https://leetcode.com/problems/longest-duplicate-substring/">leetcode.com/problems/longest-duplicate-substring</a></p>
 <p><strong>28 (<code>strStr</code>)</strong> is the algorithm itself. The pair I would actually prepare is 459 and 214, because neither is a search - both use the border quantity directly.</p>
 <pre><code>def repeated_substring_pattern(s):          # LC 459
     n = len(s)
@@ -105,32 +129,5 @@ def shortest_palindrome(s):                 # LC 214
 <p>Borders and rolling hashes are the substrate under the rest of the string part of this series: suffix arrays and Aho-Corasick generalise &quot;what have I already matched&quot; to many patterns at once, and MinHash generalises &quot;compare fingerprints, not contents&quot; to similarity rather than equality. BM25 and hybrid retrieval lean on the same rolling-hash shingling. And the two inference-server mechanisms above - the stop-string window and the chained page id - are the reason I wanted the naive matcher and the hash side by side in one day: one of them can verify its guesses, the other one structurally cannot, and that difference decides which hash you are allowed to choose.</p>
 <p>Tomorrow: suffix arrays, LCP, and matching many patterns at once.</p>
 <p>Code, notebook, figures and an interactive walkthrough:</p>
-<h2>Appendix: the LeetCode problems in full</h2>
-<p>Restated in my own words - what is being asked, what goes in and comes out, one worked example, and the constraints that actually change which algorithm is allowed.</p>
-<h3>LeetCode 28 - Find the Index of the First Occurrence in a String</h3>
-<p><strong>The task.</strong> Given two strings <code>haystack</code> and <code>needle</code>, return the index of the first occurrence of <code>needle</code> inside <code>haystack</code>, or <code>-1</code> if it does not occur.</p>
-<p><strong>Input / output.</strong> Two strings in, one integer out.</p>
-<p><strong>Example.</strong> <code>haystack = &quot;sadbutsad&quot;</code>, <code>needle = &quot;sad&quot;</code> → <code>0</code> (it also occurs at <code>6</code>, but we want the first). <code>haystack = &quot;leetcode&quot;</code>, <code>needle = &quot;leeto&quot;</code> → <code>-1</code>.</p>
-<p><strong>Constraints.</strong> <code>1 &lt;= len(haystack), len(needle) &lt;= 10^4</code>, lowercase English letters. The naive double loop passes at this size, which is exactly why it is the right place to <em>compare</em> it against KMP rather than to be forced into KMP.</p>
-<p><a href="https://leetcode.com/problems/find-the-index-of-the-first-occurrence-in-a-string/">leetcode.com/problems/find-the-index-of-the-first-occurrence-in-a-string</a></p>
-<h3>LeetCode 214 - Shortest Palindrome</h3>
-<p><strong>The task.</strong> You may only add characters <strong>in front of</strong> the given string. Return the shortest palindrome you can produce that way.</p>
-<p><strong>Input / output.</strong> One string in, one string out.</p>
-<p><strong>Example.</strong> <code>s = &quot;aacecaaa&quot;</code> → <code>&quot;aaacecaaa&quot;</code> (one <code>a</code> added). <code>s = &quot;abcd&quot;</code> → <code>&quot;dcbabcd&quot;</code> (three characters added).</p>
-<p><strong>Constraints.</strong> <code>0 &lt;= len(s) &lt;= 5 * 10^4</code>, lowercase English letters. The reformulation is the trick: adding as little as possible in front means finding the <em>longest palindromic prefix</em> of <code>s</code>, which is a prefix-function question in disguise once you run KMP over <code>s + &#x27;#&#x27; + reversed(s)</code>.</p>
-<p><a href="https://leetcode.com/problems/shortest-palindrome/">leetcode.com/problems/shortest-palindrome</a></p>
-<h3>LeetCode 459 - Repeated Substring Pattern</h3>
-<p><strong>The task.</strong> Decide whether the string can be built by taking some proper substring and concatenating two or more copies of it.</p>
-<p><strong>Input / output.</strong> One string in, a boolean out.</p>
-<p><strong>Example.</strong> <code>&quot;abab&quot;</code> → <code>True</code> (<code>&quot;ab&quot;</code> twice). <code>&quot;aba&quot;</code> → <code>False</code>. <code>&quot;abcabcabcabc&quot;</code> → <code>True</code> (<code>&quot;abc&quot;</code> four times, or <code>&quot;abcabc&quot;</code> twice).</p>
-<p><strong>Constraints.</strong> <code>1 &lt;= len(s) &lt;= 10^4</code>, lowercase English letters. The one-line solution <code>s in (s + s)[1:-1]</code> is cute, but the KMP reading is the one that generalises: the string is periodic exactly when <code>n - failure[n-1]</code> divides <code>n</code> and is smaller than <code>n</code>.</p>
-<p><a href="https://leetcode.com/problems/repeated-substring-pattern/">leetcode.com/problems/repeated-substring-pattern</a></p>
-<h3>LeetCode 1044 - Longest Duplicate Substring</h3>
-<p><strong>The task.</strong> Find a longest substring that occurs <strong>at least twice</strong> in <code>s</code>; the two occurrences are allowed to overlap. Return any one of them, or the empty string if no substring repeats.</p>
-<p><strong>Input / output.</strong> One string in, one string out.</p>
-<p><strong>Example.</strong> <code>s = &quot;banana&quot;</code> → <code>&quot;ana&quot;</code> (it occurs at index <code>1</code> and index <code>3</code>, overlapping). <code>s = &quot;abcd&quot;</code> → <code>&quot;&quot;</code>.</p>
-<p><strong>Constraints.</strong> <code>2 &lt;= len(s) &lt;= 3 * 10^4</code>, lowercase English letters. &quot;Does a duplicate of length <code>L</code> exist?&quot; is monotone in <code>L</code>, so the standard solution binary-searches <code>L</code> and answers each question with Rabin-Karp rolling hashes - or, without any randomness, reads the answer straight off a suffix array plus its LCP array.</p>
-<p><a href="https://leetcode.com/problems/longest-duplicate-substring/">leetcode.com/problems/longest-duplicate-substring</a></p>
-<p><a href="https://github.com/KingRei/100DaysPython/tree/master/day%2025%20-%20string%20matching">day 25 on GitHub</a></p>
 </body>
 </html>

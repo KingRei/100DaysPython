@@ -108,42 +108,6 @@ the walk saves.
 
 ## LeetCode 1206, and the `<` that cannot be `<=`
 
-Design Skiplist allows duplicate values, and `erase` must remove exactly one copy. That single
-requirement pins down the comparison in the descent: `while node.forward[i].val < target` stops
-in front of the *first* copy, which is the one `erase` unlinks. Write `<=` and the walk sails
-past all three copies of a 3 and reports that 3 is not in the list. Nothing crashes, nothing is
-out of order - the same shape of failure as the missing span bump.
-
-LeetCode 315, counting smaller numbers after self, also falls out of spans: insert the array
-from the right and ask `count_less(x)` before each insert. It agrees with the Fenwick tree
-answer from day 29, which is the point - a Fenwick tree counts prefixes over value indices, a
-skip list counts them over the values themselves, and neither needs the values compressed into
-a range first.
-
-## The same layered idea in metric space
-
-The lanes are not really about keys. They are about approaching a target with big strides and
-finishing with small ones, and that idea survives when "sorted order" no longer exists. HNSW -
-the index behind most vector databases - draws each node's layer from `floor(-ln(U) * mL)`,
-which is the same geometric distribution, greedily descends the sparse upper layers, and then
-runs a beam of width `ef` on the bottom one. The beam is the one real difference: a line cannot
-trap a greedy walk, but a metric space can, so the bottom layer needs several candidates alive
-at once. The toy implementation in the module keeps recall at 1.00 while the distance count
-barely moves:
-
-| n | layers | recall@1 | HNSW distances | brute force | speedup |
-|---|---|---|---|---|---|
-| 500 | 4 | 1.00 | 10,146 | 50,000 | 4.9x |
-| 2,000 | 5 | 1.00 | 12,316 | 200,000 | 16.2x |
-| 8,000 | 5 | 1.00 | 13,655 | 800,000 | 58.6x |
-
-16x the data, 1.1x the work.
-
-## The problems, stated in full
-
-Restated in my own words - what is being asked, what goes in and comes out, one worked
-example, and the constraints that actually change which algorithm is allowed.
-
 ### LeetCode 1206 - Design Skiplist
 
 **The task.** Implement a skip list from scratch, without using any built-in balanced-tree
@@ -179,6 +143,37 @@ into a Fenwick tree indexed by value gives `O(n log U)`; a merge sort that count
 inversions, or an order-statistic skip list, get there too.
 
 [leetcode.com/problems/count-of-smaller-numbers-after-self](https://leetcode.com/problems/count-of-smaller-numbers-after-self/)
+
+Design Skiplist allows duplicate values, and `erase` must remove exactly one copy. That single
+requirement pins down the comparison in the descent: `while node.forward[i].val < target` stops
+in front of the *first* copy, which is the one `erase` unlinks. Write `<=` and the walk sails
+past all three copies of a 3 and reports that 3 is not in the list. Nothing crashes, nothing is
+out of order - the same shape of failure as the missing span bump.
+
+LeetCode 315, counting smaller numbers after self, also falls out of spans: insert the array
+from the right and ask `count_less(x)` before each insert. It agrees with the Fenwick tree
+answer from day 29, which is the point - a Fenwick tree counts prefixes over value indices, a
+skip list counts them over the values themselves, and neither needs the values compressed into
+a range first.
+
+## The same layered idea in metric space
+
+The lanes are not really about keys. They are about approaching a target with big strides and
+finishing with small ones, and that idea survives when "sorted order" no longer exists. HNSW -
+the index behind most vector databases - draws each node's layer from `floor(-ln(U) * mL)`,
+which is the same geometric distribution, greedily descends the sparse upper layers, and then
+runs a beam of width `ef` on the bottom one. The beam is the one real difference: a line cannot
+trap a greedy walk, but a metric space can, so the bottom layer needs several candidates alive
+at once. The toy implementation in the module keeps recall at 1.00 while the distance count
+barely moves:
+
+| n | layers | recall@1 | HNSW distances | brute force | speedup |
+|---|---|---|---|---|---|
+| 500 | 4 | 1.00 | 10,146 | 50,000 | 4.9x |
+| 2,000 | 5 | 1.00 | 12,316 | 200,000 | 16.2x |
+| 8,000 | 5 | 1.00 | 13,655 | 800,000 | 58.6x |
+
+16x the data, 1.1x the work.
 
 ## Complexity
 

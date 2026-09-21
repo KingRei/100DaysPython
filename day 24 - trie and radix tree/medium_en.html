@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>The tree that stores a shared prefix exactly once</title>
+<title>Tries and radix trees: storing a shared prefix exactly once</title>
 <style>
 body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
          font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
@@ -26,7 +26,7 @@ li     { margin: .3em 0; }
 </style>
 </head>
 <body>
-<h1>The tree that stores a shared prefix exactly once</h1>
+<h1>Tries and radix trees: storing a shared prefix exactly once</h1>
 <p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2024%20-%20trie%20and%20radix%20tree">day 24 on GitHub</a></p>
 <p><em>100 Days of Python - day 24</em></p>
 <p>A hash set can tell you whether <code>rubicon</code> is in your dictionary. It cannot tell you that <code>rubicon</code>, <code>rubicundus</code> and <code>ruber</code> all start the same way, because hashing destroys exactly that information - it is designed to. If the question you actually have is &quot;what do these strings have in common&quot;, you need a structure that keeps the prefix, and that structure is the trie.</p>
@@ -39,7 +39,6 @@ li     { margin: .3em 0; }
     def __init__(self):
         self.children = {}      # character -&gt; TrieNode
         self.is_word = False
-
 
 class Trie:
     def insert(self, word):
@@ -118,22 +117,6 @@ linear scan of the same table    O(n · L)        -
 wildcard search, d dots          O(sigma^d · L)  -
 split on insert                  -               O(1)</code></pre>
 <h2>The interview version</h2>
-<p>LeetCode 208 is the trie itself, and the line that matters is <code>search</code> versus <code>startsWith</code>. LeetCode 211 adds a <code>&#x27;.&#x27;</code> wildcard, and it is the problem that proves a trie is not a compressed hash map:</p>
-<pre><code>    def _dfs(self, node, word, i):
-        if i == len(word):
-            return node.is_word
-        ch = word[i]
-        if ch != &quot;.&quot;:
-            nxt = node.children.get(ch)
-            return nxt is not None and self._dfs(nxt, word, i + 1)
-        return any(self._dfs(child, word, i + 1) for child in node.children.values())</code></pre>
-<p>A <code>&#x27;.&#x27;</code> means there is no key to look up, so the walk forks into every child and the lookup becomes a DFS. It is still bounded - the depth is the pattern length - but it is no longer a single path, and no hash table can do this at all. LeetCode 648 is longest prefix match on English: walk until you hit a marked node and stop, which is the routing table with word roots instead of subnets.</p>
-<h2>Where this goes</h2>
-<p>The pattern to carry forward is that a trie turns &quot;compare against everything&quot; into &quot;walk the key&quot;. Routing tables, autocomplete, IP lookup, prefix caches in an inference server and the compressed key indexes inside a modern database are all the same tree with different alphabets. When we get to RadixAttention, none of it will be new - it is this structure, plus an eviction heap.</p>
-<p>Next up is string matching, where the question changes from &quot;which stored key does this share a prefix with&quot; to &quot;where inside this text does a pattern occur&quot;, and prefixes come back in a completely different disguise.</p>
-<p>Code, notebook, figures and an interactive walkthrough:</p>
-<h2>Appendix: the LeetCode problems in full</h2>
-<p>Restated in my own words - what is being asked, what goes in and comes out, one worked example, and the constraints that actually change which algorithm is allowed.</p>
 <h3>LeetCode 208 - Implement Trie (Prefix Tree)</h3>
 <p><strong>The task.</strong> Implement a trie class with three methods: <code>insert(word)</code> stores a word, <code>search(word)</code> returns <code>True</code> only if that exact word was inserted, and <code>startsWith(prefix)</code> returns <code>True</code> if any stored word begins with that prefix.</p>
 <p><strong>Input / output.</strong> The judge sends a list of operations and arguments and compares the returned values; the constructor takes nothing.</p>
@@ -152,6 +135,19 @@ split on insert                  -               O(1)</code></pre>
 <p><strong>Example.</strong> <code>dictionary = [&quot;cat&quot;,&quot;bat&quot;,&quot;rat&quot;]</code>, <code>sentence = &quot;the cattle was rattled by the battery&quot;</code> → <code>&quot;the cat was rat by the bat&quot;</code>.</p>
 <p><strong>Constraints.</strong> <code>1 &lt;= len(dictionary) &lt;= 1000</code>, each root <code>1..100</code> characters, the sentence up to <code>10^6</code> characters, all lowercase letters and single spaces. The size of the sentence is what makes &quot;for each word, test every root&quot; too slow and a trie walk the right answer.</p>
 <p><a href="https://leetcode.com/problems/replace-words/">leetcode.com/problems/replace-words</a></p>
-<p><a href="https://github.com/KingRei/100DaysPython/tree/master/day%2024%20-%20trie%20and%20radix%20tree">day 24 on GitHub</a>. The <code>demo.html</code> in that folder animates the split and the page-aligned cache step by step, which is much easier to watch than to read.</p>
+<p>LeetCode 208 is the trie itself, and the line that matters is <code>search</code> versus <code>startsWith</code>. LeetCode 211 adds a <code>&#x27;.&#x27;</code> wildcard, and it is the problem that proves a trie is not a compressed hash map:</p>
+<pre><code>    def _dfs(self, node, word, i):
+        if i == len(word):
+            return node.is_word
+        ch = word[i]
+        if ch != &quot;.&quot;:
+            nxt = node.children.get(ch)
+            return nxt is not None and self._dfs(nxt, word, i + 1)
+        return any(self._dfs(child, word, i + 1) for child in node.children.values())</code></pre>
+<p>A <code>&#x27;.&#x27;</code> means there is no key to look up, so the walk forks into every child and the lookup becomes a DFS. It is still bounded - the depth is the pattern length - but it is no longer a single path, and no hash table can do this at all. LeetCode 648 is longest prefix match on English: walk until you hit a marked node and stop, which is the routing table with word roots instead of subnets.</p>
+<h2>Where this goes</h2>
+<p>The pattern to carry forward is that a trie turns &quot;compare against everything&quot; into &quot;walk the key&quot;. Routing tables, autocomplete, IP lookup, prefix caches in an inference server and the compressed key indexes inside a modern database are all the same tree with different alphabets. When we get to RadixAttention, none of it will be new - it is this structure, plus an eviction heap.</p>
+<p>Next up is string matching, where the question changes from &quot;which stored key does this share a prefix with&quot; to &quot;where inside this text does a pattern occur&quot;, and prefixes come back in a completely different disguise.</p>
+<p>Code, notebook, figures and an interactive walkthrough:</p>
 </body>
 </html>

@@ -105,21 +105,6 @@ tent  0 0 0 50 50 70 80 90 120 130 130</code></pre>
 <p>Put the scissors away and the identical rule on the identical items returns 120. After rope and pan there are 2 units of capacity left and the tent needs 6. The DP returns 130.</p>
 <p>The gap is 10, and the size is not the point. The point is that the greedy does not report that it lost. &quot;Best value per unit of weight&quot; sounds like a reason, and it is — for the fractional problem, where there is a proof. For 0/1 there is no proof, and plausibility is not evidence.</p>
 <h2>Same row, different operator</h2>
-<p>Replace <code>max</code> with <code>or</code> and the table forgets values entirely: it now only tracks which totals are reachable. LeetCode 416 asks whether an array can be split into two piles of equal sum, which is the question &quot;is there a subset summing to <code>sum/2</code>&quot; — a 0/1 knapsack of capacity <code>sum/2</code>, still scanning downwards so that no number gets used twice. <code>[1, 5, 11, 5]</code> splits. <code>[2, 2, 3, 5]</code> has an even total and still does not.</p>
-<p>A boolean row is a bit vector, and Python integers are arbitrarily long:</p>
-<pre><code>def subset_sum_bits(nums, target):
-    bits = 1                       # bit 0 set: the empty subset sums to 0
-    for x in nums:
-        bits |= bits &lt;&lt; x          # offer x to every reachable sum at once
-    return (bits &gt;&gt; target) &amp; 1 == 1</code></pre>
-<p>The shift reads a snapshot of the old value, so even the &quot;must run downwards&quot; worry disappears. On 400 numbers with target 9545 the list version takes about 190 ms and this takes about 0.2 ms — roughly a thousandfold, purely from moving the inner loop into C-level big-integer code. Target Sum, Last Stone Weight II, Ones and Zeroes and Perfect Squares are all the same row with a different operator.</p>
-<h2><code>O(n · cap)</code> is not polynomial</h2>
-<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2034%20-%20knapsack%20problems/imgs/day34_6.png">
-<p>This is the part that gets skipped. Multiply every weight and the capacity by 10 and the answer stays 130, but the table goes from 44 cells to 404, then 4,004, then 40,004 — while the <em>input</em> grows from 15 bits to 30, 47 and 64. The runtime is polynomial in the magnitude of the numbers, not in their length. That is what &quot;pseudo-polynomial&quot; means, it is why 0/1 knapsack remains NP-complete, and it is also a practical rule: this table is the right tool for small integer weights and small capacities, and the wrong one for floating-point or astronomically large ones, where branch and bound or an approximation scheme belongs instead.</p>
-<h2>Why this matters later</h2>
-<p>Binary splitting is the same trick as binary lifting in sparse tables and jump pointers: represent any count as a sum of powers of two so that <code>k</code> work becomes <code>log k</code> work. The bitset row reappears anywhere a DP state is a set of booleans, which is most of bitmask DP. And the &quot;direction of the inner loop&quot; reflex — asking <em>when</em> a cell was last written, not just what it holds — is the thing that keeps rolling-array optimisations honest for the rest of the DP chapters.</p>
-<h2>Appendix: the LeetCode problems in full</h2>
-<p>Restated in my own words - what is being asked, what goes in and comes out, one worked example, and the constraints that actually change which algorithm is allowed.</p>
 <h3>LeetCode 416 - Partition Equal Subset Sum</h3>
 <p><strong>The task.</strong> Given an array of positive integers, decide whether it can be split into two subsets whose sums are equal. Every element must go into exactly one of the two subsets.</p>
 <p><strong>Input / output.</strong> Input is <code>nums</code>; output is a boolean.</p>
@@ -150,7 +135,18 @@ tent  0 0 0 50 50 70 80 90 120 130 130</code></pre>
 <p><strong>Example.</strong> <code>n = 12</code> → <code>3</code> (<code>4 + 4 + 4</code>). <code>n = 13</code> → <code>2</code> (<code>4 + 9</code>).</p>
 <p><strong>Constraints.</strong> <code>1 &lt;= n &lt;= 10^4</code>. It is an unbounded knapsack whose &quot;coins&quot; are the squares below <code>n</code>, so <code>O(n * sqrt(n))</code> falls straight out. Lagrange&#x27;s four-square theorem says the answer is never more than <code>4</code>, and Legendre&#x27;s three-square theorem pins down exactly when it is <code>4</code>, which gives an <code>O(sqrt(n))</code> mathematical answer - a nice reminder that DP is a general hammer, not always the sharpest tool.</p>
 <p><a href="https://leetcode.com/problems/perfect-squares/">leetcode.com/problems/perfect-squares</a></p>
-<p>Tomorrow: longest increasing subsequence and longest common subsequence, where the table stops being one row and starts being a grid again.</p>
-<p>All of today&#x27;s code, the notebook, the figures and an interactive walkthrough: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2034%20-%20knapsack%20problems">100DaysPython on GitHub</a></p>
+<p>Replace <code>max</code> with <code>or</code> and the table forgets values entirely: it now only tracks which totals are reachable. LeetCode 416 asks whether an array can be split into two piles of equal sum, which is the question &quot;is there a subset summing to <code>sum/2</code>&quot; — a 0/1 knapsack of capacity <code>sum/2</code>, still scanning downwards so that no number gets used twice. <code>[1, 5, 11, 5]</code> splits. <code>[2, 2, 3, 5]</code> has an even total and still does not.</p>
+<p>A boolean row is a bit vector, and Python integers are arbitrarily long:</p>
+<pre><code>def subset_sum_bits(nums, target):
+    bits = 1                       # bit 0 set: the empty subset sums to 0
+    for x in nums:
+        bits |= bits &lt;&lt; x          # offer x to every reachable sum at once
+    return (bits &gt;&gt; target) &amp; 1 == 1</code></pre>
+<p>The shift reads a snapshot of the old value, so even the &quot;must run downwards&quot; worry disappears. On 400 numbers with target 9545 the list version takes about 190 ms and this takes about 0.2 ms — roughly a thousandfold, purely from moving the inner loop into C-level big-integer code. Target Sum, Last Stone Weight II, Ones and Zeroes and Perfect Squares are all the same row with a different operator.</p>
+<h2><code>O(n · cap)</code> is not polynomial</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2034%20-%20knapsack%20problems/imgs/day34_6.png">
+<p>This is the part that gets skipped. Multiply every weight and the capacity by 10 and the answer stays 130, but the table goes from 44 cells to 404, then 4,004, then 40,004 — while the <em>input</em> grows from 15 bits to 30, 47 and 64. The runtime is polynomial in the magnitude of the numbers, not in their length. That is what &quot;pseudo-polynomial&quot; means, it is why 0/1 knapsack remains NP-complete, and it is also a practical rule: this table is the right tool for small integer weights and small capacities, and the wrong one for floating-point or astronomically large ones, where branch and bound or an approximation scheme belongs instead.</p>
+<h2>Why this matters later</h2>
+<p>Binary splitting is the same trick as binary lifting in sparse tables and jump pointers: represent any count as a sum of powers of two so that <code>k</code> work becomes <code>log k</code> work. The bitset row reappears anywhere a DP state is a set of booleans, which is most of bitmask DP. And the &quot;direction of the inner loop&quot; reflex — asking <em>when</em> a cell was last written, not just what it holds — is the thing that keeps rolling-array optimisations honest for the rest of the DP chapters.</p>
 </body>
 </html>

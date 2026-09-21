@@ -118,22 +118,6 @@ more than "is it fast?".
 
 ## The LeetCode problems
 
-LC 28 (`strStr`) is the algorithm itself. LC 459 and LC 214 are the interesting pair, because
-neither is a search: both use the border quantity directly. For 459, if the longest border of
-`s` has length `b` then sliding `s` right by `n - b` lands it on itself, so `n - b` is a period,
-and `s` is a repetition iff that period divides `n` - `b > 0 and n % (n - b) == 0`, with the
-`b > 0` guard stopping `abc` from counting as its own repetition. For 214, the longest
-palindromic prefix of `s` is the longest prefix of `s` that is also a suffix of `reversed(s)`,
-so building the failure function of `s + separator + reversed(s)` and reading the last entry
-answers it in one pass; the separator must appear in neither half, or the border can straddle
-the join and over-count. LC 1044 (longest duplicate substring) is the Rabin-Karp side: binary
-search on the length, and a verified rolling hash at each candidate.
-
-## The problems, stated in full
-
-Restated in my own words - what is being asked, what goes in and comes out, one worked
-example, and the constraints that actually change which algorithm is allowed.
-
 ### LeetCode 28 - Find the Index of the First Occurrence in a String
 
 **The task.** Given two strings `haystack` and `needle`, return the index of the first
@@ -149,6 +133,22 @@ naive double loop passes at this size, which is exactly why it is the right plac
 *compare* it against KMP rather than to be forced into KMP.
 
 [leetcode.com/problems/find-the-index-of-the-first-occurrence-in-a-string](https://leetcode.com/problems/find-the-index-of-the-first-occurrence-in-a-string/)
+
+### LeetCode 459 - Repeated Substring Pattern
+
+**The task.** Decide whether the string can be built by taking some proper substring and
+concatenating two or more copies of it.
+
+**Input / output.** One string in, a boolean out.
+
+**Example.** `"abab"` → `True` (`"ab"` twice). `"aba"` → `False`.
+`"abcabcabcabc"` → `True` (`"abc"` four times, or `"abcabc"` twice).
+
+**Constraints.** `1 <= len(s) <= 10^4`, lowercase English letters. The one-line solution
+`s in (s + s)[1:-1]` is cute, but the KMP reading is the one that generalises: the string
+is periodic exactly when `n - failure[n-1]` divides `n` and is smaller than `n`.
+
+[leetcode.com/problems/repeated-substring-pattern](https://leetcode.com/problems/repeated-substring-pattern/)
 
 ### LeetCode 214 - Shortest Palindrome
 
@@ -167,22 +167,6 @@ prefix* of `s`, which is a prefix-function question in disguise once you run KMP
 
 [leetcode.com/problems/shortest-palindrome](https://leetcode.com/problems/shortest-palindrome/)
 
-### LeetCode 459 - Repeated Substring Pattern
-
-**The task.** Decide whether the string can be built by taking some proper substring and
-concatenating two or more copies of it.
-
-**Input / output.** One string in, a boolean out.
-
-**Example.** `"abab"` → `True` (`"ab"` twice). `"aba"` → `False`.
-`"abcabcabcabc"` → `True` (`"abc"` four times, or `"abcabc"` twice).
-
-**Constraints.** `1 <= len(s) <= 10^4`, lowercase English letters. The one-line solution
-`s in (s + s)[1:-1]` is cute, but the KMP reading is the one that generalises: the string
-is periodic exactly when `n - failure[n-1]` divides `n` and is smaller than `n`.
-
-[leetcode.com/problems/repeated-substring-pattern](https://leetcode.com/problems/repeated-substring-pattern/)
-
 ### LeetCode 1044 - Longest Duplicate Substring
 
 **The task.** Find a longest substring that occurs **at least twice** in `s`; the two
@@ -200,6 +184,17 @@ answers each question with Rabin-Karp rolling hashes - or, without any randomnes
 the answer straight off a suffix array plus its LCP array.
 
 [leetcode.com/problems/longest-duplicate-substring](https://leetcode.com/problems/longest-duplicate-substring/)
+
+LC 28 (`strStr`) is the algorithm itself. LC 459 and LC 214 are the interesting pair, because
+neither is a search: both use the border quantity directly. For 459, if the longest border of
+`s` has length `b` then sliding `s` right by `n - b` lands it on itself, so `n - b` is a period,
+and `s` is a repetition iff that period divides `n` - `b > 0 and n % (n - b) == 0`, with the
+`b > 0` guard stopping `abc` from counting as its own repetition. For 214, the longest
+palindromic prefix of `s` is the longest prefix of `s` that is also a suffix of `reversed(s)`,
+so building the failure function of `s + separator + reversed(s)` and reading the last entry
+answers it in one pass; the separator must appear in neither half, or the border can straddle
+the join and over-count. LC 1044 (longest duplicate substring) is the Rabin-Karp side: binary
+search on the length, and a verified rolling hash at each candidate.
 
 ## Complexity
 

@@ -151,32 +151,6 @@ be undone?**
 
 ## The LeetCode problems
 
-LC 307 (Range Sum Query - Mutable) is the canonical problem for the whole topic, and it is
-constructed so that neither naive answer passes. Both structures solve it in a few lines, but the
-BIT version has a detail interviewers look for: **a BIT stores deltas, not values**, so
-"set `a[i]` to `val`" has to be written `add(i, val - a[i])`, which means keeping the old array
-alongside the tree. Miss it and the tree drifts silently. The other easy loss is the interval
-convention - LeetCode's `sumRange` is inclusive, the half-open `range_sum` needs `r + 1`.
-
-LC 315 (Count of Smaller Numbers After Self) is the reduction worth remembering: compress the
-values to ranks, scan **right to left** so that "after me" becomes "already seen", and use the
-BIT as a histogram. Each element then costs one `prefix(rank)` and one `add`. At `n = 4000` that
-is around 30 times faster than the double loop, and the same move - turn a counting question into
-a prefix query - powers inversion counts, sliding-window ranks and offline range statistics.
-
-LC 370 (Range Addition) is the deliberate anticlimax. All the updates arrive before any query, so
-a difference array in `O(n + k)` is optimal and no tree helps at all. That is the question to ask
-first, straight from the problem statement: **are the updates and the queries interleaved?** If
-they are not, use prefix sums. If they are and the operation has an inverse, a Fenwick tree is
-six lines. If they are and it does not, build the segment tree.
-
-![img](https://github.com/KingRei/100DaysPython/blob/master/day%2029%20-%20segment%20tree%20and%20fenwick/imgs/day29_6.png?raw=true)
-
-## The problems, stated in full
-
-Restated in my own words - what is being asked, what goes in and comes out, one worked
-example, and the constraints that actually change which algorithm is allowed.
-
 ### LeetCode 307 - Range Sum Query - Mutable
 
 **The task.** Build a `NumArray` over an integer array supporting two operations mixed in
@@ -230,6 +204,27 @@ sum at the end - makes every update `O(1)`, and it is the same trick a Fenwick t
 generalises into range-update plus point-query.
 
 [leetcode.com/problems/range-addition](https://leetcode.com/problems/range-addition/)
+
+LC 307 (Range Sum Query - Mutable) is the canonical problem for the whole topic, and it is
+constructed so that neither naive answer passes. Both structures solve it in a few lines, but the
+BIT version has a detail interviewers look for: **a BIT stores deltas, not values**, so
+"set `a[i]` to `val`" has to be written `add(i, val - a[i])`, which means keeping the old array
+alongside the tree. Miss it and the tree drifts silently. The other easy loss is the interval
+convention - LeetCode's `sumRange` is inclusive, the half-open `range_sum` needs `r + 1`.
+
+LC 315 (Count of Smaller Numbers After Self) is the reduction worth remembering: compress the
+values to ranks, scan **right to left** so that "after me" becomes "already seen", and use the
+BIT as a histogram. Each element then costs one `prefix(rank)` and one `add`. At `n = 4000` that
+is around 30 times faster than the double loop, and the same move - turn a counting question into
+a prefix query - powers inversion counts, sliding-window ranks and offline range statistics.
+
+LC 370 (Range Addition) is the deliberate anticlimax. All the updates arrive before any query, so
+a difference array in `O(n + k)` is optimal and no tree helps at all. That is the question to ask
+first, straight from the problem statement: **are the updates and the queries interleaved?** If
+they are not, use prefix sums. If they are and the operation has an inverse, a Fenwick tree is
+six lines. If they are and it does not, build the segment tree.
+
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2029%20-%20segment%20tree%20and%20fenwick/imgs/day29_6.png?raw=true)
 
 ## Complexity
 

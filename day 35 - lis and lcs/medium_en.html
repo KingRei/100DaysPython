@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LIS and LCS: the longest subsequence you keep, and the table you throw away</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>LIS and LCS: the longest subsequence you keep, and the table you throw away</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2035%20-%20lis%20and%20lcs">day 35 on GitHub</a></p>
+<p><em>100 Days of Python - day 35</em></p>
+<p>There is an <code>O(n log n)</code> algorithm for the longest increasing subsequence, it is nine lines long, and the array it spends all its time maintaining is not the answer. On <code>[2, 6, 8, 3, 4, 5, 1]</code> it finishes holding <code>[1, 3, 4, 5]</code> — a correct length of 4, and a list that is not a subsequence of the input at all, because <code>1</code> is the last element of the array. That is today&#x27;s trap, and it is the good kind: it never fires on the textbook example.</p>
+<p>Yesterday&#x27;s knapsack ended on a table you fill and then walk back up to recover <em>which</em> items were taken. Today is the same shape with a sharper edge. LIS has a fast algorithm whose working array must not be trusted, and LCS has a table whose only purpose is to be thrown away.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2035%20-%20lis%20and%20lcs/imgs/day35_1.png">
+<p>First, the word. A <strong>subsequence</strong> is not a substring. <code>[2, 3, 7, 18]</code> is a subsequence of <code>[10, 9, 2, 5, 3, 7, 101, 18]</code> even though the four numbers are scattered across it: order is preserved, adjacency is not required. That single relaxation is what makes <code>diff</code>, ROUGE-L and DNA alignment possible, and it is also what makes both of today&#x27;s problems harder than they look.</p>
+<h2>LIS the obvious way</h2>
+<p>Let <code>dp[i]</code> be the length of the longest increasing subsequence <strong>ending at</strong> <code>i</code>. That phrasing is the whole design decision. The natural one — &quot;the LIS of the first <code>i</code> elements&quot; — is not enough state, because to decide whether the next element can be appended you need to know what the subsequence currently ends with, and that phrasing has thrown it away.</p>
+<pre><code>def lis_dp(a):
+    n = len(a)
+    dp = [1] * n
+    parent = [-1] * n
+    for i in range(n):
+        for j in range(i):
+            if a[j] &lt; a[i] and dp[j] + 1 &gt; dp[i]:
+                dp[i] = dp[j] + 1
+                parent[i] = j
+    best = max(range(n), key=lambda i: dp[i])
+    out = []
+    while best != -1:
+        out.append(a[best])
+        best = parent[best]
+    out.reverse()
+    return max(dp), out</code></pre>
+<p><code>O(n²)</code>, and because <code>parent</code> remembers the predecessor at the moment it was chosen, reconstructing the actual subsequence is free: <code>(4, [2, 5, 7, 101])</code>.</p>
+<h2>Patience sorting</h2>
+<p>Deal the numbers as a game of patience. Each card goes on the leftmost pile whose top card is greater than or equal to it; if there is no such pile, it starts a new one on the right. When the deck runs out, the number of piles is the length of the LIS. The pile tops are sorted by construction, so finding the pile is a binary search — the <code>lower_bound</code> from day 23:</p>
+<pre><code>from bisect import bisect_left
+
+def lis_patience(a):
+    tails = []
+    for x in a:
+        k = bisect_left(tails, x)
+        if k == len(tails):
+            tails.append(x)        # x extends the longest run so far
+        else:
+            tails[k] = x           # x is a cheaper ending for length k+1
+    return len(tails), tails</code></pre>
+<p>Nine lines and <code>O(n log n)</code>. The invariant is the thing to remember: <code>tails[k]</code> is the smallest value that can end an increasing run of length <code>k + 1</code> among everything seen so far. Overwriting can never lose anything, because a smaller ending is at least as extensible as a larger one, and the length it stands for does not change.</p>
+<h2>The array that lies</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2035%20-%20lis%20and%20lcs/imgs/day35_2.png">
+<p>On the textbook input <code>[10, 9, 2, 5, 3, 7, 101, 18]</code>, <code>tails</code> finishes as <code>[2, 3, 7, 18]</code>, which really is a valid LIS. Every tutorial that stops there teaches the wrong lesson. Run the same function on <code>[2, 6, 8, 3, 4, 5, 1]</code>:</p>
+<pre><code>tails = [1, 3, 4, 5]        the real LIS = [2, 3, 4, 5]</code></pre>
+<p><code>1</code> is the final element of the input, so <code>[1, 3, 4, 5]</code> cannot be a subsequence of it. <code>tails</code> is a <strong>scoreboard, not a route</strong>: the length is always right, the contents usually are not. If you need the subsequence itself, record where each value landed and who preceded it:</p>
+<pre><code>def lis_patience_reconstruct(a):
+    tails, idx, parent = [], [], [-1] * len(a)
+    for i, x in enumerate(a):
+        k = bisect_left(tails, x)
+        if k:
+            parent[i] = idx[k - 1]
+        if k == len(tails):
+            tails.append(x); idx.append(i)
+        else:
+            tails[k] = x; idx[k] = i
+    out, i = [], idx[-1]
+    while i != -1:
+        out.append(i); i = parent[i]
+    out.reverse()
+    return len(tails), out, [a[i] for i in out]</code></pre>
+<p><code>parent[i]</code> is frozen at insertion time, so it points at whoever ended a length-<code>k</code> run <em>at that moment</em> — the predecessor that was genuinely valid then, even if <code>tails[k-1]</code> gets overwritten by something smaller five steps later. The scoreboard keeps changing; the history does not.</p>
+<h2>One function name is the whole difference</h2>
+<pre><code>find = bisect_left if strict else bisect_right</code></pre>
+<p><code>bisect_left</code> places an incoming value on the pile whose top equals it, so equal values cannot chain, and you get a <strong>strictly increasing</strong> subsequence. <code>bisect_right</code> puts it on the next pile, so they can, and you get a <strong>non-decreasing</strong> one. On <code>[1, 3, 3, 3, 5]</code> that is <code>3</code> versus <code>5</code>. &quot;Increasing&quot; is ambiguous in English and precise in code — ask which one the problem means before typing anything.</p>
+<h2>LeetCode 300 - Longest Increasing Subsequence</h2>
+<p><strong>The task.</strong> Given an integer array, return the length of its longest strictly increasing subsequence.</p>
+<p><strong>Input / output.</strong> Input is <code>nums</code>; output is one integer.</p>
+<p><strong>Example.</strong> <code>nums = [10,9,2,5,3,7,101,18]</code> → <code>4</code>, from <code>[2,3,7,101]</code> (or <code>[2,3,7,18]</code>). <code>nums = [0,1,0,3,2,3]</code> → <code>4</code>. <code>nums = [7,7,7,7,7]</code> → <code>1</code>, because strictly increasing rules out repeats.</p>
+<p><strong>Constraints.</strong> <code>1 &lt;= len(nums) &lt;= 2500</code>, <code>-10^4 &lt;= nums[i] &lt;= 10^4</code>. At 2500 the <code>O(n²)</code> DP passes comfortably, which is precisely why the follow-up — &quot;can you do it in <code>O(n log n)</code>?&quot; — is where the interview actually happens.</p>
+<p><a href="https://leetcode.com/problems/longest-increasing-subsequence/">leetcode.com/problems/longest-increasing-subsequence</a></p>
+<p>Since only the length is asked for, the scoreboard is enough:</p>
+<pre><code>def length_of_lis(nums):
+    tails = []
+    for x in nums:
+        k = bisect_left(tails, x)
+        if k == len(tails):
+            tails.append(x)
+        else:
+            tails[k] = x
+    return len(tails)</code></pre>
+<h2>The sort key that is secretly the algorithm</h2>
+<h3>LeetCode 354 - Russian Doll Envelopes</h3>
+<p><strong>The task.</strong> Each envelope is a <code>[width, height]</code> pair. One envelope fits inside another only if <strong>both</strong> its width and its height are strictly smaller. Return the largest number of envelopes that can be nested one inside the next.</p>
+<p><strong>Input / output.</strong> Input is <code>envelopes</code>; output is one integer.</p>
+<p><strong>Example.</strong> <code>envelopes = [[5,4],[6,4],[6,7],[2,3]]</code> → <code>3</code>, nesting <code>[2,3] → [5,4] → [6,7]</code>. <code>envelopes = [[1,1],[1,1],[1,1]]</code> → <code>1</code>: equal widths are not <em>strictly</em> smaller, so nothing nests.</p>
+<p><strong>Constraints.</strong> <code>1 &lt;= len(envelopes) &lt;= 10^5</code>, <code>1 &lt;= w, h &lt;= 10^5</code>. The <code>10^5</code> is the entire hint: a pairwise <code>O(n²)</code> check is 10^10 operations and will not finish, so the intended solution has to be the <code>O(n log n)</code> LIS.</p>
+<p><a href="https://leetcode.com/problems/russian-doll-envelopes/">leetcode.com/problems/russian-doll-envelopes</a></p>
+<p>Sort by width, and the second dimension becomes a plain LIS on heights. Except that equal widths must not be allowed to chain — and that is handled entirely inside the sort key:</p>
+<pre><code>def max_envelopes(envelopes):
+    envelopes.sort(key=lambda e: (e[0], -e[1]))      # width asc, height DESC
+    return length_of_lis([h for _, h in envelopes])</code></pre>
+<p>Sorting heights <strong>descending</strong> within the same width turns them into a decreasing run, and a decreasing run can contribute at most one element to an increasing subsequence. Delete the minus sign and <code>[[1,1],[1,2],[1,3]]</code> returns <code>3</code> — three envelopes of identical width, supposedly nested inside each other. No exception, no warning. This is the whole problem, and it lives in one character of a <code>lambda</code>.</p>
+<h3>LeetCode 673 - Number of Longest Increasing Subsequence</h3>
+<p><strong>The task.</strong> Given an integer array, return <em>how many</em> distinct longest strictly increasing subsequences it has. Two subsequences are different if they use different positions.</p>
+<p><strong>Input / output.</strong> Input is <code>nums</code>; output is one integer count.</p>
+<p><strong>Example.</strong> <code>nums = [1,3,5,4,7]</code> → <code>2</code>: the LIS length is <code>4</code>, reached by <code>[1,3,5,7]</code> and <code>[1,3,4,7]</code>. <code>nums = [2,2,2,2,2]</code> → <code>5</code>: the LIS length is <code>1</code> and each of the five positions is its own subsequence.</p>
+<p><strong>Constraints.</strong> <code>1 &lt;= len(nums) &lt;= 2000</code>, <code>-10^6 &lt;= nums[i] &lt;= 10^6</code>, and the answer fits in a 32-bit integer. That <code>2000</code> matters: it permits the <code>O(n²)</code> DP, which you need here, because the patience version has nowhere to keep the counts.</p>
+<p><a href="https://leetcode.com/problems/number-of-longest-increasing-subsequence/">leetcode.com/problems/number-of-longest-increasing-subsequence</a></p>
+<p>Carry a second array alongside <code>dp</code>:</p>
+<pre><code>def count_lis(a):
+    n = len(a)
+    dp, cnt = [1] * n, [1] * n
+    for i in range(n):
+        for j in range(i):
+            if a[j] &lt; a[i]:
+                if dp[j] + 1 &gt; dp[i]:
+                    dp[i] = dp[j] + 1
+                    cnt[i] = cnt[j]          # a longer route: replace
+                elif dp[j] + 1 == dp[i]:
+                    cnt[i] += cnt[j]         # an equally long route: add
+    best = max(dp)
+    return sum(c for d, c in zip(dp, cnt) if d == best)</code></pre>
+<p><code>=</code> when the length improves, <code>+=</code> when it ties. Swapping those two lines is the standard way to fail this problem, and both versions return a perfectly plausible integer.</p>
+<h2>LCS: the table, and the path</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2035%20-%20lis%20and%20lcs/imgs/day35_3.png">
+<p>The longest common subsequence gets none of this. <code>dp[i][j]</code> is the LCS length of <code>x[:i]</code> and <code>y[:j]</code>; a matching pair of characters extends the diagonal, and otherwise the better of dropping one character from either side wins:</p>
+<pre><code>def lcs_table(x, y):
+    dp = [[0] * (len(y) + 1) for _ in range(len(x) + 1)]
+    for i in range(1, len(x) + 1):
+        for j in range(1, len(y) + 1):
+            if x[i - 1] == y[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+    return dp</code></pre>
+<p><code>AGGTAB</code> against <code>GXTXAYB</code> gives <code>4</code>, and walking back from the bottom-right corner — diagonally on a match, otherwise towards the larger neighbour — spells <code>GTAB</code>.</p>
+<p>Row <code>i</code> only ever reads row <code>i - 1</code>, so two rows are enough for the number. And exactly as with yesterday&#x27;s rolling knapsack, <strong>the rolling version cannot reconstruct the path</strong>: the cells the backtrack would have walked through no longer exist. Number or path, pick one. (Or use Hirschberg&#x27;s algorithm, which gets the path back in linear space by running the DP twice per recursive split — a good trick, and a much longer one.)</p>
+<h3>LeetCode 1035 - Uncrossed Lines</h3>
+<p><strong>The task.</strong> Two rows of integers are written down, one above the other. Draw straight connecting lines between equal numbers, one from each row, such that no two lines cross and no number is used twice. Return the maximum number of lines.</p>
+<p><strong>Input / output.</strong> Input is <code>nums1</code> and <code>nums2</code>; output is one integer.</p>
+<p><strong>Example.</strong> <code>nums1 = [1,4,2]</code>, <code>nums2 = [1,2,4]</code> → <code>2</code>: connect the two <code>1</code>s, then either the <code>4</code>s or the <code>2</code>s, but not both, since those two lines would cross. <code>nums1 = [2,5,1,2,5]</code>, <code>nums2 = [10,5,2,1,5,2]</code> → <code>3</code>.</p>
+<p><strong>Constraints.</strong> <code>1 &lt;= len(nums1), len(nums2) &lt;= 500</code>, <code>1 &lt;= nums[i] &lt;= 2000</code>. The <code>500 × 500</code> is the point — exactly the size the <code>O(n·m)</code> table wants.</p>
+<p><a href="https://leetcode.com/problems/uncrossed-lines/">leetcode.com/problems/uncrossed-lines</a></p>
+<p>&quot;No lines cross&quot; means the matched positions increase in both rows, which is the definition of a common subsequence. It is LCS with the vocabulary changed, and the skill being tested is noticing that instead of deriving a fresh recurrence under time pressure.</p>
+<h2>When LCS is secretly LIS</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2035%20-%20lis%20and%20lcs/imgs/day35_4.png">
+<p>Here is the connection that makes today one article instead of two. If both sequences are permutations of the same set — all elements distinct, both drawn from the same alphabet — the table is unnecessary. Replace each element of <code>q</code> by its index in <code>p</code>. A common subsequence is then a set of positions that increase in <code>p</code> and appear in order in <code>q</code>, which is exactly an increasing subsequence of the mapped array:</p>
+<pre><code>def lcs_of_permutations(p, q):
+    pos = {v: i for i, v in enumerate(p)}
+    mapped = [pos[v] for v in q if v in pos]
+    length, seq, _ = lis_patience_reconstruct(mapped)
+    return length, [p[i] for i in seq]</code></pre>
+<p><code>p = [1,2,3,4,5,6]</code> and <code>q = [2,4,1,5,6,3]</code> map to <code>[1,3,0,4,5,2]</code>, whose LIS <code>[1,3,4,5]</code> reads back as <code>[2,4,5,6]</code>. On two random permutations of size 1200, the <code>O(n·m)</code> table takes 1.300 s and this takes 0.0018 s for the same answer of 67 — about <strong>700x</strong>, from the same <code>O(n²) → O(n log n)</code> jump, now applied to a problem that looked like it had nothing to do with LIS.</p>
+<p>That is the core of the Hunt-Szymanski algorithm, and it is why <code>diff</code> is fast on real files: source lines are mostly unique, so the input is close enough to a permutation for this to bite.</p>
+<h2>What it is actually for</h2>
+<p>LCS is the engine inside <code>diff</code>. The common subsequence is the set of unchanged lines; everything not in it is a deletion or an insertion.</p>
+<pre><code>     def f(x):
+   -     y = x + 1
+   +     # bump
+   +     y = x + 2
+         return y</code></pre>
+<p><code>git diff</code>, <code>patch</code>, every code review tool and every merge-conflict detector rests on that. ROUGE-L, the standard summarisation metric, is the F-measure of the LCS length between a candidate and a reference — it rewards the right words in the right order without demanding adjacency, which is why <code>&quot;the cat sat on the mat&quot;</code> scores <code>0.769</code> against <code>&quot;the cat was sitting on the mat&quot;</code>. Needleman-Wunsch in bioinformatics is the same table with a scoring matrix in place of the <code>+1</code>. And LIS shows up as the fast path for patience-sorting-based diffs, and in scheduling as the longest chain in a partial order.</p>
+<h2>Why this matters later</h2>
+<p>The reflex worth keeping from today is not either algorithm. It is the question &quot;is this working array the answer, or just a summary of it?&quot; — because <code>tails</code> is the cleanest example of a data structure that carries the right <em>number</em> and the wrong <em>contents</em>, and the parent pointers are the price of getting the contents back. Interval DP and tree DP have exactly the same split between a value and a reconstruction, and so does every Viterbi decode and beam search you will ever write.</p>
+<p>Tomorrow: interval DP and tree DP — matrix chain multiplication, bursting balloons, and a knapsack that runs on a tree.</p>
+<p><a href="https://github.com/KingRei/100DaysPython/tree/master/day%2035%20-%20lis%20and%20lcs">All the code on GitHub</a></p>
+</body>
+</html>

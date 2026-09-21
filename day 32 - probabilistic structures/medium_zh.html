@@ -88,6 +88,11 @@ def __contains__(self, item):
 <p>200000 筆事件、4934 個不重複 key，5 × 5437 的 sketch（108740 bytes，<code>Counter</code> 要 443608）保證 上界是 +100，實測最大誤差 21，少算次數 0。重點在誤差落在哪裡：<strong>前十名的相對誤差 +0.01%， 最後十名 +150%</strong>。上界是絕對值，所以同樣 21 的誤差，對出現 31648 次的 key 是四捨五入的雜訊，對 只出現一次的 key 就是整個答案。問「哪些 key 很大」非常好用，問「這個 key 是不是只出現過一次」完全 不能用。</p>
 <p>conservative update（只把目前等於最小值的那幾格加上去）可以免費把平均誤差從 0.3 降到 0.1，而且 保證仍然成立。它讓刪除變得不可能，不過刪除本來就不在菜單上。</p>
 <h2>LeetCode 347：記憶體夠與不夠的兩種寫法</h2>
+<p><strong>題目。</strong> 給一個整數陣列和整數 <code>k</code>，回傳出現次數最多的 <code>k</code> 個元素，順序不拘。</p>
+<p><strong>輸入／輸出。</strong> 輸入 <code>nums</code> 與 <code>k</code>，輸出長度為 <code>k</code> 的串列。</p>
+<p><strong>範例。</strong> <code>nums = [1,1,1,2,2,3]</code>、<code>k = 2</code> → <code>[1,2]</code>；<code>nums = [1]</code>、<code>k = 1</code> → <code>[1]</code>。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(nums) &lt;= 10^5</code>，數值在 <code>[-10^4, 10^4]</code>，<code>k</code> 介於 1 與相異值個數之間，且保證 答案唯一。題目明文要求優於 <code>O(n log n)</code>，所以把整張次數表排序是不行的 —— 用大小為 <code>k</code> 的 heap 或按次數分桶都可以。真正值得想的是被限制藏起來的那個版本：同樣的問題但資料是一條大到無法為它開 一張計數表的串流 —— 那時就換 Count-Min sketch 加一個小 heap 上場，答案也從精確變成近似。</p>
+<p><a href="https://leetcode.com/problems/top-k-frequent-elements/">leetcode.com/problems/top-k-frequent-elements</a></p>
 <pre><code>def top_k_frequent(nums, k):
     counts = Counter(nums)
     return heapq.nlargest(k, counts, key=counts.get)</code></pre>
@@ -104,14 +109,5 @@ Count-Min     how often is x?      over-count only            108740</code></pre
 <p>這些結構在 LLM 系統裡也一直出現，尤其是那些必須便宜的地方：估計哪些 prefix 熱到值得留在 cache、 不把 n-gram 展開就估出語料裡有多少種、還有訓練資料去重 —— 最後這一個正好就是「Bloom filter 的 誤判不再免費，而是開始刪掉文件」的地方。</p>
 <p>明天：動態規劃入門 —— 爬樓梯與硬幣找零。</p>
 <p>這篇的東西都跑得起來：<code>python probabilistic.py</code> 會把上面全部印出來，notebook 存了輸出， <code>demo.html</code> 則把誤判、把鄰居一起刪掉的 delete、HyperLogLog 的暫存器、Count-Min 的取最小值， 以及 LeetCode 347 並排動畫演一遍。</p>
-<h2>附錄：LeetCode 題目完整題敘</h2>
-<p>以下用我自己的話重寫一遍：題目在問什麼、輸入輸出是什麼、一個算過的例子，以及那些真的會 改變「可以用哪種演算法」的限制。</p>
-<h3>LeetCode 347 - Top K Frequent Elements（前 K 個高頻元素）</h3>
-<p><strong>題目。</strong> 給一個整數陣列和整數 <code>k</code>，回傳出現次數最多的 <code>k</code> 個元素，順序不拘。</p>
-<p><strong>輸入／輸出。</strong> 輸入 <code>nums</code> 與 <code>k</code>，輸出長度為 <code>k</code> 的串列。</p>
-<p><strong>範例。</strong> <code>nums = [1,1,1,2,2,3]</code>、<code>k = 2</code> → <code>[1,2]</code>；<code>nums = [1]</code>、<code>k = 1</code> → <code>[1]</code>。</p>
-<p><strong>限制。</strong> <code>1 &lt;= len(nums) &lt;= 10^5</code>，數值在 <code>[-10^4, 10^4]</code>，<code>k</code> 介於 1 與相異值個數之間，且保證 答案唯一。題目明文要求優於 <code>O(n log n)</code>，所以把整張次數表排序是不行的 —— 用大小為 <code>k</code> 的 heap 或按次數分桶都可以。真正值得想的是被限制藏起來的那個版本：同樣的問題但資料是一條大到無法為它開 一張計數表的串流 —— 那時就換 Count-Min sketch 加一個小 heap 上場，答案也從精確變成近似。</p>
-<p><a href="https://leetcode.com/problems/top-k-frequent-elements/">leetcode.com/problems/top-k-frequent-elements</a></p>
-<p><a href="https://github.com/KingRei/100DaysPython/tree/master/day%2032%20-%20probabilistic%20structures">day 32 on GitHub</a></p>
 </body>
 </html>

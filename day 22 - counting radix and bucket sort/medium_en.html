@@ -99,6 +99,11 @@ expert_ids       [1, 2, 3, 4]</code></pre>
 <p><code>sgl-kernel</code> ships <strong>two</strong> kernels for this one function, and the reason is the same non-determinism day 21 ran into. The <code>atomicAdd</code> scatter gives a different (still correct) permutation on every run; the per-thread-histogram scatter is reproducible. Both feed the same GEMM, because rows of a GEMM do not care what order they arrive in. The switch is hard-coded: <code>topk_ids.numel() &lt; 1024 &amp;&amp; num_experts &lt;= 64</code> - small batches get determinism, large batches get atomics.</p>
 <p>At real sizes - 4,096 tokens, top-8 of 256 experts, block 64 - 32,768 routed tokens become 40,704 padded slots, so 19.5% of the rows are padding. That is the price of a fixed block size, and arranging the data so the price is payable is exactly what the counting sort is for.</p>
 <h2>LeetCode 75 - Sort Colors</h2>
+<p><strong>The task.</strong> You are given an array whose every element is <code>0</code>, <code>1</code> or <code>2</code> - think red, white and blue objects thrown in a box. Rearrange the array <em>in place</em> so that all the <code>0</code>s come first, then all the <code>1</code>s, then all the <code>2</code>s. You may not call the library sort.</p>
+<p><strong>Input / output.</strong> Input is the array <code>nums</code>; there is no return value, the array itself must end up sorted.</p>
+<p><strong>Example.</strong> <code>nums = [2,0,2,1,1,0]</code> becomes <code>[0,0,1,1,2,2]</code>.</p>
+<p><strong>Constraints.</strong> <code>1 &lt;= len(nums) &lt;= 300</code>, and every <code>nums[i]</code> is one of <code>0</code>, <code>1</code>, <code>2</code>. The interesting part is the follow-up: do it in one pass with <code>O(1)</code> extra space.</p>
+<p><a href="https://leetcode.com/problems/sort-colors/">leetcode.com/problems/sort-colors</a></p>
 <p>Two passes with a three-counter histogram, or one pass with three pointers. The follow-up wants the one-pass version, and its difficulty is an asymmetry: a value swapped down from the high end has never been examined, so <code>mid</code> must not advance after that swap, while a value swapped up from the low end has been.</p>
 <pre><code>def sort_colors(nums):
     low, mid, high = 0, 0, len(nums) - 1
@@ -112,6 +117,11 @@ expert_ids       [1, 2, 3, 4]</code></pre>
         else:
             mid += 1</code></pre>
 <h2>LeetCode 164 - Maximum Gap</h2>
+<p><strong>The task.</strong> Given an unsorted integer array, return the largest difference between two <em>successive</em> elements once the array is sorted. If the array has fewer than two elements the answer is <code>0</code>.</p>
+<p><strong>Input / output.</strong> Input is <code>nums</code>; output is a single integer.</p>
+<p><strong>Example.</strong> <code>nums = [3,6,9,1]</code>. Sorted it is <code>[1,3,6,9]</code>, the successive gaps are <code>2, 3, 3</code>, so the answer is <code>3</code>.</p>
+<p><strong>Constraints.</strong> <code>1 &lt;= len(nums) &lt;= 10^5</code> and <code>0 &lt;= nums[i] &lt;= 10^9</code>. The problem explicitly asks for <strong>linear time and linear extra space</strong>, which is what rules out &quot;just sort it&quot; and forces a bucket/radix argument.</p>
+<p><a href="https://leetcode.com/problems/maximum-gap/">leetcode.com/problems/maximum-gap</a></p>
 <p>&quot;Largest gap between successive elements in the sorted order, in O(n)&quot; is really &quot;solve this without sorting&quot;. Drop n numbers into n-1 buckets of width <code>ceil((max - min) / (n - 1))</code>. Pigeonhole guarantees at least one bucket is empty, so the largest gap spans at least one bucket width, so it can never sit <em>inside</em> a bucket. Keep one min and one max per bucket, throw the rest away, sweep once across the boundaries.</p>
 <pre><code>w  = max(1, ceil((hi - lo) / (n - 1)))
 nb = (hi - lo) // w + 1
@@ -129,20 +139,5 @@ for b in range(1, nb):
 <p>The prefix sum is the piece with the longest reach. It is the skeleton of every parallel counting sort, it is how a fused MoE layer works out where each expert&#x27;s rows begin, and the work-versus-depth argument here is the same one that decides how a batch of requests gets scheduled across devices. Radix sort&#x27;s order-preserving key is what lets quantised formats be compared as integers. And the &quot;which part of the sort can I skip&quot; move shows up every time a kernel keeps a summary per tile instead of the tile itself.</p>
 <p>Tomorrow: binary search, and the three boundary conventions that make it either trivial or a source of off-by-one bugs forever.</p>
 <p>The code, the notebook and an interactive walkthrough are all in the repo:</p>
-<h2>Appendix: the LeetCode problems in full</h2>
-<p>Restated in my own words - what is being asked, what goes in and comes out, one worked example, and the constraints that actually change which algorithm is allowed.</p>
-<h3>LeetCode 75 - Sort Colors</h3>
-<p><strong>The task.</strong> You are given an array whose every element is <code>0</code>, <code>1</code> or <code>2</code> - think red, white and blue objects thrown in a box. Rearrange the array <em>in place</em> so that all the <code>0</code>s come first, then all the <code>1</code>s, then all the <code>2</code>s. You may not call the library sort.</p>
-<p><strong>Input / output.</strong> Input is the array <code>nums</code>; there is no return value, the array itself must end up sorted.</p>
-<p><strong>Example.</strong> <code>nums = [2,0,2,1,1,0]</code> becomes <code>[0,0,1,1,2,2]</code>.</p>
-<p><strong>Constraints.</strong> <code>1 &lt;= len(nums) &lt;= 300</code>, and every <code>nums[i]</code> is one of <code>0</code>, <code>1</code>, <code>2</code>. The interesting part is the follow-up: do it in one pass with <code>O(1)</code> extra space.</p>
-<p><a href="https://leetcode.com/problems/sort-colors/">leetcode.com/problems/sort-colors</a></p>
-<h3>LeetCode 164 - Maximum Gap</h3>
-<p><strong>The task.</strong> Given an unsorted integer array, return the largest difference between two <em>successive</em> elements once the array is sorted. If the array has fewer than two elements the answer is <code>0</code>.</p>
-<p><strong>Input / output.</strong> Input is <code>nums</code>; output is a single integer.</p>
-<p><strong>Example.</strong> <code>nums = [3,6,9,1]</code>. Sorted it is <code>[1,3,6,9]</code>, the successive gaps are <code>2, 3, 3</code>, so the answer is <code>3</code>.</p>
-<p><strong>Constraints.</strong> <code>1 &lt;= len(nums) &lt;= 10^5</code> and <code>0 &lt;= nums[i] &lt;= 10^9</code>. The problem explicitly asks for <strong>linear time and linear extra space</strong>, which is what rules out &quot;just sort it&quot; and forces a bucket/radix argument.</p>
-<p><a href="https://leetcode.com/problems/maximum-gap/">leetcode.com/problems/maximum-gap</a></p>
-<p><a href="https://github.com/KingRei/100DaysPython/tree/master/day%2022%20-%20counting%20radix%20and%20bucket%20sort">day 22 on GitHub</a>.</p>
 </body>
 </html>

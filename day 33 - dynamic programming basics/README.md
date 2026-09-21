@@ -35,6 +35,22 @@ in 252.74 ms, 0.022 ms and 0.0072 ms.
 
 ## The table, and the order that fills it
 
+### LeetCode 70 - Climbing Stairs
+
+**The task.** You are climbing a staircase of `n` steps and can move either 1 or 2 steps at
+a time. How many distinct ways are there to reach the top?
+
+**Input / output.** One integer in, one integer out.
+
+**Example.** `n = 2` → `2` (`1+1`, `2`). `n = 3` → `3` (`1+1+1`, `1+2`, `2+1`).
+
+**Constraints.** `1 <= n <= 45`. The bound is small precisely so that the naive recursion
+*almost* works and then does not - which makes it the cleanest possible illustration of
+overlapping subproblems, and of the fact that the answer is just the Fibonacci sequence
+with a shifted index.
+
+[leetcode.com/problems/climbing-stairs](https://leetcode.com/problems/climbing-stairs/)
+
 ![img](https://github.com/KingRei/100DaysPython/blob/master/day%2033%20-%20dynamic%20programming%20basics/imgs/day33_2.png?raw=true)
 
 ```python
@@ -53,6 +69,25 @@ done. That sentence is the entire rule of DP. Since each cell reads only the two
 array itself is unnecessary; two variables give the same answer in `O(1)` space.
 
 ## Coin change: swap `+` for `min`
+
+### LeetCode 322 - Coin Change
+
+**The task.** Given coin denominations and a target `amount`, return the fewest coins that
+add up to exactly `amount`, or `-1` if no combination does. You have an unlimited supply of
+each denomination.
+
+**Input / output.** Input is `coins` and `amount`; output is an integer.
+
+**Example.** `coins = [1,2,5]`, `amount = 11` → `3` (`5 + 5 + 1`).
+`coins = [2]`, `amount = 3` → `-1`. `amount = 0` → `0`.
+
+**Constraints.** `1 <= len(coins) <= 12`, `1 <= coins[i] <= 2^31 - 1`, `0 <= amount <= 10^4`.
+Greedy - always take the biggest coin that fits - is wrong here: with `coins = [1,3,4]` and
+`amount = 6` greedy gives `4 + 1 + 1 = 3` coins while the optimum is `3 + 3 = 2`. The table
+is over amounts, and each amount reads from the *same* row, which makes it an unbounded
+knapsack.
+
+[leetcode.com/problems/coin-change](https://leetcode.com/problems/coin-change/)
 
 ![img](https://github.com/KingRei/100DaysPython/blob/master/day%2033%20-%20dynamic%20programming%20basics/imgs/day33_3.png?raw=true)
 
@@ -78,101 +113,6 @@ sets are not. Amounts that cannot be made stay at infinity, which is how `coin_c
 correctly returns `-1`.
 
 ## The silent failure: combinations vs permutations
-
-![img](https://github.com/KingRei/100DaysPython/blob/master/day%2033%20-%20dynamic%20programming%20basics/imgs/day33_4.png?raw=true)
-
-This is the bug worth memorising, because it never announces itself.
-
-```python
-# LC 518 - combinations
-dp = [1] + [0] * amount
-for c in coins:                     # coin loop OUTSIDE
-    for a in range(c, amount + 1):
-        dp[a] += dp[a - c]
-
-# LC 377 - permutations
-dp = [1] + [0] * amount
-for a in range(1, amount + 1):      # amount loop OUTSIDE
-    for c in coins:
-        if c <= a:
-            dp[a] += dp[a - c]
-```
-
-Same array, same update line, same number of updates. Only the two `for` statements swap
-places. With `coins = [1, 2, 5]` and `amount = 5` the first returns 4 and the second returns 9.
-With the coin loop outside, coin `5` is offered once and for all, so `1+2+2` can be built in
-exactly one order and you are counting multisets. With the amount loop outside, every coin gets
-a turn at being the *last* one added, so `1+2+2`, `2+1+2` and `2+2+1` are three separate fills
-and you are counting sequences. The gap grows fast: at amount 30 it is 58 against 5,508,222.
-
-Which also explains a pretty coincidence. Climbing stairs is coin change with `coins = {1, 2}`,
-counted as permutations - steps are ordered, one-then-two is a different climb from
-two-then-one. The permutation column matches `stairs(n)` for every `n`; the combination column
-does not.
-
-## One table, three questions
-
-![img](https://github.com/KingRei/100DaysPython/blob/master/day%2033%20-%20dynamic%20programming%20basics/imgs/day33_5.png?raw=true)
-
-The word break from Day 08 turns out to be this same table with the cells sitting at the cut
-points of the string: `dp[i]` asks whether `s[:i]` can be segmented, and the transition looks
-for a `j` where `dp[j]` holds and `s[j:i]` is a dictionary word. Change the operator and the
-question changes with it - `+` counts the segmentations, `min` returns the fewest words, `or`
-decides feasibility. `word_break('applepenapple', ['apple', 'pen'])` is `True` with exactly one
-segmentation; `'catsandog'` matches `cat`, `cats`, `sand` and `and` along the way and still
-fails, which is why a greedy left-to-right scanner gets it wrong.
-
-## Memoisation or tabulation
-
-![img](https://github.com/KingRei/100DaysPython/blob/master/day%2033%20-%20dynamic%20programming%20basics/imgs/day33_6.png?raw=true)
-
-They compute the same thing, so the choice is about which states you actually touch. With
-`coins = [100, 250]` and `amount = 10000` only multiples of 50 are ever reachable, so top-down
-visits 203 states while a table allocates and fills 10,001 cells - 49.3x more work for the same
-answer of 40 coins. With `coins = [1, 2, 5]` and `amount = 1000` every amount is reachable, the
-counts coincide (1005 states against 1001 cells), and tabulation wins on the constants: no call
-overhead, and no 1000-deep call stack. The recursive version there needs
-`sys.setrecursionlimit`, because the chain 1000, 999, 998, … is exactly Python's default limit.
-
-## The problems, stated in full
-
-Restated in my own words - what is being asked, what goes in and comes out, one worked
-example, and the constraints that actually change which algorithm is allowed.
-
-### LeetCode 70 - Climbing Stairs
-
-**The task.** You are climbing a staircase of `n` steps and can move either 1 or 2 steps at
-a time. How many distinct ways are there to reach the top?
-
-**Input / output.** One integer in, one integer out.
-
-**Example.** `n = 2` → `2` (`1+1`, `2`). `n = 3` → `3` (`1+1+1`, `1+2`, `2+1`).
-
-**Constraints.** `1 <= n <= 45`. The bound is small precisely so that the naive recursion
-*almost* works and then does not - which makes it the cleanest possible illustration of
-overlapping subproblems, and of the fact that the answer is just the Fibonacci sequence
-with a shifted index.
-
-[leetcode.com/problems/climbing-stairs](https://leetcode.com/problems/climbing-stairs/)
-
-### LeetCode 322 - Coin Change
-
-**The task.** Given coin denominations and a target `amount`, return the fewest coins that
-add up to exactly `amount`, or `-1` if no combination does. You have an unlimited supply of
-each denomination.
-
-**Input / output.** Input is `coins` and `amount`; output is an integer.
-
-**Example.** `coins = [1,2,5]`, `amount = 11` → `3` (`5 + 5 + 1`).
-`coins = [2]`, `amount = 3` → `-1`. `amount = 0` → `0`.
-
-**Constraints.** `1 <= len(coins) <= 12`, `1 <= coins[i] <= 2^31 - 1`, `0 <= amount <= 10^4`.
-Greedy - always take the biggest coin that fits - is wrong here: with `coins = [1,3,4]` and
-`amount = 6` greedy gives `4 + 1 + 1 = 3` coins while the optimum is `3 + 3 = 2`. The table
-is over amounts, and each amount reads from the *same* row, which makes it an unbounded
-knapsack.
-
-[leetcode.com/problems/coin-change](https://leetcode.com/problems/coin-change/)
 
 ### LeetCode 518 - Coin Change II
 
@@ -210,6 +150,39 @@ the count infinite, and you would have to bound the number of terms.
 
 [leetcode.com/problems/combination-sum-iv](https://leetcode.com/problems/combination-sum-iv/)
 
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2033%20-%20dynamic%20programming%20basics/imgs/day33_4.png?raw=true)
+
+This is the bug worth memorising, because it never announces itself.
+
+```python
+# LC 518 - combinations
+dp = [1] + [0] * amount
+for c in coins:                     # coin loop OUTSIDE
+    for a in range(c, amount + 1):
+        dp[a] += dp[a - c]
+
+# LC 377 - permutations
+dp = [1] + [0] * amount
+for a in range(1, amount + 1):      # amount loop OUTSIDE
+    for c in coins:
+        if c <= a:
+            dp[a] += dp[a - c]
+```
+
+Same array, same update line, same number of updates. Only the two `for` statements swap
+places. With `coins = [1, 2, 5]` and `amount = 5` the first returns 4 and the second returns 9.
+With the coin loop outside, coin `5` is offered once and for all, so `1+2+2` can be built in
+exactly one order and you are counting multisets. With the amount loop outside, every coin gets
+a turn at being the *last* one added, so `1+2+2`, `2+1+2` and `2+2+1` are three separate fills
+and you are counting sequences. The gap grows fast: at amount 30 it is 58 against 5,508,222.
+
+Which also explains a pretty coincidence. Climbing stairs is coin change with `coins = {1, 2}`,
+counted as permutations - steps are ordered, one-then-two is a different climb from
+two-then-one. The permutation column matches `stairs(n)` for every `n`; the combination column
+does not.
+
+## One table, three questions
+
 ### LeetCode 139 - Word Break
 
 **The task.** Given a string `s` and a dictionary of words, decide whether `s` can be cut
@@ -228,6 +201,28 @@ length `i` breakable?", which is `O(n * m)` - the shape of the whole day's lesso
 table holds booleans instead of counts.
 
 [leetcode.com/problems/word-break](https://leetcode.com/problems/word-break/)
+
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2033%20-%20dynamic%20programming%20basics/imgs/day33_5.png?raw=true)
+
+The word break from Day 08 turns out to be this same table with the cells sitting at the cut
+points of the string: `dp[i]` asks whether `s[:i]` can be segmented, and the transition looks
+for a `j` where `dp[j]` holds and `s[j:i]` is a dictionary word. Change the operator and the
+question changes with it - `+` counts the segmentations, `min` returns the fewest words, `or`
+decides feasibility. `word_break('applepenapple', ['apple', 'pen'])` is `True` with exactly one
+segmentation; `'catsandog'` matches `cat`, `cats`, `sand` and `and` along the way and still
+fails, which is why a greedy left-to-right scanner gets it wrong.
+
+## Memoisation or tabulation
+
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2033%20-%20dynamic%20programming%20basics/imgs/day33_6.png?raw=true)
+
+They compute the same thing, so the choice is about which states you actually touch. With
+`coins = [100, 250]` and `amount = 10000` only multiples of 50 are ever reachable, so top-down
+visits 203 states while a table allocates and fills 10,001 cells - 49.3x more work for the same
+answer of 40 coins. With `coins = [1, 2, 5]` and `amount = 1000` every amount is reachable, the
+counts coincide (1005 states against 1001 cells), and tabulation wins on the constants: no call
+overhead, and no 1000-deep call stack. The recursive version there needs
+`sys.setrecursionlimit`, because the chain 1000, 999, 998, … is exactly Python's default limit.
 
 ## Complexity
 

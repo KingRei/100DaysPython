@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
-<title>Day 25 — 被投機解碼跳過去的那個 stop string</title>
+<title>Day 25 — 字串比對：KMP 與 Rabin-Karp</title>
 <style>
 body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
          font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
@@ -26,7 +26,7 @@ li     { margin: .3em 0; }
 </style>
 </head>
 <body>
-<h1>Day 25 — 被投機解碼跳過去的那個 stop string</h1>
+<h1>Day 25 — 字串比對：KMP 與 Rabin-Karp</h1>
 <p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2025%20-%20string%20matching">day 25 on GitHub</a></p>
 <p><em>100 Days of Python - day 25</em></p>
 <p>在字串裡找子字串，大概是這整個系列最基本的問題，Python 直接一句 <code>needle in haystack</code> 就結束了。 我還是覺得它值得一天，因為兩個經典演算法 — KMP 和 Rabin-Karp — 講的其實不是字串，而是<strong>兩種 「不做多餘工作」的方式</strong>；而且它們都躲在 LLM 推論伺服器的實作裡，只是沒有掛上名字。其中一個，還連帶 牽出一個<strong>只有打開投機解碼才會出現的 bug</strong>。</p>
@@ -88,6 +88,30 @@ li     { margin: .3em 0; }
 <p>兩個共用 system prompt 的請求，共用的那幾頁會拿到一模一樣的 id，並且在 token 分岔的地方立刻分開。 而裝著同樣四個 token、但前面歷史不同的一頁，會拿到<strong>不同的 id</strong> — 這是刻意的，因為 attention 的 K/V 取決於整段前綴。</p>
 <p>現在把它放到 Rabin-Karp 旁邊看：<strong>這裡沒有 verify 這一步，而且做不到。</strong> 要拿來比對的那些 token 早就 不在手上了，命中的當下伺服器只握著一個 id。整個正確性完全押在 SHA-256 不會碰撞上。換一個便宜的 hash， 碰撞的後果不是變慢，而是<strong>一個請求讀到另一個請求的 KV cache</strong>。挑 hash 的時候，「事後能不能驗」比 「快不快」重要得多。</p>
 <h2>LeetCode</h2>
+<h3>LeetCode 28 - Find the Index of the First Occurrence in a String（找出字串中第一個匹配項的下標）</h3>
+<p><strong>題目。</strong> 給兩個字串 <code>haystack</code> 與 <code>needle</code>，回傳 <code>needle</code> 在 <code>haystack</code> 中第一次出現的索引； 沒出現就回傳 <code>-1</code>。</p>
+<p><strong>輸入／輸出。</strong> 輸入兩個字串，輸出一個整數。</p>
+<p><strong>範例。</strong> <code>haystack = &quot;sadbutsad&quot;</code>、<code>needle = &quot;sad&quot;</code> → <code>0</code>（索引 <code>6</code> 也有一個，但我們要第一個）。 <code>haystack = &quot;leetcode&quot;</code>、<code>needle = &quot;leeto&quot;</code> → <code>-1</code>。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(haystack), len(needle) &lt;= 10^4</code>，都是小寫英文字母。這個規模用最樸素的雙層 迴圈就會過 —— 所以它剛好是拿來跟 KMP *比較*的好題目，而不是被逼著寫 KMP 的題目。</p>
+<p><a href="https://leetcode.com/problems/find-the-index-of-the-first-occurrence-in-a-string/">leetcode.com/problems/find-the-index-of-the-first-occurrence-in-a-string</a></p>
+<h3>LeetCode 459 - Repeated Substring Pattern（重複的子字串）</h3>
+<p><strong>題目。</strong> 判斷這個字串能不能由它的某個真子字串重複兩次以上接起來而成。</p>
+<p><strong>輸入／輸出。</strong> 輸入一個字串，輸出布林值。</p>
+<p><strong>範例。</strong> <code>&quot;abab&quot;</code> → <code>True</code>（<code>&quot;ab&quot;</code> 兩次）；<code>&quot;aba&quot;</code> → <code>False</code>；<code>&quot;abcabcabcabc&quot;</code> → <code>True</code> （<code>&quot;abc&quot;</code> 四次，或 <code>&quot;abcabc&quot;</code> 兩次）。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(s) &lt;= 10^4</code>，小寫英文字母。一行解 <code>s in (s + s)[1:-1]</code> 很可愛，但能推廣的是 KMP 的說法：字串是週期的，等價於 <code>n - failure[n-1]</code> 整除 <code>n</code> 且小於 <code>n</code>。</p>
+<p><a href="https://leetcode.com/problems/repeated-substring-pattern/">leetcode.com/problems/repeated-substring-pattern</a></p>
+<h3>LeetCode 214 - Shortest Palindrome（最短回文串）</h3>
+<p><strong>題目。</strong> 你只能在字串的<strong>前面</strong>加字元，請回傳這樣能做出來的最短回文。</p>
+<p><strong>輸入／輸出。</strong> 輸入一個字串，輸出一個字串。</p>
+<p><strong>範例。</strong> <code>s = &quot;aacecaaa&quot;</code> → <code>&quot;aaacecaaa&quot;</code>（加了一個 <code>a</code>）；<code>s = &quot;abcd&quot;</code> → <code>&quot;dcbabcd&quot;</code>（加了 三個字元）。</p>
+<p><strong>限制。</strong> <code>0 &lt;= len(s) &lt;= 5 * 10^4</code>，小寫英文字母。關鍵在於換句話說：前面加得越少越好，等價於 找出 <code>s</code> 的*最長回文前綴*；而只要對 <code>s + &#x27;#&#x27; + reversed(s)</code> 跑一次 KMP，這就變成一個 prefix function 的問題。</p>
+<p><a href="https://leetcode.com/problems/shortest-palindrome/">leetcode.com/problems/shortest-palindrome</a></p>
+<h3>LeetCode 1044 - Longest Duplicate Substring（最長重複子字串）</h3>
+<p><strong>題目。</strong> 找出在 <code>s</code> 中<strong>至少出現兩次</strong>的最長子字串；兩次出現可以重疊。回傳其中任何一個， 若沒有任何子字串重複就回傳空字串。</p>
+<p><strong>輸入／輸出。</strong> 輸入一個字串，輸出一個字串。</p>
+<p><strong>範例。</strong> <code>s = &quot;banana&quot;</code> → <code>&quot;ana&quot;</code>（出現在索引 <code>1</code> 與 <code>3</code>，而且是重疊的）；<code>s = &quot;abcd&quot;</code> → <code>&quot;&quot;</code>。</p>
+<p><strong>限制。</strong> <code>2 &lt;= len(s) &lt;= 3 * 10^4</code>，小寫英文字母。「有沒有長度 <code>L</code> 的重複子字串」對 <code>L</code> 是單調 的，所以標準解法是對 <code>L</code> 二分搜尋、每次用 Rabin-Karp rolling hash 回答；或者完全不用隨機性， 直接從 suffix array 加上它的 LCP 陣列把答案讀出來。</p>
+<p><a href="https://leetcode.com/problems/longest-duplicate-substring/">leetcode.com/problems/longest-duplicate-substring</a></p>
 <p><strong>28（<code>strStr</code>）</strong> 就是演算法本身。真正值得準備的是 459 和 214 這一對，因為它們都不是「搜尋」， 而是<strong>直接用 border 這個量</strong>。</p>
 <pre><code>def repeated_substring_pattern(s):          # LC 459
     n = len(s)
@@ -105,32 +129,5 @@ def shortest_palindrome(s):                 # LC 214
 <p>border 和 rolling hash 是這一段字串主題底下的地基：suffix array 和 Aho-Corasick 把「我已經對上多少」 推廣到同時比對很多個 pattern，MinHash 則是把「比指紋不比內容」從相等推廣到相似。BM25 和 hybrid retrieval 的 shingling 也是同一個 rolling hash。而上面那兩個推論伺服器的機制 — stop string 的視窗 和鏈式 page id — 正是我想把「比對」和「hash」放在同一天講的原因：一個可以事後驗證自己的猜測，另一個 在結構上就驗不了，而這個差別直接決定了你能挑什麼 hash。</p>
 <p>明天：suffix array、LCP，以及一次比對很多個 pattern。</p>
 <p>程式碼、notebook、圖與互動式演示：</p>
-<h2>附錄：LeetCode 題目完整題敘</h2>
-<p>以下用我自己的話重寫一遍：題目在問什麼、輸入輸出是什麼、一個算過的例子，以及那些真的會 改變「可以用哪種演算法」的限制。</p>
-<h3>LeetCode 28 - Find the Index of the First Occurrence in a String（找出字串中第一個匹配項的下標）</h3>
-<p><strong>題目。</strong> 給兩個字串 <code>haystack</code> 與 <code>needle</code>，回傳 <code>needle</code> 在 <code>haystack</code> 中第一次出現的索引； 沒出現就回傳 <code>-1</code>。</p>
-<p><strong>輸入／輸出。</strong> 輸入兩個字串，輸出一個整數。</p>
-<p><strong>範例。</strong> <code>haystack = &quot;sadbutsad&quot;</code>、<code>needle = &quot;sad&quot;</code> → <code>0</code>（索引 <code>6</code> 也有一個，但我們要第一個）。 <code>haystack = &quot;leetcode&quot;</code>、<code>needle = &quot;leeto&quot;</code> → <code>-1</code>。</p>
-<p><strong>限制。</strong> <code>1 &lt;= len(haystack), len(needle) &lt;= 10^4</code>，都是小寫英文字母。這個規模用最樸素的雙層 迴圈就會過 —— 所以它剛好是拿來跟 KMP *比較*的好題目，而不是被逼著寫 KMP 的題目。</p>
-<p><a href="https://leetcode.com/problems/find-the-index-of-the-first-occurrence-in-a-string/">leetcode.com/problems/find-the-index-of-the-first-occurrence-in-a-string</a></p>
-<h3>LeetCode 214 - Shortest Palindrome（最短回文串）</h3>
-<p><strong>題目。</strong> 你只能在字串的<strong>前面</strong>加字元，請回傳這樣能做出來的最短回文。</p>
-<p><strong>輸入／輸出。</strong> 輸入一個字串，輸出一個字串。</p>
-<p><strong>範例。</strong> <code>s = &quot;aacecaaa&quot;</code> → <code>&quot;aaacecaaa&quot;</code>（加了一個 <code>a</code>）；<code>s = &quot;abcd&quot;</code> → <code>&quot;dcbabcd&quot;</code>（加了 三個字元）。</p>
-<p><strong>限制。</strong> <code>0 &lt;= len(s) &lt;= 5 * 10^4</code>，小寫英文字母。關鍵在於換句話說：前面加得越少越好，等價於 找出 <code>s</code> 的*最長回文前綴*；而只要對 <code>s + &#x27;#&#x27; + reversed(s)</code> 跑一次 KMP，這就變成一個 prefix function 的問題。</p>
-<p><a href="https://leetcode.com/problems/shortest-palindrome/">leetcode.com/problems/shortest-palindrome</a></p>
-<h3>LeetCode 459 - Repeated Substring Pattern（重複的子字串）</h3>
-<p><strong>題目。</strong> 判斷這個字串能不能由它的某個真子字串重複兩次以上接起來而成。</p>
-<p><strong>輸入／輸出。</strong> 輸入一個字串，輸出布林值。</p>
-<p><strong>範例。</strong> <code>&quot;abab&quot;</code> → <code>True</code>（<code>&quot;ab&quot;</code> 兩次）；<code>&quot;aba&quot;</code> → <code>False</code>；<code>&quot;abcabcabcabc&quot;</code> → <code>True</code> （<code>&quot;abc&quot;</code> 四次，或 <code>&quot;abcabc&quot;</code> 兩次）。</p>
-<p><strong>限制。</strong> <code>1 &lt;= len(s) &lt;= 10^4</code>，小寫英文字母。一行解 <code>s in (s + s)[1:-1]</code> 很可愛，但能推廣的是 KMP 的說法：字串是週期的，等價於 <code>n - failure[n-1]</code> 整除 <code>n</code> 且小於 <code>n</code>。</p>
-<p><a href="https://leetcode.com/problems/repeated-substring-pattern/">leetcode.com/problems/repeated-substring-pattern</a></p>
-<h3>LeetCode 1044 - Longest Duplicate Substring（最長重複子字串）</h3>
-<p><strong>題目。</strong> 找出在 <code>s</code> 中<strong>至少出現兩次</strong>的最長子字串；兩次出現可以重疊。回傳其中任何一個， 若沒有任何子字串重複就回傳空字串。</p>
-<p><strong>輸入／輸出。</strong> 輸入一個字串，輸出一個字串。</p>
-<p><strong>範例。</strong> <code>s = &quot;banana&quot;</code> → <code>&quot;ana&quot;</code>（出現在索引 <code>1</code> 與 <code>3</code>，而且是重疊的）；<code>s = &quot;abcd&quot;</code> → <code>&quot;&quot;</code>。</p>
-<p><strong>限制。</strong> <code>2 &lt;= len(s) &lt;= 3 * 10^4</code>，小寫英文字母。「有沒有長度 <code>L</code> 的重複子字串」對 <code>L</code> 是單調 的，所以標準解法是對 <code>L</code> 二分搜尋、每次用 Rabin-Karp rolling hash 回答；或者完全不用隨機性， 直接從 suffix array 加上它的 LCP 陣列把答案讀出來。</p>
-<p><a href="https://leetcode.com/problems/longest-duplicate-substring/">leetcode.com/problems/longest-duplicate-substring</a></p>
-<p><a href="https://github.com/KingRei/100DaysPython/tree/master/day%2025%20-%20string%20matching">day 25 on GitHub</a></p>
 </body>
 </html>

@@ -93,25 +93,6 @@ price of a fixed block size, and what the counting sort is arranging the data to
 
 ## LeetCode 75 - Sort Colors
 
-A histogram of three counters and a rewrite, or the one-pass three-pointer version the
-follow-up is fishing for. The asymmetry is the whole difficulty: a value swapped down from the
-high end has never been examined, so `mid` must not advance after that swap.
-
-## LeetCode 164 - Maximum Gap
-
-Asking for O(n) is the same as forbidding a sort. Drop n numbers into n-1 buckets and
-pigeonhole guarantees at least one bucket is empty, so the largest gap is at least one bucket
-wide and cannot lie inside a bucket. Keep one min and one max per bucket, never compute the
-order within a bucket, sweep once. The linear answer is not a cleverer sort - it comes from
-noticing which part of the sort can be skipped.
-
-## The problems, stated in full
-
-Restated in my own words - what is being asked, what goes in and comes out, one worked
-example, and the constraints that actually change which algorithm is allowed.
-
-### LeetCode 75 - Sort Colors
-
 **The task.** You are given an array whose every element is `0`, `1` or `2` - think red,
 white and blue objects thrown in a box. Rearrange the array *in place* so that all the
 `0`s come first, then all the `1`s, then all the `2`s. You may not call the library sort.
@@ -126,7 +107,11 @@ The interesting part is the follow-up: do it in one pass with `O(1)` extra space
 
 [leetcode.com/problems/sort-colors](https://leetcode.com/problems/sort-colors/)
 
-### LeetCode 164 - Maximum Gap
+A histogram of three counters and a rewrite, or the one-pass three-pointer version the
+follow-up is fishing for. The asymmetry is the whole difficulty: a value swapped down from the
+high end has never been examined, so `mid` must not advance after that swap.
+
+## LeetCode 164 - Maximum Gap
 
 **The task.** Given an unsorted integer array, return the largest difference between two
 *successive* elements once the array is sorted. If the array has fewer than two elements
@@ -142,6 +127,12 @@ explicitly asks for **linear time and linear extra space**, which is what rules 
 "just sort it" and forces a bucket/radix argument.
 
 [leetcode.com/problems/maximum-gap](https://leetcode.com/problems/maximum-gap/)
+
+Asking for O(n) is the same as forbidding a sort. Drop n numbers into n-1 buckets and
+pigeonhole guarantees at least one bucket is empty, so the largest gap is at least one bucket
+wide and cannot lie inside a bucket. Keep one min and one max per bucket, never compute the
+order within a bucket, sweep once. The linear answer is not a cleverer sort - it comes from
+noticing which part of the sort can be skipped.
 
 ## Complexity
 | Operation | Time | Space |

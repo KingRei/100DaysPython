@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
-<title>Day 23 — 二分搜尋要找的不是 x</title>
+<title>Day 23 — 二分搜尋：lower_bound、upper_bound 與三種邊界寫法</title>
 <style>
 body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
          font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
@@ -26,7 +26,7 @@ li     { margin: .3em 0; }
 </style>
 </head>
 <body>
-<h1>Day 23 — 二分搜尋要找的不是 x</h1>
+<h1>Day 23 — 二分搜尋：lower_bound、upper_bound 與三種邊界寫法</h1>
 <p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2023%20-%20binary%20search">day 23 on GitHub</a></p>
 <p><em>100 Days of Python - day 23</em></p>
 <p>二分搜尋我可以憑記憶寫出來，你大概也可以。然後大概有一半的機率，我們其中一個人寫出來的版本會回傳一個少一格的 index、乾淨地結束、不丟任何例外，而且是錯的。</p>
@@ -70,6 +70,18 @@ li     { margin: .3em 0; }
 <pre><code>mid = (lo + hi) // 2                # lo = 2_000_000_000, hi = 2_100_000_000</code></pre>
 <p>在 int32 裡這個加法會繞成 <code>-194967296</code>，於是 <code>mid</code> 是 <code>-97483648</code>；<code>lo + (hi - lo) // 2</code> 則給你 <code>2050000000</code>。Python 的整數是任意精度所以這裡不會出事，但同一個迴圈寫在 CUDA kernel 裡索引的是 int32 offset —— 這就是 2006 年 Joshua Bloch 寫文章講的、在 <code>java.util.Arrays.binarySearch</code> 裡躺了九年的那個 bug。</p>
 <h2>根本不需要有陣列</h2>
+<h3>LeetCode 875 - Koko Eating Bananas（愛吃香蕉的珂珂）</h3>
+<p><strong>題目。</strong> 有 <code>n</code> 堆香蕉，警衛 <code>h</code> 小時後回來。珂珂會挑一個吃的速度 <code>k</code>（每小時 <code>k</code> 根）。每個 小時她選一堆，從裡面吃掉 <code>k</code> 根；如果那堆剩不到 <code>k</code> 根，她就把整堆吃完，然後*這個小時就結束了* —— 她不會在同一小時內再去吃下一堆。回傳能在 <code>h</code> 小時內吃完所有堆的最小整數 <code>k</code>。</p>
+<p><strong>輸入／輸出。</strong> 輸入 <code>piles</code> 和 <code>h</code>，輸出最小速度 <code>k</code>。</p>
+<p><strong>範例。</strong> <code>piles = [3,6,7,11]</code>、<code>h = 8</code> → <code>4</code>。速度 <code>4</code> 需要 <code>1 + 2 + 2 + 3 = 8</code> 小時；速度 <code>3</code> 需要 <code>1 + 2 + 3 + 4 = 10</code> 小時，來不及。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(piles) &lt;= 10^4</code>、<code>len(piles) &lt;= h &lt;= 10^9</code>、<code>1 &lt;= piles[i] &lt;= 10^9</code>。注意 搜尋空間是*數值* <code>k</code>（最大到 <code>10^9</code>），不是陣列 —— 又一題對答案做二分搜尋。</p>
+<p><a href="https://leetcode.com/problems/koko-eating-bananas/">leetcode.com/problems/koko-eating-bananas</a></p>
+<h3>LeetCode 410 - Split Array Largest Sum（分割陣列的最大值）</h3>
+<p><strong>題目。</strong> 把一個非負整數陣列切成剛好 <code>k</code> 段非空的<strong>連續</strong>子陣列。一種切法的代價是「最大那一段 的和」。回傳所有切法裡最小的那個代價。</p>
+<p><strong>輸入／輸出。</strong> 輸入 <code>nums</code> 和 <code>k</code>，輸出一個整數。</p>
+<p><strong>範例。</strong> <code>nums = [7,2,5,10,8]</code>、<code>k = 2</code>。最好的切法是 <code>[7,2,5] | [10,8]</code>，兩段和為 <code>14</code> 與 <code>18</code>，答案就是 <code>18</code>；其他切法的最大值都更大。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(nums) &lt;= 1000</code>、<code>0 &lt;= nums[i] &lt;= 10^6</code>、<code>1 &lt;= k &lt;= min(50, len(nums))</code>。 答案一定落在 <code>max(nums)</code> 與 <code>sum(nums)</code> 之間，而且「預算 <code>x</code> 夠不夠切成 <code>k</code> 段」對 <code>x</code> 是單調的 —— 這就是為什麼它是一題「對答案做二分搜尋」而不是對陣列做二分搜尋。</p>
+<p><a href="https://leetcode.com/problems/split-array-largest-sum/">leetcode.com/problems/split-array-largest-sum</a></p>
 <p>把迴圈剝到只剩骨頭，它真正需要的其實是一個<strong>單調的述詞</strong>：一個 <code>ok(x)</code>，在搜尋範圍上是 false、false、…、 false、true、true、…、true。排序好的陣列只不過是 <code>ok(i) = a[i] &gt;= x</code> 這個特例而已。</p>
 <pre><code>def search_first_true(lo, hi, ok):
     while lo &lt; hi:
@@ -121,6 +133,18 @@ def min_eating_speed(piles, h):
 return buckets[index]</code></pre>
 <p>是 <code>bisect_left</code>，不是 <code>bisect_right</code>。batch 本身就是一個捕捉過的大小時，<code>bisect_left</code> 回傳它自己、完全不用 補；<code>bisect_right</code> 會跳到下一個 bucket，然後為一整個 graph 的空白列付錢。在預設的捕捉清單上、對 1 到 255 的 batch 取平均，這是 4.25% 對 6.07% 的差別 —— 差一個字元 —— 而且在最大的 batch 上，<code>bisect_right</code> 會直接掉出 清單外面。</p>
 <h2>面試版本</h2>
+<h3>LeetCode 34 - Find First and Last Position of Element in Sorted Array（在排序陣列中找元素的第一個與最後一個位置）</h3>
+<p><strong>題目。</strong> 給一個非遞減陣列和 <code>target</code>，回傳 <code>target</code> 出現的第一個與最後一個索引，形式為 <code>[first, last]</code>；如果不存在就回 <code>[-1, -1]</code>。</p>
+<p><strong>輸入／輸出。</strong> 輸入 <code>nums</code> 和 <code>target</code>，輸出長度為 2 的串列。</p>
+<p><strong>範例。</strong> <code>nums = [5,7,7,8,8,10]</code>、<code>target = 8</code> → <code>[3,4]</code>；<code>target = 6</code> → <code>[-1,-1]</code>。</p>
+<p><strong>限制。</strong> <code>0 &lt;= len(nums) &lt;= 10^5</code>、數值在 <code>[-10^9, 10^9]</code>，陣列非遞減（可以有重複）。 一樣要求 <code>O(log n)</code> —— 這正是「找邊界而不是找元素」那種二分搜尋。</p>
+<p><a href="https://leetcode.com/problems/find-first-and-last-position-of-element-in-sorted-array/">leetcode.com/problems/find-first-and-last-position-of-element-in-sorted-array</a></p>
+<h3>LeetCode 33 - Search in Rotated Sorted Array（搜尋旋轉排序陣列）</h3>
+<p><strong>題目。</strong> 一個元素相異的遞增陣列，在某個未知的位置被旋轉過 —— <code>[0,1,2,4,5,6,7]</code> 可能會變成 <code>[4,5,6,7,0,1,2]</code>。給你旋轉後的陣列和 <code>target</code>，回傳 <code>target</code> 的索引，找不到就回傳 <code>-1</code>。</p>
+<p><strong>輸入／輸出。</strong> 輸入 <code>nums</code> 和 <code>target</code>，輸出一個索引（或 <code>-1</code>）。</p>
+<p><strong>範例。</strong> <code>nums = [4,5,6,7,0,1,2]</code>、<code>target = 0</code> → <code>4</code>；<code>target = 3</code> → <code>-1</code>。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(nums) &lt;= 5000</code>、數值在 <code>[-10^4, 10^4]</code>、<strong>所有元素相異</strong>，且保證是某個 排序陣列旋轉而來。時間複雜度必須是 <code>O(log n)</code>，所以線性掃過去不算解。</p>
+<p><a href="https://leetcode.com/problems/search-in-rotated-sorted-array/">leetcode.com/problems/search-in-rotated-sorted-array</a></p>
 <p>LeetCode 34，找 target 的第一個和最後一個位置，是「該背邊界版本而不是找 x 版本」最好的證據：</p>
 <pre><code>def search_range(nums, target):
     lo = lower_bound(nums, target)
@@ -132,32 +156,5 @@ return buckets[index]</code></pre>
 <p>這篇文章裡的五處 sglang 二分搜尋，全部都是邊界搜尋，而且沒有一個長得像課本：把 batch 補到捕捉形狀是 <code>bisect_left</code>；從 token index 反推 request id 是 <code>upper_bound - 1</code>；比對快取前綴是指數搜尋；autotune 請求 速率是在有雜訊的量測上做 bisection；decode kernel 挑 tile 大小又是同一件事。</p>
 <p>下一站是 Trie 與 radix tree —— 也就是今天那個 gallop 正在走的那把 key 所屬的結構。再往後是字串匹配，那時 「比的是一整段而不是一個元素」這個成本模型會變成 rolling hash。</p>
 <p>程式碼、notebook、圖與互動演示：</p>
-<h2>附錄：LeetCode 題目完整題敘</h2>
-<p>以下用我自己的話重寫一遍：題目在問什麼、輸入輸出是什麼、一個算過的例子，以及那些真的會 改變「可以用哪種演算法」的限制。</p>
-<h3>LeetCode 33 - Search in Rotated Sorted Array（搜尋旋轉排序陣列）</h3>
-<p><strong>題目。</strong> 一個元素相異的遞增陣列，在某個未知的位置被旋轉過 —— <code>[0,1,2,4,5,6,7]</code> 可能會變成 <code>[4,5,6,7,0,1,2]</code>。給你旋轉後的陣列和 <code>target</code>，回傳 <code>target</code> 的索引，找不到就回傳 <code>-1</code>。</p>
-<p><strong>輸入／輸出。</strong> 輸入 <code>nums</code> 和 <code>target</code>，輸出一個索引（或 <code>-1</code>）。</p>
-<p><strong>範例。</strong> <code>nums = [4,5,6,7,0,1,2]</code>、<code>target = 0</code> → <code>4</code>；<code>target = 3</code> → <code>-1</code>。</p>
-<p><strong>限制。</strong> <code>1 &lt;= len(nums) &lt;= 5000</code>、數值在 <code>[-10^4, 10^4]</code>、<strong>所有元素相異</strong>，且保證是某個 排序陣列旋轉而來。時間複雜度必須是 <code>O(log n)</code>，所以線性掃過去不算解。</p>
-<p><a href="https://leetcode.com/problems/search-in-rotated-sorted-array/">leetcode.com/problems/search-in-rotated-sorted-array</a></p>
-<h3>LeetCode 34 - Find First and Last Position of Element in Sorted Array（在排序陣列中找元素的第一個與最後一個位置）</h3>
-<p><strong>題目。</strong> 給一個非遞減陣列和 <code>target</code>，回傳 <code>target</code> 出現的第一個與最後一個索引，形式為 <code>[first, last]</code>；如果不存在就回 <code>[-1, -1]</code>。</p>
-<p><strong>輸入／輸出。</strong> 輸入 <code>nums</code> 和 <code>target</code>，輸出長度為 2 的串列。</p>
-<p><strong>範例。</strong> <code>nums = [5,7,7,8,8,10]</code>、<code>target = 8</code> → <code>[3,4]</code>；<code>target = 6</code> → <code>[-1,-1]</code>。</p>
-<p><strong>限制。</strong> <code>0 &lt;= len(nums) &lt;= 10^5</code>、數值在 <code>[-10^9, 10^9]</code>，陣列非遞減（可以有重複）。 一樣要求 <code>O(log n)</code> —— 這正是「找邊界而不是找元素」那種二分搜尋。</p>
-<p><a href="https://leetcode.com/problems/find-first-and-last-position-of-element-in-sorted-array/">leetcode.com/problems/find-first-and-last-position-of-element-in-sorted-array</a></p>
-<h3>LeetCode 410 - Split Array Largest Sum（分割陣列的最大值）</h3>
-<p><strong>題目。</strong> 把一個非負整數陣列切成剛好 <code>k</code> 段非空的<strong>連續</strong>子陣列。一種切法的代價是「最大那一段 的和」。回傳所有切法裡最小的那個代價。</p>
-<p><strong>輸入／輸出。</strong> 輸入 <code>nums</code> 和 <code>k</code>，輸出一個整數。</p>
-<p><strong>範例。</strong> <code>nums = [7,2,5,10,8]</code>、<code>k = 2</code>。最好的切法是 <code>[7,2,5] | [10,8]</code>，兩段和為 <code>14</code> 與 <code>18</code>，答案就是 <code>18</code>；其他切法的最大值都更大。</p>
-<p><strong>限制。</strong> <code>1 &lt;= len(nums) &lt;= 1000</code>、<code>0 &lt;= nums[i] &lt;= 10^6</code>、<code>1 &lt;= k &lt;= min(50, len(nums))</code>。 答案一定落在 <code>max(nums)</code> 與 <code>sum(nums)</code> 之間，而且「預算 <code>x</code> 夠不夠切成 <code>k</code> 段」對 <code>x</code> 是單調的 —— 這就是為什麼它是一題「對答案做二分搜尋」而不是對陣列做二分搜尋。</p>
-<p><a href="https://leetcode.com/problems/split-array-largest-sum/">leetcode.com/problems/split-array-largest-sum</a></p>
-<h3>LeetCode 875 - Koko Eating Bananas（愛吃香蕉的珂珂）</h3>
-<p><strong>題目。</strong> 有 <code>n</code> 堆香蕉，警衛 <code>h</code> 小時後回來。珂珂會挑一個吃的速度 <code>k</code>（每小時 <code>k</code> 根）。每個 小時她選一堆，從裡面吃掉 <code>k</code> 根；如果那堆剩不到 <code>k</code> 根，她就把整堆吃完，然後*這個小時就結束了* —— 她不會在同一小時內再去吃下一堆。回傳能在 <code>h</code> 小時內吃完所有堆的最小整數 <code>k</code>。</p>
-<p><strong>輸入／輸出。</strong> 輸入 <code>piles</code> 和 <code>h</code>，輸出最小速度 <code>k</code>。</p>
-<p><strong>範例。</strong> <code>piles = [3,6,7,11]</code>、<code>h = 8</code> → <code>4</code>。速度 <code>4</code> 需要 <code>1 + 2 + 2 + 3 = 8</code> 小時；速度 <code>3</code> 需要 <code>1 + 2 + 3 + 4 = 10</code> 小時，來不及。</p>
-<p><strong>限制。</strong> <code>1 &lt;= len(piles) &lt;= 10^4</code>、<code>len(piles) &lt;= h &lt;= 10^9</code>、<code>1 &lt;= piles[i] &lt;= 10^9</code>。注意 搜尋空間是*數值* <code>k</code>（最大到 <code>10^9</code>），不是陣列 —— 又一題對答案做二分搜尋。</p>
-<p><a href="https://leetcode.com/problems/koko-eating-bananas/">leetcode.com/problems/koko-eating-bananas</a></p>
-<p><a href="https://github.com/KingRei/100DaysPython/tree/master/day%2023%20-%20binary%20search">day 23 on GitHub</a>。 那個資料夾裡的 <code>demo.html</code> 會把上面全部動起來，包括兩個會掛住的迴圈 —— 看它們掛住比 debug 它們有趣多了。</p>
 </body>
 </html>

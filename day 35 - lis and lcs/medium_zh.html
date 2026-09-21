@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 35 — LIS 與 LCS：留下來的最長子序列，和用完就丟的那張表</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 35 — LIS 與 LCS：留下來的最長子序列，和用完就丟的那張表</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2035%20-%20lis%20and%20lcs">day 35 on GitHub</a></p>
+<p><em>100 Days of Python - day 35</em></p>
+<p>最長遞增子序列有一個 <code>O(n log n)</code> 的解法，九行就寫完，而它整個過程一直在維護的那個陣列<strong>不是答案</strong>。拿 <code>[2, 6, 8, 3, 4, 5, 1]</code> 跑，它最後留下 <code>[1, 3, 4, 5]</code> —— 長度 4 是對的，但這串數字根本不是原陣列的子序列，因為 <code>1</code> 是整個陣列的<strong>最後一個</strong>元素。這就是今天的陷阱，而且是最陰險的那種：它在教科書範例上永遠不會出現。</p>
+<p>昨天的背包以「填完表再走回去，還原拿了哪些物品」收尾。今天是同樣的形狀，但刀更利一點。LIS 有一個快的演算法，但它的工作陣列不能相信；LCS 有一張表，而那張表唯一的用途就是被丟掉。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2035%20-%20lis%20and%20lcs/imgs/day35_1.png">
+<p>先講名詞。<strong>子序列（subsequence）不是子字串（substring）</strong>。<code>[2, 3, 7, 18]</code> 是 <code>[10, 9, 2, 5, 3, 7, 101, 18]</code> 的子序列，即使這四個數字散落在各處：順序要保留，但不必相鄰。就是這一點鬆綁，讓 <code>diff</code>、ROUGE-L、DNA 序列比對成為可能，也讓今天這兩題比看起來難。</p>
+<h2>先寫最直覺的那個 DP</h2>
+<p>令 <code>dp[i]</code> 是<strong>以 <code>i</code> 結尾</strong>的最長遞增子序列長度。「以 i 結尾」這句話就是整個設計決策。比較自然的講法 ——「前 <code>i</code> 個元素的 LIS」—— 狀態是不夠的，因為要判斷下一個元素能不能接上去，你得知道目前這串的結尾是什麼，而那個講法已經把它丟掉了。</p>
+<pre><code>def lis_dp(a):
+    n = len(a)
+    dp = [1] * n
+    parent = [-1] * n
+    for i in range(n):
+        for j in range(i):
+            if a[j] &lt; a[i] and dp[j] + 1 &gt; dp[i]:
+                dp[i] = dp[j] + 1
+                parent[i] = j
+    best = max(range(n), key=lambda i: dp[i])
+    out = []
+    while best != -1:
+        out.append(a[best])
+        best = parent[best]
+    out.reverse()
+    return max(dp), out</code></pre>
+<p><code>O(n²)</code>，而且因為 <code>parent</code> 把「當下選到的前一個是誰」記了下來，還原真正的子序列是免費的：<code>(4, [2, 5, 7, 101])</code>。</p>
+<h2>patience sorting</h2>
+<p>把數字當撲克牌發牌。每張牌放到「牌頂大於等於它」的最左邊那一疊；如果沒有這樣的疊，就在右邊另開一疊。發完之後，疊數就是 LIS 的長度。各疊的牌頂天生是排序好的，所以找哪一疊就是一次二分搜尋 —— 就是 day 23 那個 <code>lower_bound</code>：</p>
+<pre><code>from bisect import bisect_left
+
+def lis_patience(a):
+    tails = []
+    for x in a:
+        k = bisect_left(tails, x)
+        if k == len(tails):
+            tails.append(x)        # x 把目前最長的那串再延長一格
+        else:
+            tails[k] = x           # 長度 k+1 的結尾，x 比原本更便宜
+    return len(tails), tails</code></pre>
+<p>九行，<code>O(n log n)</code>。要記住的是那個 invariant：<code>tails[k]</code> 是「目前看過的所有東西之中，能夠當作長度 <code>k + 1</code> 遞增串結尾的最小值」。覆蓋掉舊值永遠不會有損失，因為結尾越小就越容易再接下去，而它代表的長度並沒有變。</p>
+<h2>會說謊的那個陣列</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2035%20-%20lis%20and%20lcs/imgs/day35_2.png">
+<p>在教科書的 <code>[10, 9, 2, 5, 3, 7, 101, 18]</code> 上，<code>tails</code> 最後是 <code>[2, 3, 7, 18]</code>，而那還真的是一個合法的 LIS。所有講到這裡就停的教學，都教錯了一課。同一個函式，換成 <code>[2, 6, 8, 3, 4, 5, 1]</code>：</p>
+<pre><code>tails = [1, 3, 4, 5]        真正的 LIS = [2, 3, 4, 5]</code></pre>
+<p><code>1</code> 是輸入的最後一個元素，所以 <code>[1, 3, 4, 5]</code> 不可能是它的子序列。<code>tails</code> 是<strong>記分板，不是路線</strong>：長度永遠正確，內容通常不是。要拿到子序列本身，就得記錄每個值落在哪一格、以及它前面接的是誰：</p>
+<pre><code>def lis_patience_reconstruct(a):
+    tails, idx, parent = [], [], [-1] * len(a)
+    for i, x in enumerate(a):
+        k = bisect_left(tails, x)
+        if k:
+            parent[i] = idx[k - 1]
+        if k == len(tails):
+            tails.append(x); idx.append(i)
+        else:
+            tails[k] = x; idx[k] = i
+    out, i = [], idx[-1]
+    while i != -1:
+        out.append(i); i = parent[i]
+    out.reverse()
+    return len(tails), out, [a[i] for i in out]</code></pre>
+<p><code>parent[i]</code> 在插入的那一刻就被凍結，所以它指向的是「<strong>在那個當下</strong>結束長度 <code>k</code> 那串的人」—— 那個時間點確實合法的前驅，即使 <code>tails[k-1]</code> 五步之後被更小的值蓋掉也一樣。記分板一直在變，歷史不會。</p>
+<h2>一個函式名就是全部的差別</h2>
+<pre><code>find = bisect_left if strict else bisect_right</code></pre>
+<p><code>bisect_left</code> 會把新值放到「牌頂等於它」的那一疊，所以相等的值接不起來，得到的是<strong>嚴格遞增</strong>；<code>bisect_right</code> 會把它放到下一疊，所以相等的值可以接，得到的是<strong>非遞減</strong>。在 <code>[1, 3, 3, 3, 5]</code> 上就是 <code>3</code> 對 <code>5</code>。「遞增」在中文和英文裡都是模糊的，在程式碼裡卻是精確的 —— 動手之前先問清楚題目要哪一種。</p>
+<h2>LeetCode 300 - Longest Increasing Subsequence（最長遞增子序列）</h2>
+<p><strong>題意。</strong> 給一個整數陣列，回傳它最長的<strong>嚴格遞增</strong>子序列的長度。</p>
+<p><strong>輸入／輸出。</strong> 輸入是 <code>nums</code>；輸出是一個整數。</p>
+<p><strong>範例。</strong> <code>nums = [10,9,2,5,3,7,101,18]</code> → <code>4</code>，來自 <code>[2,3,7,101]</code>（<code>[2,3,7,18]</code> 也行）。<code>nums = [0,1,0,3,2,3]</code> → <code>4</code>。<code>nums = [7,7,7,7,7]</code> → <code>1</code>，因為嚴格遞增不允許重複。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(nums) &lt;= 2500</code>，<code>-10^4 &lt;= nums[i] &lt;= 10^4</code>。2500 這個規模讓 <code>O(n²)</code> 的 DP 輕鬆過關 —— 也正因如此，後面那句 follow-up「能不能做到 <code>O(n log n)</code>？」才是面試真正開始的地方。</p>
+<p><a href="https://leetcode.com/problems/longest-increasing-subsequence/">leetcode.com/problems/longest-increasing-subsequence</a></p>
+<p>既然只問長度，記分板就夠了：</p>
+<pre><code>def length_of_lis(nums):
+    tails = []
+    for x in nums:
+        k = bisect_left(tails, x)
+        if k == len(tails):
+            tails.append(x)
+        else:
+            tails[k] = x
+    return len(tails)</code></pre>
+<h2>那個其實就是演算法的排序 key</h2>
+<h3>LeetCode 354 - Russian Doll Envelopes（俄羅斯套娃信封）</h3>
+<p><strong>題意。</strong> 每個信封是一組 <code>[width, height]</code>。一個信封能裝進另一個，條件是寬和高<strong>兩者都嚴格小於</strong>。回傳最多能一層套一層套幾個信封。</p>
+<p><strong>輸入／輸出。</strong> 輸入是 <code>envelopes</code>；輸出是一個整數。</p>
+<p><strong>範例。</strong> <code>envelopes = [[5,4],[6,4],[6,7],[2,3]]</code> → <code>3</code>，套法是 <code>[2,3] → [5,4] → [6,7]</code>。<code>envelopes = [[1,1],[1,1],[1,1]]</code> → <code>1</code>：寬度相等不算「嚴格小於」，所以誰也套不進誰。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(envelopes) &lt;= 10^5</code>，<code>1 &lt;= w, h &lt;= 10^5</code>。<code>10^5</code> 就是全部的提示：兩兩比較的 <code>O(n²)</code> 是 10^10 次運算，跑不完，所以預期解法只能是 <code>O(n log n)</code> 的 LIS。</p>
+<p><a href="https://leetcode.com/problems/russian-doll-envelopes/">leetcode.com/problems/russian-doll-envelopes</a></p>
+<p>按寬度排序之後，第二個維度就變成單純的高度 LIS。但同寬的信封絕對不能互相接起來 —— 而這件事完全由排序 key 處理掉：</p>
+<pre><code>def max_envelopes(envelopes):
+    envelopes.sort(key=lambda e: (e[0], -e[1]))      # 寬度遞增、高度遞減
+    return length_of_lis([h for _, h in envelopes])</code></pre>
+<p>同寬時把高度排成<strong>遞減</strong>，它們就成了一段遞減序列，而一段遞減序列最多只能貢獻一個元素給遞增子序列。把那個負號拿掉，<code>[[1,1],[1,2],[1,3]]</code> 會回傳 <code>3</code> —— 三個寬度一模一樣的信封，宣稱一個套一個。沒有例外、沒有警告。整題的重點就在一個 <code>lambda</code> 裡的一個字元。</p>
+<h3>LeetCode 673 - Number of Longest Increasing Subsequence（最長遞增子序列的個數）</h3>
+<p><strong>題意。</strong> 給一個整數陣列，回傳它有<strong>幾個</strong>不同的最長嚴格遞增子序列。使用的位置不同就算不同。</p>
+<p><strong>輸入／輸出。</strong> 輸入是 <code>nums</code>；輸出是一個整數個數。</p>
+<p><strong>範例。</strong> <code>nums = [1,3,5,4,7]</code> → <code>2</code>：最長長度是 <code>4</code>，由 <code>[1,3,5,7]</code> 和 <code>[1,3,4,7]</code> 達成。<code>nums = [2,2,2,2,2]</code> → <code>5</code>：最長長度是 <code>1</code>，五個位置各自算一個。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(nums) &lt;= 2000</code>，<code>-10^6 &lt;= nums[i] &lt;= 10^6</code>，答案保證在 32-bit 整數內。<code>2000</code> 這個上限很關鍵：它允許 <code>O(n²)</code> 的 DP，而這題非得用它不可，因為 patience 版本沒有地方存這些計數。</p>
+<p><a href="https://leetcode.com/problems/number-of-longest-increasing-subsequence/">leetcode.com/problems/number-of-longest-increasing-subsequence</a></p>
+<p>在 <code>dp</code> 旁邊再帶一個陣列：</p>
+<pre><code>def count_lis(a):
+    n = len(a)
+    dp, cnt = [1] * n, [1] * n
+    for i in range(n):
+        for j in range(i):
+            if a[j] &lt; a[i]:
+                if dp[j] + 1 &gt; dp[i]:
+                    dp[i] = dp[j] + 1
+                    cnt[i] = cnt[j]          # 更長的路：取代
+                elif dp[j] + 1 == dp[i]:
+                    cnt[i] += cnt[j]         # 一樣長的路：相加
+    best = max(dp)
+    return sum(c for d, c in zip(dp, cnt) if d == best)</code></pre>
+<p>長度變長用 <code>=</code>，長度打平用 <code>+=</code>。把這兩行寫反是這題最標準的死法，而且兩個版本都會回傳一個看起來很合理的整數。</p>
+<h2>LCS：表，以及路徑</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2035%20-%20lis%20and%20lcs/imgs/day35_3.png">
+<p>最長共同子序列沒有這些好康。<code>dp[i][j]</code> 是 <code>x[:i]</code> 和 <code>y[:j]</code> 的 LCS 長度；字元相等就延長對角線，否則就是「從任一邊砍掉一個字元」中比較好的那個：</p>
+<pre><code>def lcs_table(x, y):
+    dp = [[0] * (len(y) + 1) for _ in range(len(x) + 1)]
+    for i in range(1, len(x) + 1):
+        for j in range(1, len(y) + 1):
+            if x[i - 1] == y[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+    return dp</code></pre>
+<p><code>AGGTAB</code> 對 <code>GXTXAYB</code> 得到 <code>4</code>，從右下角往回走 —— 相等就走對角線，否則走向比較大的那個鄰居 —— 拼出 <code>GTAB</code>。</p>
+<p>第 <code>i</code> 列只會讀第 <code>i - 1</code> 列，所以要數字的話兩列就夠。而且跟昨天的滾動背包一模一樣，<strong>滾動版還原不了路徑</strong>：回溯要經過的那些格子已經不存在了。數字或路徑，二選一。（或者用 Hirschberg 演算法，用線性空間把路徑換回來，代價是每次分割都要把 DP 跑兩遍 —— 是個好把戲，但長得多。）</p>
+<h3>LeetCode 1035 - Uncrossed Lines（不相交的線）</h3>
+<p><strong>題意。</strong> 兩排整數上下寫著。在兩排之間畫直線連接相等的數字，每排各用一個，而且任兩條線不能交叉、每個數字只能用一次。回傳最多能畫幾條線。</p>
+<p><strong>輸入／輸出。</strong> 輸入是 <code>nums1</code> 和 <code>nums2</code>；輸出是一個整數。</p>
+<p><strong>範例。</strong> <code>nums1 = [1,4,2]</code>、<code>nums2 = [1,2,4]</code> → <code>2</code>：先連兩個 <code>1</code>，然後連 <code>4</code> 或連 <code>2</code> 只能挑一個，因為那兩條線會交叉。<code>nums1 = [2,5,1,2,5]</code>、<code>nums2 = [10,5,2,1,5,2]</code> → <code>3</code>。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(nums1), len(nums2) &lt;= 500</code>，<code>1 &lt;= nums[i] &lt;= 2000</code>。<code>500 × 500</code> 就是重點 —— 剛好是 <code>O(n·m)</code> 那張表要的大小。</p>
+<p><a href="https://leetcode.com/problems/uncrossed-lines/">leetcode.com/problems/uncrossed-lines</a></p>
+<p>「線不能交叉」的意思就是配對到的位置在兩排裡都遞增，而那正是共同子序列的定義。這題是換了一套詞彙的 LCS，而它真正在測的能力，是在時間壓力下認出這件事，而不是重新推一條遞推式。</p>
+<h2>LCS 其實就是 LIS 的那個情況</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2035%20-%20lis%20and%20lcs/imgs/day35_4.png">
+<p>這就是讓今天變成一篇而不是兩篇的連結。如果兩個序列是同一個集合的排列（permutation）—— 元素互不重複、而且來自同一個字母表 —— 那張表就不需要了。把 <code>q</code> 的每個元素換成它在 <code>p</code> 裡的索引；共同子序列於是變成「一組在 <code>p</code> 裡遞增、且在 <code>q</code> 裡依序出現的位置」，而那正好就是映射後陣列的遞增子序列：</p>
+<pre><code>def lcs_of_permutations(p, q):
+    pos = {v: i for i, v in enumerate(p)}
+    mapped = [pos[v] for v in q if v in pos]
+    length, seq, _ = lis_patience_reconstruct(mapped)
+    return length, [p[i] for i in seq]</code></pre>
+<p><code>p = [1,2,3,4,5,6]</code>、<code>q = [2,4,1,5,6,3]</code> 映射成 <code>[1,3,0,4,5,2]</code>，它的 LIS <code>[1,3,4,5]</code> 讀回來就是 <code>[2,4,5,6]</code>。在兩個大小 1200 的隨機排列上，<code>O(n·m)</code> 的表要 1.300 秒，這個版本 0.0018 秒，答案同樣是 67 —— 大約 <strong>700 倍</strong>，來自同一個 <code>O(n²) → O(n log n)</code> 的跳躍，只是這次用在一個看起來跟 LIS 毫無關係的問題上。</p>
+<p>這就是 Hunt-Szymanski 演算法的核心，也是 <code>diff</code> 在真實檔案上很快的原因：原始碼的行大多是唯一的，所以輸入夠接近一個排列，這招就咬得住。</p>
+<h2>它到底是拿來做什麼的</h2>
+<p>LCS 是 <code>diff</code> 裡面的引擎。共同子序列就是沒有被改動的那些行，不在裡面的就是刪除或新增。</p>
+<pre><code>     def f(x):
+   -     y = x + 1
+   +     # bump
+   +     y = x + 2
+         return y</code></pre>
+<p><code>git diff</code>、<code>patch</code>、所有 code review 工具、所有 merge conflict 偵測，都建立在這上面。ROUGE-L 這個摘要評測的標準指標，就是候選句與參考句之間 LCS 長度的 F-measure —— 它獎勵「對的字以對的順序出現」，但不要求相鄰，所以 <code>&quot;the cat sat on the mat&quot;</code> 對上 <code>&quot;the cat was sitting on the mat&quot;</code> 拿到 <code>0.769</code>。生物資訊裡的 Needleman-Wunsch 也是同一張表，只是把 <code>+1</code> 換成一個計分矩陣。而 LIS 則出現在 patience diff 的快速路徑，以及排程問題裡「偏序中的最長鏈」。</p>
+<h2>這件事之後還會用到</h2>
+<p>今天最值得留下來的反射動作不是哪一個演算法，而是這個問題：「這個工作陣列到底是答案，還是答案的摘要？」—— 因為 <code>tails</code> 是「數字對、內容錯」這種資料結構最乾淨的範例，而 parent 指標就是把內容換回來所要付的價。區間 DP 和樹形 DP 有完全一樣的「值 vs 還原」分裂，你未來寫的每一個 Viterbi 解碼和 beam search 也是。</p>
+<p>明天：區間 DP 與樹形 DP —— 矩陣鏈乘、戳氣球，還有一個跑在樹上的背包。</p>
+<p><a href="https://github.com/KingRei/100DaysPython/tree/master/day%2035%20-%20lis%20and%20lcs">完整程式碼在 GitHub</a></p>
+</body>
+</html>

@@ -148,26 +148,6 @@ C4 and RefinedWeb.
 
 ## The LeetCode problems
 
-LC 72 (Edit Distance) is the table, unchanged - the interview value is in stating the three
-predecessors as *operations* and then offering the rolling-row version and the reason it loses
-the script.
-
-LC 1143 (Longest Common Subsequence) is the same table with substitution removed, and worth
-solving right after 72 because the pair makes the recurrence's structure visible: one branch
-deleted, one different algorithm.
-
-LC 161 (One Edit Distance) is the interesting one, because the right answer builds **no table
-at all**. If the lengths differ by more than one, or the strings are equal, it is already
-decided; otherwise scan to the first difference and check whether skipping one character on the
-longer side (or both, when the lengths match) makes the tails equal. `O(n)` time, `O(1)` space -
-the general algorithm is the wrong tool once `k` is nailed down to 1, which is the bounded-band
-idea taken to its limit.
-
-## The problems, stated in full
-
-Restated in my own words - what is being asked, what goes in and comes out, one worked
-example, and the constraints that actually change which algorithm is allowed.
-
 ### LeetCode 72 - Edit Distance
 
 **The task.** Given two words, return the minimum number of operations needed to turn the
@@ -184,6 +164,23 @@ by `500` the full table is only a quarter of a million cells, so the interesting
 is not speed but whether you can do it in `O(min(m, n))` space.
 
 [leetcode.com/problems/edit-distance](https://leetcode.com/problems/edit-distance/)
+
+### LeetCode 1143 - Longest Common Subsequence
+
+**The task.** Return the length of the longest common subsequence of two strings. A
+subsequence keeps the original order but may skip characters; it does **not** have to be
+contiguous. If there is no common subsequence the answer is `0`.
+
+**Input / output.** Two strings in, one integer out.
+
+**Example.** `text1 = "abcde"`, `text2 = "ace"` → `3`, the subsequence `"ace"`.
+`text1 = "abc"`, `text2 = "def"` → `0`.
+
+**Constraints.** `1 <= len(text1), len(text2) <= 1000`, lowercase English letters. It is
+the same `O(m * n)` table as edit distance with a different recurrence - which is exactly
+why the two problems belong on the same day.
+
+[leetcode.com/problems/longest-common-subsequence](https://leetcode.com/problems/longest-common-subsequence/)
 
 ### LeetCode 161 - One Edit Distance
 
@@ -203,22 +200,20 @@ threshold.
 
 [leetcode.com/problems/one-edit-distance](https://leetcode.com/problems/one-edit-distance/)
 
-### LeetCode 1143 - Longest Common Subsequence
+LC 72 (Edit Distance) is the table, unchanged - the interview value is in stating the three
+predecessors as *operations* and then offering the rolling-row version and the reason it loses
+the script.
 
-**The task.** Return the length of the longest common subsequence of two strings. A
-subsequence keeps the original order but may skip characters; it does **not** have to be
-contiguous. If there is no common subsequence the answer is `0`.
+LC 1143 (Longest Common Subsequence) is the same table with substitution removed, and worth
+solving right after 72 because the pair makes the recurrence's structure visible: one branch
+deleted, one different algorithm.
 
-**Input / output.** Two strings in, one integer out.
-
-**Example.** `text1 = "abcde"`, `text2 = "ace"` → `3`, the subsequence `"ace"`.
-`text1 = "abc"`, `text2 = "def"` → `0`.
-
-**Constraints.** `1 <= len(text1), len(text2) <= 1000`, lowercase English letters. It is
-the same `O(m * n)` table as edit distance with a different recurrence - which is exactly
-why the two problems belong on the same day.
-
-[leetcode.com/problems/longest-common-subsequence](https://leetcode.com/problems/longest-common-subsequence/)
+LC 161 (One Edit Distance) is the interesting one, because the right answer builds **no table
+at all**. If the lengths differ by more than one, or the strings are equal, it is already
+decided; otherwise scan to the first difference and check whether skipping one character on the
+longer side (or both, when the lengths match) makes the tails equal. `O(n)` time, `O(1)` space -
+the general algorithm is the wrong tool once `k` is nailed down to 1, which is the bounded-band
+idea taken to its limit.
 
 ## Complexity
 

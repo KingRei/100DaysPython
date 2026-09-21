@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Interval DP and tree DP: choosing the split point instead of the next item</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Interval DP and tree DP: choosing the split point instead of the next item</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2036%20-%20interval%20and%20tree%20dp">day 36 on GitHub</a></p>
+<p><em>100 Days of Python - day 36</em></p>
+<p>Here is a function that returns a wrong answer without raising anything, and the bug is not in the recurrence. It is in the order of two <code>for</code> loops.</p>
+<pre><code>for i in range(n):
+    for j in range(i + 1, n):
+        for k in range(i, j):
+            cost = dp[i][k] + dp[k + 1][j] + dims[i] * dims[k + 1] * dims[j + 1]
+            dp[i][j] = min(dp[i][j], cost)</code></pre>
+<p>That is matrix chain multiplication, written the way everyone writes a double loop over a 2-D table, and it answers 20,000 on an input whose true minimum is 26,000. Not an approximation, not a rounding error - 20,000 corresponds to no way of bracketing the product at all.</p>
+<h2>Where this sits</h2>
+<p>Day 33 asked &quot;what do I do with element <code>i</code>&quot;, Day 34 asked &quot;do I take this item&quot;, Day 35 asked &quot;does the subsequence end here&quot;. All three walk forwards through a prefix. Today the subproblem stops being a prefix: an interval DP asks <em>where does this range split</em>, and a tree DP asks <em>what does this subtree report to its parent</em>. Both recurrences are two or three lines. What is easy to get wrong is the order the table is filled and the number of values each subproblem has to report - and both mistakes are silent.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2036%20-%20interval%20and%20tree%20dp/imgs/day36_1.png">
+<h2>The cheapest way to multiply four matrices</h2>
+<p>Matrix multiplication is associative: <code>(AB)C</code> and <code>A(BC)</code> produce the same matrix. They do not cost the same. Multiplying a <code>p x q</code> by a <code>q x r</code> takes <code>p*q*r</code> scalar multiplications, so with shapes <code>40x20</code>, <code>20x30</code>, <code>30x10</code>, <code>10x30</code> the bracketing <code>((A(BC))D)</code> costs 26,000 and the worst legal bracketing costs 69,000 - the same answer, at 2.65 times the price.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2036%20-%20interval%20and%20tree%20dp/imgs/day36_2.png">
+<p>Trying every bracketing is hopeless: the count is a Catalan number. So <code>dp[i][j]</code>, the cheapest way to multiply matrices <code>i</code> through <code>j</code>, asks exactly one question. At the very top, a product of <code>i..j</code> is a product of two things: <code>i..k</code> and <code>k+1..j</code>. Which <code>k</code>?</p>
+<pre><code>dp[i][j] = min over k of  dp[i][k] + dp[k + 1][j] + rows(i) * cols(k) * cols(j)</code></pre>
+<p>Both sub-intervals are strictly shorter than <code>i..j</code>. That is not a cute observation, it is the fill order:</p>
+<pre><code>for length in range(2, n + 1):            # the outer loop is LENGTH
+    for i in range(n - length + 1):
+        j = i + length - 1
+        dp[i][j] = float(&#x27;inf&#x27;)
+        for k in range(i, j):
+            cost = dp[i][k] + dp[k + 1][j] + dims[i] * dims[k + 1] * dims[j + 1]
+            if cost &lt; dp[i][j]:
+                dp[i][j] = cost
+                split[i][j] = k</code></pre>
+<p>Now go back to the broken version at the top of this article. <code>dp[i][j]</code> reads <code>dp[k+1][j]</code>, and <code>k+1 &gt; i</code>, so it is reading a row <em>below</em> the current one - a row the <code>i</code>-then-<code>j</code> loops have not reached yet. Those cells still hold their initial <code>0</code>. Several multiplications get priced at zero, the minimum comes out too small, and Python reports nothing at all. Filling by interval length makes that impossible, because &quot;shorter&quot; and &quot;already computed&quot; become the same statement.</p>
+<p><code>split[i][j]</code> is the usual byproduct: recursing through it rebuilds <code>((A(BC))D)</code>, the actual bracketing, not just its price.</p>
+<h2>LeetCode 312 - Burst Balloons</h2>
+<p><strong>The task.</strong> A row of balloons each carries a number. You pop them one at a time; popping a balloon earns the product of its own number and the numbers of its two neighbours <em>at that moment</em>, and once it is gone its neighbours become adjacent to each other. A missing neighbour past the end of the row counts as 1. Pop all of them and maximise the total.</p>
+<p><strong>Input / output.</strong> A list of integers; return the maximum number of coins.</p>
+<p><strong>Example.</strong> <code>[3, 1, 5, 8]</code> gives 167: pop 1 for <code>3*1*5 = 15</code>, then 5 for <code>3*5*8 = 120</code>, then 3 for <code>1*3*8 = 24</code>, then 8 for <code>1*8*1 = 8</code>.</p>
+<p><strong>Constraints.</strong> At most 300 balloons, values up to 100. 300 kills any enumeration of orders - <code>4!</code> is 24, <code>300!</code> is not a number you can loop over - and it is exactly the size that says &quot;an <code>O(n^3)</code> interval DP is expected&quot;.</p>
+<p><a href="https://leetcode.com/problems/burst-balloons/">leetcode.com/problems/burst-balloons</a></p>
+<p>Pad the row with a 1 at each end so the boundary needs no special case. Then the instinctive move is to ask which balloon pops <strong>first</strong> inside the interval, earn its coins, and recurse on the two sides. Try it:</p>
+<pre><code>return max(a[k - 1] * a[k] * a[k + 1] + go(i, k - 1) + go(k + 1, j)
+           for k in range(i, j + 1))</code></pre>
+<p>It returns 98. Not an exception - 98. The two halves are not independent: once <code>k</code> is gone, the left half&#x27;s right-hand neighbour is a balloon owned by the right half, so the coins the left half can still earn depend on what the right half does. The recurrence is asking about subproblems that do not exist.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2036%20-%20interval%20and%20tree%20dp/imgs/day36_3.png">
+<p>Flip the question to which balloon pops <strong>last</strong> in the open interval <code>(i, j)</code> and everything snaps into place. If <code>k</code> is last, then by the time it pops, everything strictly between <code>i</code> and <code>j</code> is already gone, so its two neighbours are exactly <code>i</code> and <code>j</code> - walls that never move, no matter what happens inside the halves.</p>
+<pre><code>for k in range(i + 1, j):
+    cand = dp[i][k] + dp[k][j] + a[i] * a[k] * a[j]</code></pre>
+<p>167, agreeing with brute force over all 24 orders, and the choice table replays the real popping order <code>[1, 5, 3, 8]</code>.</p>
+<h2>LeetCode 1547 - Minimum Cost to Cut a Stick</h2>
+<p><strong>The task.</strong> A wooden stick of length <code>n</code> has to be cut at every position in a given list. Cutting a piece costs the current length of that piece, and you may perform the cuts in any order. Minimise the total cost.</p>
+<p><strong>Input / output.</strong> The length <code>n</code> and the list of cut positions; return the minimum cost.</p>
+<p><strong>Example.</strong> <code>n = 7</code> with cuts <code>[1, 3, 4, 5]</code>: doing them in the order given costs 20, the best order costs 16.</p>
+<p><strong>Constraints.</strong> <code>n</code> can be up to 10^6 but there are at most 100 cuts. That gap is the whole hint: the table must be indexed by cut positions (<code>m &lt;= 102</code>, so <code>O(m^3)</code> is trivial), never by the stick&#x27;s length.</p>
+<p><a href="https://leetcode.com/problems/minimum-cost-to-cut-a-stick/">leetcode.com/problems/minimum-cost-to-cut-a-stick</a></p>
+<p>This one is the mirror image of the balloons, and it is worth sitting with for a second. Here the <strong>first</strong> cut is the separable one: it costs the whole length of the current piece regardless of what has happened elsewhere, and it splits the piece into two that never interact again. So &quot;which one first&quot; decomposes here and &quot;which one last&quot; decomposes there. The lesson is not a rule to memorise - it is a question to ask every time: <em>which choice makes the two sides independent?</em></p>
+<p>Add the two ends as fake cuts, sort, and it is matrix chain with a different cost term:</p>
+<pre><code>dp[i][j] = min(dp[i][k] + dp[k][j] for k in range(i + 1, j)) + pts[j] - pts[i]</code></pre>
+<h2>LeetCode 516 - Longest Palindromic Subsequence</h2>
+<p><strong>The task.</strong> Given a string, return the length of its longest subsequence that reads the same forwards and backwards. Characters may be skipped; the ones kept must keep their order.</p>
+<p><strong>Input / output.</strong> A string; return an integer length.</p>
+<p><strong>Example.</strong> <code>&#x27;character&#x27;</code> gives 5, for <code>&#x27;carac&#x27;</code>.</p>
+<p><strong>Constraints.</strong> Up to 1000 characters, lower-case letters. A million-cell <code>O(n^2)</code> table is fine; anything enumerating subsequences is not.</p>
+<p><a href="https://leetcode.com/problems/longest-palindromic-subsequence/">leetcode.com/problems/longest-palindromic-subsequence</a></p>
+<p>As an interval DP it is four lines: equal ends contribute 2 and shrink inwards, unequal ends drop one side or the other. But it also has a one-line solution that needs no new code - the longest palindromic subsequence of <code>s</code> is the longest <strong>common</strong> subsequence of <code>s</code> and <code>s</code> reversed, which is yesterday&#x27;s table. Both give 5 on <code>&#x27;character&#x27;</code>, and the interval version additionally hands back the string itself.</p>
+<h2>LeetCode 337 - House Robber III</h2>
+<p><strong>The task.</strong> The houses are arranged in a binary tree and each one holds some money. Two directly connected houses cannot both be robbed. Maximise what you take.</p>
+<p><strong>Input / output.</strong> The root of a binary tree of integers; return the maximum total.</p>
+<p><strong>Example.</strong> Root 3, left child 2 whose right child is 3, right child 3 whose right child is</p>
+<ol><li>The answer is 7: the two leaves 3 and 3, plus the 1 - never a parent together with its child.</li></ol>
+<p><strong>Constraints.</strong> Up to 10^4 nodes, values 0 to 10^4. Ten thousand nodes is far past Python&#x27;s default recursion limit of 1000 once the tree degenerates into a path, which is the trap the constraint quietly sets up.</p>
+<p><a href="https://leetcode.com/problems/house-robber-iii/">leetcode.com/problems/house-robber-iii</a></p>
+<p>The natural thing is for every node to report one number: the best its subtree can give. Write it and it returns 12 instead of 7, with no complaint.</p>
+<pre><code>def go(node):
+    if node is None:
+        return 0
+    below = go(node.left) + go(node.right)
+    return max(node.val + below, below)     # one number: not enough state</code></pre>
+<p>The parent needs to know something that single number does not carry: <em>was the child itself used?</em> Without it, and with positive values, <code>max</code> always prefers <code>node.val + below</code>, so every node is taken - parents and children together. 12 is just the sum of everything, wearing a DP costume.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2036%20-%20interval%20and%20tree%20dp/imgs/day36_4.png">
+<p>Two numbers per node make the states independent again:</p>
+<pre><code>robbed  = node.val + ls + rs           # take me: children must be skipped
+skipped = max(lr, ls) + max(rr, rs)    # skip me: children are free</code></pre>
+<p>It is the same lesson as Day 35&#x27;s <code>dp[i]</code> that must end at <code>i</code>: the state has to carry exactly the fact the next decision depends on. The same shape appears in LeetCode 124, maximum path sum, where a node <em>returns</em> its best single downward arm but <em>scores</em> the path that bends through it - what a node returns is not what a node scores - and in tree diameter, the unweighted version of that same pair.</p>
+<h2>Tree knapsack, and a sum that is not cubic</h2>
+<p>Picking courses where a course may only be taken together with its prerequisite arranges the items in a tree. <code>dp[v][t]</code> is the best value from <code>v</code>&#x27;s subtree taking exactly <code>t</code> items, and children are merged one at a time, each merge a tiny knapsack:</p>
+<pre><code>for t in range(min(size[v], budget), 0, -1):
+    for u in range(1, min(size[c], budget - t) + 1):
+        nd[t + u] = max(nd[t + u], dp[t] + cdp[u])</code></pre>
+<p>That double loop inside a recursion over <code>n</code> nodes looks cubic and is not. Those two <code>min(...)</code> bounds are not micro-optimisations: the work at a node is exactly <code>size(child) * size(merged so far)</code>, which counts the pairs of nodes whose lowest common ancestor is that node. Every pair in the tree has exactly one lowest common ancestor, so summed over the whole tree the total is <code>C(n, 2)</code> - 15 for six nodes, which the code counts and asserts rather than claims.</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2036%20-%20interval%20and%20tree%20dp/imgs/day36_5.png">
+<h2>The depth trap</h2>
+<p>Every tree DP is a post-order traversal, and a recursive post-order dies on a path-shaped tree of 60,000 nodes. This failure at least is loud - <code>RecursionError</code> - but it arrives in production, not on the sample input. Push the nodes onto a stack and you get parents before children; reverse that and you get children before parents, which is what the DP needs:</p>
+<pre><code>order, stack = [], [root]
+while stack:
+    v = stack.pop()
+    order.append(v)
+    stack.extend(children[v])
+for v in reversed(order):
+    total[v] = value[v] + sum(total[c] for c in children[v])</code></pre>
+<h2>Complexity</h2>
+<pre><code>Problem                                   Time          Space
+----------------------------------------  ------------  ------------
+Matrix chain                              O(n^3)        O(n^2)
+Burst balloons (LC 312)                   O(n^3)        O(n^2)
+Cut a stick (LC 1547)                     O(m^3)        O(m^2)
+Longest palindromic subsequence (LC 516)  O(n^2)        O(n^2)
+House robber III (LC 337)                 O(n)          O(height)
+Tree knapsack                             O(n  budget)  O(n  budget)</code></pre>
+<h2>Why this matters later</h2>
+<p>Splitting on a range rather than on the next element is how parsers work: the CYK algorithm is this exact triangle, and optimal binary search trees are matrix chain with probabilities. The tree version is even closer to home for anyone touching machine learning - a backward pass is a post-order traversal where each node reports a tuple to its parent, and the &quot;one number is not enough state&quot; bug is the same one you hit when a layer forgets to carry the piece of information the next layer&#x27;s gradient depends on. Query planners join relations in whatever order is cheapest, which is matrix chain with different arithmetic.</p>
+<p>Tomorrow the subproblem stops being an interval too, and starts being a <em>set</em> - the states become bitmasks, which is how the travelling salesman problem gets solved exactly for small <code>n</code>.</p>
+<p>All of today&#x27;s code, the notebook and an interactive walkthrough: <a href="https://github.com/KingRei/100DaysPython">100DaysPython</a></p>
+</body>
+</html>

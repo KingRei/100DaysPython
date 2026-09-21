@@ -130,46 +130,6 @@ nodes and 5 splits; sorted input, the worst case for a plain BST, is a non-event
 
 ## The LeetCode problems
 
-LC 110 (Balanced Binary Tree) asks whether a tree satisfies the AVL invariant. The naive answer
-calls a `height()` helper at every node and is `O(n²)`; the good answer makes one post-order
-recursion return **both** the height and the verdict, using `-1` as a failure sentinel that
-every level above simply forwards. One pass, `O(n)` time, `O(h)` stack - and that `O(h)` is
-itself the argument for caring about height, since a degenerate tree does not merely search
-slowly, it overflows the stack.
-
-LC 108 (Convert Sorted Array to Binary Search Tree) is the rebuild half: take the middle element
-as the root and recurse on the two halves, which differ in size by at most one, so the height is
-forced to `ceil(log2(n + 1))`.
-
-LC 1382 (Balance a Binary Search Tree) puts the two together - flatten with an in-order walk,
-which is sorted by definition, then rebuild with the LC 108 procedure. A chain of 63 nodes goes
-from height 62 to height 5 with the key set untouched. The cost is `O(n)` extra space for the
-array; when that is not available, the **Day-Stout-Warren** algorithm rotates the entire tree
-into a right-leaning vine and then back into balance in `O(1)` space, built out of the same
-rotation primitive from the top of this page.
-
-## The problems, stated in full
-
-Restated in my own words - what is being asked, what goes in and comes out, one worked
-example, and the constraints that actually change which algorithm is allowed.
-
-### LeetCode 108 - Convert Sorted Array to Binary Search Tree
-
-**The task.** Given an array sorted in ascending order, build a **height-balanced** binary
-search tree from it. Any valid answer is accepted.
-
-**Input / output.** Input is `nums`; output is the root of the tree.
-
-**Example.** `nums = [-10,-3,0,5,9]` → one valid answer is the tree rooted at `0` with left
-child `-3` (whose left child is `-10`) and right child `9` (whose left child is `5`).
-
-**Constraints.** `1 <= len(nums) <= 10^4`, values in `[-10^4, 10^4]`, strictly increasing.
-The recursive "take the middle element as the root, recurse on both halves" is the whole
-solution, and it is the cleanest possible demonstration that balance is a property you can
-*construct* rather than repair.
-
-[leetcode.com/problems/convert-sorted-array-to-binary-search-tree](https://leetcode.com/problems/convert-sorted-array-to-binary-search-tree/)
-
 ### LeetCode 110 - Balanced Binary Tree
 
 **The task.** Decide whether a binary tree is height-balanced, meaning that for **every**
@@ -205,6 +165,41 @@ perfectly good `O(n)` rebuild, and it is worth contrasting with what an AVL or r
 tree does instead: pay a little on *every* insert so this rebuild is never needed.
 
 [leetcode.com/problems/balance-a-binary-search-tree](https://leetcode.com/problems/balance-a-binary-search-tree/)
+
+### LeetCode 108 - Convert Sorted Array to Binary Search Tree
+
+**The task.** Given an array sorted in ascending order, build a **height-balanced** binary
+search tree from it. Any valid answer is accepted.
+
+**Input / output.** Input is `nums`; output is the root of the tree.
+
+**Example.** `nums = [-10,-3,0,5,9]` → one valid answer is the tree rooted at `0` with left
+child `-3` (whose left child is `-10`) and right child `9` (whose left child is `5`).
+
+**Constraints.** `1 <= len(nums) <= 10^4`, values in `[-10^4, 10^4]`, strictly increasing.
+The recursive "take the middle element as the root, recurse on both halves" is the whole
+solution, and it is the cleanest possible demonstration that balance is a property you can
+*construct* rather than repair.
+
+[leetcode.com/problems/convert-sorted-array-to-binary-search-tree](https://leetcode.com/problems/convert-sorted-array-to-binary-search-tree/)
+
+LC 110 (Balanced Binary Tree) asks whether a tree satisfies the AVL invariant. The naive answer
+calls a `height()` helper at every node and is `O(n²)`; the good answer makes one post-order
+recursion return **both** the height and the verdict, using `-1` as a failure sentinel that
+every level above simply forwards. One pass, `O(n)` time, `O(h)` stack - and that `O(h)` is
+itself the argument for caring about height, since a degenerate tree does not merely search
+slowly, it overflows the stack.
+
+LC 108 (Convert Sorted Array to Binary Search Tree) is the rebuild half: take the middle element
+as the root and recurse on the two halves, which differ in size by at most one, so the height is
+forced to `ceil(log2(n + 1))`.
+
+LC 1382 (Balance a Binary Search Tree) puts the two together - flatten with an in-order walk,
+which is sorted by definition, then rebuild with the LC 108 procedure. A chain of 63 nodes goes
+from height 62 to height 5 with the key set untouched. The cost is `O(n)` extra space for the
+array; when that is not available, the **Day-Stout-Warren** algorithm rotates the entire tree
+into a right-leaning vine and then back into balance in `O(1)` space, built out of the same
+rotation primitive from the top of this page.
 
 ## Complexity
 

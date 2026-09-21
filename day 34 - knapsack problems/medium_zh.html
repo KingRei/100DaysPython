@@ -105,21 +105,6 @@ tent  0 0 0 50 50 70 80 90 120 130 130</code></pre>
 <p>把剪刀收起來，同一條規則、同一組物品，答案變成 120。拿完 rope 和 pan 之後只剩 2 格容量，而 tent 要 6 格。DP 給的是 130。</p>
 <p>差距是 10，但重點不是差多少。重點是貪心不會告訴你它輸了。「每單位重量價值最高的先拿」聽起來像個理由，而它確實是 —— 對分數背包而言，那裡有證明。0/1 沒有證明，而「聽起來合理」不是證據。</p>
 <h2>同一列，換個運算子</h2>
-<p>把 <code>max</code> 換成 <code>or</code>，這張表就完全忘記價值，只剩下「哪些總和湊得出來」。LeetCode 416 問一個陣列能不能切成總和相等的兩堆，也就是「有沒有子集合總和剛好是 <code>sum/2</code>」—— 一個容量 <code>sum/2</code> 的 0/1 背包，一樣要倒著掃，否則同一個數字會被用第二次。<code>[1, 5, 11, 5]</code> 切得開；<code>[2, 2, 3, 5]</code> 總和是偶數，仍然切不開。</p>
-<p>而一整列布林值就是一個 bit vector，Python 的整數又要多長有多長：</p>
-<pre><code>def subset_sum_bits(nums, target):
-    bits = 1                       # bit 0 set: the empty subset sums to 0
-    for x in nums:
-        bits |= bits &lt;&lt; x          # offer x to every reachable sum at once
-    return (bits &gt;&gt; target) &amp; 1 == 1</code></pre>
-<p>位移讀的是舊值的快照，所以連「一定要倒著跑」這個顧慮都消失了。400 個數字、目標 9545 時，list 版約 190 ms，這個約 0.2 ms —— 大約一千倍，純粹來自把內層迴圈搬進 C 層的大整數運算。Target Sum、Last Stone Weight II、Ones and Zeroes、Perfect Squares 也都是同一列換個運算子。</p>
-<h2><code>O(n · cap)</code> 不是多項式</h2>
-<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2034%20-%20knapsack%20problems/imgs/day34_6.png">
-<p>這段常常被跳過。把所有重量和容量都乘以 10，答案還是 130，但表格從 44 格變成 404、4,004、40,004 —— 而<strong>輸入</strong>只從 15 bits 長到 30、47、64 bits。執行時間是對數字的「大小」成多項式，不是對數字的「長度」。這就是 pseudo-polynomial 的意思，也是 0/1 背包仍然是 NP-complete 的原因。它同時是一條實用規則：這張表適合小整數重量、小容量；浮點數或超大容量要換 branch and bound 或近似演算法。</p>
-<h2>這件事之後還會用到</h2>
-<p>二進位拆分跟 sparse table、jump pointer 的 binary lifting 是同一個把戲：把任何數量表示成 2 的次方之和，於是 <code>k</code> 的工作量變成 <code>log k</code>。bitset 那一列則會出現在任何「DP 狀態是一組布林值」的地方，也就是大部分的 bitmask DP。而「內層迴圈方向」這個反射動作 —— 去問一格是<strong>什麼時候</strong>被寫的，而不只是它現在裝什麼 —— 會在接下來的 DP 章節裡，一路守住所有滾動陣列的正確性。</p>
-<h2>附錄：LeetCode 題目完整題敘</h2>
-<p>以下用我自己的話重寫一遍：題目在問什麼、輸入輸出是什麼、一個算過的例子，以及那些真的會 改變「可以用哪種演算法」的限制。</p>
 <h3>LeetCode 416 - Partition Equal Subset Sum（分割等和子集）</h3>
 <p><strong>題目。</strong> 給一個正整數陣列，判斷能不能把它分成兩個總和相等的子集。每個元素都必須剛好落在其中 一邊。</p>
 <p><strong>輸入／輸出。</strong> 輸入 <code>nums</code>，輸出布林值。</p>
@@ -150,7 +135,18 @@ tent  0 0 0 50 50 70 80 90 120 130 130</code></pre>
 <p><strong>範例。</strong> <code>n = 12</code> → <code>3</code>（<code>4 + 4 + 4</code>）；<code>n = 13</code> → <code>2</code>（<code>4 + 9</code>）。</p>
 <p><strong>限制。</strong> <code>1 &lt;= n &lt;= 10^4</code>。它就是一個「硬幣是小於 <code>n</code> 的平方數」的完全背包，所以 <code>O(n * sqrt(n))</code> 直接掉出來。拉格朗日四平方和定理告訴我們答案永遠不超過 <code>4</code>，勒讓德三平方和定理 則精確指出什麼時候等於 <code>4</code> —— 於是存在一個 <code>O(sqrt(n))</code> 的數學解，剛好提醒我們 DP 是一把通用的 槌子，但不一定是最鋒利的工具。</p>
 <p><a href="https://leetcode.com/problems/perfect-squares/">leetcode.com/problems/perfect-squares</a></p>
-<p>明天：最長遞增子序列與最長公共子序列，表格會從一列變回一整張格子。</p>
-<p>今天的完整程式碼、notebook、圖檔與互動式演示：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2034%20-%20knapsack%20problems">100DaysPython on GitHub</a></p>
+<p>把 <code>max</code> 換成 <code>or</code>，這張表就完全忘記價值，只剩下「哪些總和湊得出來」。LeetCode 416 問一個陣列能不能切成總和相等的兩堆，也就是「有沒有子集合總和剛好是 <code>sum/2</code>」—— 一個容量 <code>sum/2</code> 的 0/1 背包，一樣要倒著掃，否則同一個數字會被用第二次。<code>[1, 5, 11, 5]</code> 切得開；<code>[2, 2, 3, 5]</code> 總和是偶數，仍然切不開。</p>
+<p>而一整列布林值就是一個 bit vector，Python 的整數又要多長有多長：</p>
+<pre><code>def subset_sum_bits(nums, target):
+    bits = 1                       # bit 0 set: the empty subset sums to 0
+    for x in nums:
+        bits |= bits &lt;&lt; x          # offer x to every reachable sum at once
+    return (bits &gt;&gt; target) &amp; 1 == 1</code></pre>
+<p>位移讀的是舊值的快照，所以連「一定要倒著跑」這個顧慮都消失了。400 個數字、目標 9545 時，list 版約 190 ms，這個約 0.2 ms —— 大約一千倍，純粹來自把內層迴圈搬進 C 層的大整數運算。Target Sum、Last Stone Weight II、Ones and Zeroes、Perfect Squares 也都是同一列換個運算子。</p>
+<h2><code>O(n · cap)</code> 不是多項式</h2>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2034%20-%20knapsack%20problems/imgs/day34_6.png">
+<p>這段常常被跳過。把所有重量和容量都乘以 10，答案還是 130，但表格從 44 格變成 404、4,004、40,004 —— 而<strong>輸入</strong>只從 15 bits 長到 30、47、64 bits。執行時間是對數字的「大小」成多項式，不是對數字的「長度」。這就是 pseudo-polynomial 的意思，也是 0/1 背包仍然是 NP-complete 的原因。它同時是一條實用規則：這張表適合小整數重量、小容量；浮點數或超大容量要換 branch and bound 或近似演算法。</p>
+<h2>這件事之後還會用到</h2>
+<p>二進位拆分跟 sparse table、jump pointer 的 binary lifting 是同一個把戲：把任何數量表示成 2 的次方之和，於是 <code>k</code> 的工作量變成 <code>log k</code>。bitset 那一列則會出現在任何「DP 狀態是一組布林值」的地方，也就是大部分的 bitmask DP。而「內層迴圈方向」這個反射動作 —— 去問一格是<strong>什麼時候</strong>被寫的，而不只是它現在裝什麼 —— 會在接下來的 DP 章節裡，一路守住所有滾動陣列的正確性。</p>
 </body>
 </html>

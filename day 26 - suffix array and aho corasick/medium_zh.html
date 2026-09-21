@@ -113,6 +113,24 @@ if len(self.buf) &gt; hold:
 <p>狀態拼出的正是「尾巴目前配上的、任一 pattern 的最長前綴」，所以它的深度就是 hold-back，k 個 stop 字串每個字元的成本和一個一樣。餵進 <code>[&quot;The answer&quot;, &quot; is 42.&lt;&quot;, &quot;/&quot;, &quot;s&gt; and more&quot;]</code>，它送出 <code>The answer is 42.</code>，中間先扣一個字元、再扣兩個，最後在 <code>&lt;/s&gt;</code> 乾淨切斷。</p>
 <p>還有誠實的部分：<strong>sglang 沒有這樣做，而它是對的</strong>。它把要重驗的尾巴裁到 <code>stop_str_max_len + 1</code> 個字元，然後每個 stop 字串各做一次普通子字串搜尋，每步 <code>O(k · L²)</code> — 兩個 stop 字串大約 162 次字元比較，跟一次 forward pass 相比根本是雜訊。只要你能證明那個上界，<strong>限制輸入</strong>本來就是「改進演算法」以外一個完全合理的工程選擇。Aho-Corasick 真正划算的是 k 很大的另一端：PII 過濾、guardrail、上千條的禁詞清單，那時候「每條掃一遍」就不再免費了。</p>
 <h2>LeetCode</h2>
+<h3>LeetCode 1032 - Stream of Characters（字元流）</h3>
+<p><strong>題目。</strong> 做一個 <code>StreamChecker</code>，建構時給一組 <code>words</code>。之後字元會透過 <code>query(letter)</code> 一個一個 進來，每次呼叫都要回答：目前收到的整串字元裡，<strong>有沒有某個後綴</strong>剛好等於某個 word。</p>
+<p><strong>輸入／輸出。</strong> 建構子吃 <code>words</code>，每次 <code>query</code> 回傳布林值。</p>
+<p><strong>範例。</strong> <code>words = [&quot;cd&quot;,&quot;f&quot;,&quot;kl&quot;]</code>，依序 query <code>a</code>、<code>b</code>、<code>c</code>、<code>d</code>、<code>e</code>、<code>f</code>，回傳 <code>False, False, False, True, False, True</code> —— 在 <code>d</code> 是 <code>True</code> 因為串流結尾是 <code>&quot;cd&quot;</code>，在 <code>f</code> 是 <code>True</code> 因為結尾是 <code>&quot;f&quot;</code>。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(words) &lt;= 2000</code>，每個 word 長度 <code>1..200</code>，最多 <code>4 * 10^4</code> 次查詢。因為每次 只多一個字元，答案必須*增量*維護 —— 那就是 Aho-Corasick 的自動機狀態，或是一棵把單字反過來存的 trie。</p>
+<p><a href="https://leetcode.com/problems/stream-of-characters/">leetcode.com/problems/stream-of-characters</a></p>
+<h3>LeetCode 1044 - Longest Duplicate Substring（最長重複子字串）</h3>
+<p><strong>題目。</strong> 找出在 <code>s</code> 中<strong>至少出現兩次</strong>的最長子字串；兩次出現可以重疊。回傳其中任何一個， 若沒有任何子字串重複就回傳空字串。</p>
+<p><strong>輸入／輸出。</strong> 輸入一個字串，輸出一個字串。</p>
+<p><strong>範例。</strong> <code>s = &quot;banana&quot;</code> → <code>&quot;ana&quot;</code>（出現在索引 <code>1</code> 與 <code>3</code>，而且是重疊的）；<code>s = &quot;abcd&quot;</code> → <code>&quot;&quot;</code>。</p>
+<p><strong>限制。</strong> <code>2 &lt;= len(s) &lt;= 3 * 10^4</code>，小寫英文字母。「有沒有長度 <code>L</code> 的重複子字串」對 <code>L</code> 是單調 的，所以標準解法是對 <code>L</code> 二分搜尋、每次用 Rabin-Karp rolling hash 回答；或者完全不用隨機性， 直接從 suffix array 加上它的 LCP 陣列把答案讀出來。</p>
+<p><a href="https://leetcode.com/problems/longest-duplicate-substring/">leetcode.com/problems/longest-duplicate-substring</a></p>
+<h3>LeetCode 616 - Add Bold Tag in String（給字串加上粗體標籤）</h3>
+<p><strong>題目。</strong> 給一個字串 <code>s</code> 和一組 <code>words</code>，把 <code>s</code> 裡面所有出現在 <code>words</code> 中的子字串用 <code>&lt;b&gt;</code> 與 <code>&lt;/b&gt;</code> 包起來。重疊或相鄰的粗體區段要合併成同一對標籤，而且標籤數量要最少。</p>
+<p><strong>輸入／輸出。</strong> 輸入 <code>s</code> 與 <code>words</code>，輸出加上標籤後的字串。</p>
+<p><strong>範例。</strong> <code>s = &quot;abcxyz123&quot;</code>、<code>words = [&quot;abc&quot;,&quot;123&quot;]</code> → <code>&quot;&lt;b&gt;abc&lt;/b&gt;xyz&lt;b&gt;123&lt;/b&gt;&quot;</code>。 若 <code>s = &quot;aaabbb&quot;</code>、<code>words = [&quot;aa&quot;,&quot;b&quot;]</code>，命中的區間重疊又相連，答案是 <code>&quot;&lt;b&gt;aaabbb&lt;/b&gt;&quot;</code>。</p>
+<p><strong>限制。</strong> <code>1 &lt;= len(s) &lt;= 1000</code>、<code>0 &lt;= len(words) &lt;= 100</code>，每個 word 最長 <code>1000</code> 個字元，內容是 小寫字母與數字。（同一題在 LeetCode 758《Bold Words in String》又出現一次。）用一次 Aho-Corasick 掃出所有命中位置、再做區間合併，就是最乾淨的寫法。</p>
+<p><a href="https://leetcode.com/problems/add-bold-tag-in-string/">leetcode.com/problems/add-bold-tag-in-string</a></p>
 <p><strong>LC 1032 Stream of Characters</strong> 就是把 buffer 拿掉的自動機。字母永遠一個一個來，物件只保存一個整數，走一步、回傳 <code>out[state]</code> 是否非空。那個看起來很自然的解法 — 反轉字典建 trie，再配一個越長越長的 buffer 每次重走 — 存的是狀態早就摘要好的歷史。</p>
 <p><strong>LC 1044 Longest Duplicate Substring</strong> 是刻意重跑昨天的題目。day 25 的解法是對長度二分搜尋加 rolling hash：那個解法<strong>原則上可能給錯答案</strong>，全靠最後的 verify 步驟撐著。今天它就是 lcp 最大的那一格 — 精確、沒有雜湊、沒有機率，因為排序已經把每個重複和它的雙胞胎排在一起了。代價是 <code>O(n log n)</code> 的前處理；換來的是精確，以及同一份索引可以繼續回答別的問題。</p>
 <h2>複雜度</h2>
@@ -132,26 +150,5 @@ k 次獨立的 KMP                           O(k * n + L)         O(L)
 <p>這兩個結構之後都是以<strong>基礎設施</strong>的身分出現，而不是以演算法的身分。suffix array 是 MinHash、SimHash 那類近似重複偵測的<strong>精確版</strong>，而語料去重是少數幾個對模型品質有可量測影響的前處理步驟。Aho-Corasick 則是 serving 端每一種多模式過濾的形狀：禁詞、PII 遮蔽、tool-call 分隔符、結構化輸出的守門 — 只要有一份會不斷長大的字典要拿去檢查串流，而每個 token 的預算不會跟著長大。</p>
 <p>明天：兩個字串不相等、但很<strong>接近</strong>的時候怎麼辦 — edit distance、Jaccard 與 MinHash。</p>
 <p>程式碼、notebook 與互動式演示：</p>
-<h2>附錄：LeetCode 題目完整題敘</h2>
-<p>以下用我自己的話重寫一遍：題目在問什麼、輸入輸出是什麼、一個算過的例子，以及那些真的會 改變「可以用哪種演算法」的限制。</p>
-<h3>LeetCode 616 - Add Bold Tag in String（給字串加上粗體標籤）</h3>
-<p><strong>題目。</strong> 給一個字串 <code>s</code> 和一組 <code>words</code>，把 <code>s</code> 裡面所有出現在 <code>words</code> 中的子字串用 <code>&lt;b&gt;</code> 與 <code>&lt;/b&gt;</code> 包起來。重疊或相鄰的粗體區段要合併成同一對標籤，而且標籤數量要最少。</p>
-<p><strong>輸入／輸出。</strong> 輸入 <code>s</code> 與 <code>words</code>，輸出加上標籤後的字串。</p>
-<p><strong>範例。</strong> <code>s = &quot;abcxyz123&quot;</code>、<code>words = [&quot;abc&quot;,&quot;123&quot;]</code> → <code>&quot;&lt;b&gt;abc&lt;/b&gt;xyz&lt;b&gt;123&lt;/b&gt;&quot;</code>。 若 <code>s = &quot;aaabbb&quot;</code>、<code>words = [&quot;aa&quot;,&quot;b&quot;]</code>，命中的區間重疊又相連，答案是 <code>&quot;&lt;b&gt;aaabbb&lt;/b&gt;&quot;</code>。</p>
-<p><strong>限制。</strong> <code>1 &lt;= len(s) &lt;= 1000</code>、<code>0 &lt;= len(words) &lt;= 100</code>，每個 word 最長 <code>1000</code> 個字元，內容是 小寫字母與數字。（同一題在 LeetCode 758《Bold Words in String》又出現一次。）用一次 Aho-Corasick 掃出所有命中位置、再做區間合併，就是最乾淨的寫法。</p>
-<p><a href="https://leetcode.com/problems/add-bold-tag-in-string/">leetcode.com/problems/add-bold-tag-in-string</a></p>
-<h3>LeetCode 1032 - Stream of Characters（字元流）</h3>
-<p><strong>題目。</strong> 做一個 <code>StreamChecker</code>，建構時給一組 <code>words</code>。之後字元會透過 <code>query(letter)</code> 一個一個 進來，每次呼叫都要回答：目前收到的整串字元裡，<strong>有沒有某個後綴</strong>剛好等於某個 word。</p>
-<p><strong>輸入／輸出。</strong> 建構子吃 <code>words</code>，每次 <code>query</code> 回傳布林值。</p>
-<p><strong>範例。</strong> <code>words = [&quot;cd&quot;,&quot;f&quot;,&quot;kl&quot;]</code>，依序 query <code>a</code>、<code>b</code>、<code>c</code>、<code>d</code>、<code>e</code>、<code>f</code>，回傳 <code>False, False, False, True, False, True</code> —— 在 <code>d</code> 是 <code>True</code> 因為串流結尾是 <code>&quot;cd&quot;</code>，在 <code>f</code> 是 <code>True</code> 因為結尾是 <code>&quot;f&quot;</code>。</p>
-<p><strong>限制。</strong> <code>1 &lt;= len(words) &lt;= 2000</code>，每個 word 長度 <code>1..200</code>，最多 <code>4 * 10^4</code> 次查詢。因為每次 只多一個字元，答案必須*增量*維護 —— 那就是 Aho-Corasick 的自動機狀態，或是一棵把單字反過來存的 trie。</p>
-<p><a href="https://leetcode.com/problems/stream-of-characters/">leetcode.com/problems/stream-of-characters</a></p>
-<h3>LeetCode 1044 - Longest Duplicate Substring（最長重複子字串）</h3>
-<p><strong>題目。</strong> 找出在 <code>s</code> 中<strong>至少出現兩次</strong>的最長子字串；兩次出現可以重疊。回傳其中任何一個， 若沒有任何子字串重複就回傳空字串。</p>
-<p><strong>輸入／輸出。</strong> 輸入一個字串，輸出一個字串。</p>
-<p><strong>範例。</strong> <code>s = &quot;banana&quot;</code> → <code>&quot;ana&quot;</code>（出現在索引 <code>1</code> 與 <code>3</code>，而且是重疊的）；<code>s = &quot;abcd&quot;</code> → <code>&quot;&quot;</code>。</p>
-<p><strong>限制。</strong> <code>2 &lt;= len(s) &lt;= 3 * 10^4</code>，小寫英文字母。「有沒有長度 <code>L</code> 的重複子字串」對 <code>L</code> 是單調 的，所以標準解法是對 <code>L</code> 二分搜尋、每次用 Rabin-Karp rolling hash 回答；或者完全不用隨機性， 直接從 suffix array 加上它的 LCP 陣列把答案讀出來。</p>
-<p><a href="https://leetcode.com/problems/longest-duplicate-substring/">leetcode.com/problems/longest-duplicate-substring</a></p>
-<p><a href="https://github.com/KingRei/100DaysPython/tree/master/day%2026%20-%20suffix%20array%20and%20aho%20corasick">day 26 on GitHub</a></p>
 </body>
 </html>

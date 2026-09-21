@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 36 — 區間 DP 與樹形 DP：選分割點，而不是選下一個物品</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 36 — 區間 DP 與樹形 DP：選分割點，而不是選下一個物品</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2036%20-%20interval%20and%20tree%20dp">day 36 on GitHub</a></p>
+<p><em>100 Days of Python - day 36</em></p>
+<p>先看一段會回傳錯誤答案、但不會丟出任何例外的程式碼。而且錯的不是遞迴式，是兩個 <code>for</code> 迴圈的順序。</p>
+<pre><code>for i in range(n):
+    for j in range(i + 1, n):
+        for k in range(i, j):
+            cost = dp[i][k] + dp[k + 1][j] + dims[i] * dims[k + 1] * dims[j + 1]
+            dp[i][j] = min(dp[i][j], cost)</code></pre>
+<p>這是矩陣鏈乘（matrix chain multiplication），用的是大家寫二維表格最自然的那種雙層迴圈。它在一組真正最小值是 26,000 的輸入上回傳 20,000。不是近似、不是誤差——20,000 這個數字根本不對應任何一種合法的加括號方式。</p>
+<h2>今天在系列裡的位置</h2>
+<p>Day 33 問的是「第 <code>i</code> 個元素要怎麼處理」，Day 34 問「這個物品拿不拿」，Day 35 問「子序列是不是在這裡結束」。這三天的子問題都是<strong>前綴</strong>，都是往前走。今天子問題不再是前綴了：區間 DP 問的是<strong>這一段要從哪裡切開</strong>，樹形 DP 問的是<strong>這棵子樹要回報什麼給父節點</strong>。兩個遞迴式都只有兩三行，真正容易錯的是「表格的填寫順序」和「每個子問題要回報幾個數字」——而且兩種錯都是無聲的。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2036%20-%20interval%20and%20tree%20dp/imgs/day36_1.png">
+<h2>四個矩陣，最便宜的乘法順序</h2>
+<p>矩陣乘法有結合律，<code>(AB)C</code> 和 <code>A(BC)</code> 算出來是同一個矩陣，但價錢差很多：<code>p x q</code> 乘 <code>q x r</code> 要做 <code>p*q*r</code> 次純量乘法。形狀是 <code>40x20</code>、<code>20x30</code>、<code>30x10</code>、<code>10x30</code> 的時候，<code>((A(BC))D)</code> 要 26,000 次，最糟的那種括號法要 69,000 次——一樣的答案，2.65 倍的帳單。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2036%20-%20interval%20and%20tree%20dp/imgs/day36_2.png">
+<p>把所有括號法列出來是沒希望的，數量是 Catalan 數。所以 <code>dp[i][j]</code>（把第 <code>i</code> 到第 <code>j</code> 個矩陣乘完的最小成本）只問一個問題：<strong>最上層那一次乘法</strong>切在哪裡？因為 <code>i..j</code> 的乘積在最頂端一定是兩個東西相乘：<code>i..k</code> 和 <code>k+1..j</code>。</p>
+<pre><code>dp[i][j] = min over k of  dp[i][k] + dp[k + 1][j] + rows(i) * cols(k) * cols(j)</code></pre>
+<p>兩個子區間都嚴格比 <code>i..j</code> 短。這不是一句漂亮話，它就是填表順序：</p>
+<pre><code>for length in range(2, n + 1):            # 外層迴圈跑的是「長度」
+    for i in range(n - length + 1):
+        j = i + length - 1
+        dp[i][j] = float(&#x27;inf&#x27;)
+        for k in range(i, j):
+            cost = dp[i][k] + dp[k + 1][j] + dims[i] * dims[k + 1] * dims[j + 1]
+            if cost &lt; dp[i][j]:
+                dp[i][j] = cost
+                split[i][j] = k</code></pre>
+<p>回頭看文章開頭那段壞掉的程式。<code>dp[i][j]</code> 會讀 <code>dp[k+1][j]</code>，而 <code>k+1 &gt; i</code>，也就是讀了<strong>下面那一列</strong>——<code>i</code> 先跑、<code>j</code> 後跑的迴圈還沒走到那裡。那些格子還是初始值 <code>0</code>，於是有幾段乘法被當成免費，最小值算出來比真正的最小值還小，而 Python 一聲不吭。改成按區間長度填就不可能發生，因為這時候「比較短」和「已經算好」是同一句話。</p>
+<p><code>split[i][j]</code> 是順手得到的副產品：沿著它遞迴回去，就能還原出 <code>((A(BC))D)</code> 這個括號法本身，而不只是它的價錢。</p>
+<h2>LeetCode 312 - Burst Balloons（戳氣球）</h2>
+<p><strong>題意。</strong> 一排氣球，每顆上面有一個數字。你一次戳破一顆，戳破時得到的分數是它自己的數字乘上<strong>當下</strong>左右兩個鄰居的數字；戳掉之後，它的左右鄰居就變成相鄰。超出邊界的鄰居當作 1。把全部戳完，求最大總分。</p>
+<p><strong>輸入／輸出。</strong> 一個整數陣列；回傳最大分數。</p>
+<p><strong>範例。</strong> <code>[3, 1, 5, 8]</code> 的答案是 167：先戳 1 得 <code>3*1*5 = 15</code>，再戳 5 得 <code>3*5*8 = 120</code>，再戳 3 得 <code>1*3*8 = 24</code>，最後戳 8 得 <code>1*8*1 = 8</code>。</p>
+<p><strong>限制。</strong> 最多 300 顆氣球，數值不超過 100。300 這個數字直接封死「枚舉所有戳法」——<code>4!</code> 是 24，<code>300!</code> 不是你能跑迴圈的東西——同時它也正好在說：預期解是 <code>O(n^3)</code> 的區間 DP。</p>
+<p><a href="https://leetcode.com/problems/burst-balloons/">leetcode.com/problems/burst-balloons</a></p>
+<p>先在兩端各補一顆 1，邊界就不用特別處理。接著最直覺的想法是：在這個區間裡選一顆<strong>最先</strong>戳，拿到它的分數，然後兩邊各自遞迴。試試看：</p>
+<pre><code>return max(a[k - 1] * a[k] * a[k + 1] + go(i, k - 1) + go(k + 1, j)
+           for k in range(i, j + 1))</code></pre>
+<p>它回傳 98。不是例外，是 98。原因是兩半根本不獨立：<code>k</code> 一戳掉，左半的右鄰居就變成右半的某一顆氣球，左半之後能拿多少分，取決於右半做了什麼。這個遞迴式在問一些<strong>不存在</strong>的子問題。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2036%20-%20interval%20and%20tree%20dp/imgs/day36_3.png">
+<p>把問題反過來問：在開區間 <code>(i, j)</code> 裡，哪一顆是<strong>最後</strong>戳的？一切就對位了。如果 <code>k</code> 最後戳，那麼輪到它的時候，<code>i</code> 和 <code>j</code> 之間的東西全部已經不見了，它的左右鄰居剛好就是 <code>i</code> 和 <code>j</code>——兩面不會動的牆，不管兩側裡面發生過什麼事。</p>
+<pre><code>for k in range(i + 1, j):
+    cand = dp[i][k] + dp[k][j] + a[i] * a[k] * a[j]</code></pre>
+<p>167，和把 24 種順序全部暴力跑完的結果一致；choice 表還能重播真正的戳法順序 <code>[1, 5, 3, 8]</code>。</p>
+<h2>LeetCode 1547 - Minimum Cost to Cut a Stick（切木棍的最小成本）</h2>
+<p><strong>題意。</strong> 一根長度 <code>n</code> 的木棍，必須在給定的一組位置上各切一刀。切一段木頭的成本是<strong>那一段當下的長度</strong>，而切的順序可以自己決定。求最小總成本。</p>
+<p><strong>輸入／輸出。</strong> 木棍長度 <code>n</code> 與切點位置陣列；回傳最小總成本。</p>
+<p><strong>範例。</strong> <code>n = 7</code>、切點 <code>[1, 3, 4, 5]</code>：照題目給的順序切要 20，最好的順序只要 16。</p>
+<p><strong>限制。</strong> <code>n</code> 最大到 10^6，但切點最多 100 個。這個落差就是全部的提示：表格要用<strong>切點</strong>當索引（<code>m &lt;= 102</code>，<code>O(m^3)</code> 根本不痛），絕對不能用木棍長度。</p>
+<p><a href="https://leetcode.com/problems/minimum-cost-to-cut-a-stick/">leetcode.com/problems/minimum-cost-to-cut-a-stick</a></p>
+<p>這題是氣球的鏡像，值得停下來想一下。這裡可以分離的是<strong>第一刀</strong>：不管別處發生什麼事，這一刀的成本就是當下那一段的完整長度，而且切完之後兩段從此互不相干。所以「先做哪一個」在這題會分解，在氣球那題不會。真正要帶走的不是一條要背的規則，而是一個每次都要問的問題：<strong>哪一個選擇會讓兩邊變成獨立的？</strong></p>
+<p>把兩端當成假的切點加進去、排序，它就是換了成本公式的矩陣鏈乘：</p>
+<pre><code>dp[i][j] = min(dp[i][k] + dp[k][j] for k in range(i + 1, j)) + pts[j] - pts[i]</code></pre>
+<h2>LeetCode 516 - Longest Palindromic Subsequence（最長回文子序列）</h2>
+<p><strong>題意。</strong> 給一個字串，求它最長的、正著讀和反著讀一樣的<strong>子序列</strong>長度。字元可以跳過，但留下來的必須保持原本的順序。</p>
+<p><strong>輸入／輸出。</strong> 一個字串；回傳整數長度。</p>
+<p><strong>範例。</strong> <code>&#x27;character&#x27;</code> 的答案是 5，對應 <code>&#x27;carac&#x27;</code>。</p>
+<p><strong>限制。</strong> 長度最多 1000，只有小寫字母。一百萬格的 <code>O(n^2)</code> 表沒問題，但任何列舉子序列的做法都不行。</p>
+<p><a href="https://leetcode.com/problems/longest-palindromic-subsequence/">leetcode.com/problems/longest-palindromic-subsequence</a></p>
+<p>當成區間 DP 只要四行：兩端相同就貢獻 2 然後往內縮，不同就丟掉其中一端。但它還有一個完全不用寫新程式的解法——<code>s</code> 的最長回文子序列，就是 <code>s</code> 和「<code>s</code> 反過來」的最長<strong>共同</strong>子序列，也就是昨天那張表。兩種做法在 <code>&#x27;character&#x27;</code> 上都是 5，而區間版還能順便把字串本身還原出來。</p>
+<h2>LeetCode 337 - House Robber III（打家劫舍 III）</h2>
+<p><strong>題意。</strong> 房子排成一棵二元樹，每間裡有一筆錢。直接相連的兩間房子不能同時偷。求能偷到的最大金額。</p>
+<p><strong>輸入／輸出。</strong> 二元樹的根節點；回傳最大總額。</p>
+<p><strong>範例。</strong> 根是 3，左子是 2（它的右子是 3），右子是 3（它的右子是 1）。答案是 7：底下的 3 和 3，加上那個 1——不會出現父子同時被偷。</p>
+<p><strong>限制。</strong> 最多 10^4 個節點，值介於 0 到 10^4。一萬個節點在樹退化成一條鏈的時候，遠遠超過 Python 預設的遞迴上限 1000——這是限制條件悄悄埋下的陷阱。</p>
+<p><a href="https://leetcode.com/problems/house-robber-iii/">leetcode.com/problems/house-robber-iii</a></p>
+<p>最自然的寫法是每個節點回報一個數字：「我這棵子樹最多能拿多少」。寫出來會回傳 12 而不是 7，而且不會抱怨。</p>
+<pre><code>def go(node):
+    if node is None:
+        return 0
+    below = go(node.left) + go(node.right)
+    return max(node.val + below, below)     # 一個數字：狀態不夠</code></pre>
+<p>父節點需要知道一件那個數字沒帶上來的事：<strong>子節點自己有沒有被用掉？</strong> 少了這個資訊，加上值都是正的，<code>max</code> 永遠偏好 <code>node.val + below</code>，於是每個點都被拿，父子一起拿。12 其實就是「全部加起來」，只是穿了一件 DP 的外衣。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2036%20-%20interval%20and%20tree%20dp/imgs/day36_4.png">
+<p>每個節點回報<strong>一對</strong>數字，狀態就又獨立了：</p>
+<pre><code>robbed  = node.val + ls + rs           # 拿我：小孩必須不拿
+skipped = max(lr, ls) + max(rr, rs)    # 不拿我：小孩自由</code></pre>
+<p>這和 Day 35 那句「<code>dp[i]</code> 必須是以 <code>i</code> 結尾」是同一課：狀態要剛好帶著下一個決策所依賴的那個事實。同樣的形狀也出現在 LeetCode 124 最大路徑和——節點<strong>回報</strong>的是往下最好的那一條手臂，節點<strong>計分</strong>的卻是在它這裡轉彎的那條路徑，回報的東西不等於計分的東西——以及樹的直徑，那是同一對數字的無權重版本。</p>
+<h2>樹上背包，以及一個看起來是立方的總和</h2>
+<p>選課問題：要選一門課就得連它的先修課一起選，於是物品排成一棵樹。<code>dp[v][t]</code> 是 <code>v</code> 的子樹裡剛好選 <code>t</code> 門的最大價值，小孩一個一個合併進來，每次合併都是一個小背包：</p>
+<pre><code>for t in range(min(size[v], budget), 0, -1):
+    for u in range(1, min(size[c], budget - t) + 1):
+        nd[t + u] = max(nd[t + u], dp[t] + cdp[u])</code></pre>
+<p>這個雙層迴圈包在一個跑遍 <code>n</code> 個節點的遞迴裡，看起來是立方，其實不是。那兩個 <code>min(...)</code> 不是微調：一個節點上的工作量剛好是 <code>size(小孩) * size(已合併的部分)</code>，而這正是「最低共同祖先（LCA）是這個節點」的節點配對數量。樹上每一對節點只有唯一一個 LCA，所以全部加起來剛好是 <code>C(n, 2)</code>——六個節點就是 15，而程式是真的把它數出來並 assert，不是嘴巴講講。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2036%20-%20interval%20and%20tree%20dp/imgs/day36_5.png">
+<h2>深度陷阱</h2>
+<p>每個樹形 DP 都是一次後序走訪，而遞迴版的後序走訪在一棵 60,000 個節點的鏈狀樹上會直接死掉。這個失敗至少是大聲的——<code>RecursionError</code>——但它通常在上線之後才出現，不會在範例輸入上出現。把節點推進 stack，得到的是「父在子前」的順序；反過來讀，就是「子在父前」，剛好是 DP 要的：</p>
+<pre><code>order, stack = [], [root]
+while stack:
+    v = stack.pop()
+    order.append(v)
+    stack.extend(children[v])
+for v in reversed(order):
+    total[v] = value[v] + sum(total[c] for c in children[v])</code></pre>
+<h2>複雜度</h2>
+<pre><code>問題                      時間          空間
+------------------------  ------------  ------------
+矩陣鏈乘                  O(n^3)        O(n^2)
+戳氣球（LC 312）          O(n^3)        O(n^2)
+切木棍（LC 1547）         O(m^3)        O(m^2)
+最長回文子序列（LC 516）  O(n^2)        O(n^2)
+打家劫舍 III（LC 337）    O(n)          O(height)
+樹上背包                  O(n  budget)  O(n  budget)</code></pre>
+<h2>這些東西之後會用在哪裡</h2>
+<p>「切一段」而不是「選下一個」，正是剖析器（parser）的運作方式：CYK 演算法就是今天這個三角形，最佳二元搜尋樹則是把機率帶進來的矩陣鏈乘。樹的那一半對碰機器學習的人更近：一次 backward pass 就是一次後序走訪，每個節點往上回報一個 tuple；而「一個數字狀態不夠」這個錯，和某一層忘記把下一層梯度所依賴的那個量傳上去，是同一個錯。資料庫的查詢規劃器決定 join 順序，也是換了算術的矩陣鏈乘。</p>
+<p>明天子問題連區間都不是了，而是一個<strong>集合</strong>——狀態變成 bitmask，這也是小規模旅行推銷員問題（TSP）能被精確解出來的原因。</p>
+<p>今天的完整程式碼、notebook 與互動演示都在： <a href="https://github.com/KingRei/100DaysPython">100DaysPython</a></p>
+</body>
+</html>

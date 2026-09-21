@@ -164,46 +164,6 @@ proof and the 0/1 version does not, and that is the whole difference between the
 
 ## Same row, different operator
 
-`or` instead of `max` turns the table into subset sum: forget the values and ask only which
-totals are reachable. LeetCode 416 asks whether an array splits into two piles of equal sum,
-which is the question "is there a subset summing to `sum/2`" - a 0/1 knapsack with capacity
-`sum/2`, still scanning downwards so no number is used twice. `[1, 5, 11, 5]` splits;
-`[2, 2, 3, 5]` has an even total and still does not.
-
-And a boolean row is a bit vector, so Python's arbitrary-precision integers can hold the whole
-thing:
-
-```python
-def subset_sum_bits(nums, target):
-    bits = 1                       # bit 0 set: the empty subset sums to 0
-    for x in nums:
-        bits |= bits << x          # one shift offers x to every reachable sum at once
-    return (bits >> target) & 1 == 1
-```
-
-The shift reads a snapshot of the old value, so the "must run downwards" worry disappears as
-well. On 400 numbers with target 9545 the list version takes about 190 ms and this takes about
-0.2 ms - roughly a thousandfold, from moving the inner loop into the C-level big-integer
-routines. The same trick solves 494, 1049, 474 and 279, which are all the same row with a
-different operator.
-
-## Pseudo-polynomial: what "efficient" is hiding
-
-![img](https://github.com/KingRei/100DaysPython/blob/master/day%2034%20-%20knapsack%20problems/imgs/day34_6.png?raw=true)
-
-`O(n · cap)` looks polynomial and is not. Multiply every weight and the capacity by 10 and the
-answer is unchanged at 130, but the table grows from 44 cells to 404, then 4,004, then 40,004 -
-while the *input* grows from 15 bits to 30, 47 and 64. The runtime is polynomial in the
-magnitude of the numbers, not in their length, which is why 0/1 knapsack is NP-complete and
-this table is not a counterexample. It also tells you exactly when to reach for it: small
-capacities, small integer weights. Floating-point or astronomically large capacities need
-branch and bound or an approximation scheme instead.
-
-## The problems, stated in full
-
-Restated in my own words - what is being asked, what goes in and comes out, one worked
-example, and the constraints that actually change which algorithm is allowed.
-
 ### LeetCode 416 - Partition Equal Subset Sum
 
 **The task.** Given an array of positive integers, decide whether it can be split into two
@@ -294,6 +254,41 @@ it is `4`, which gives an `O(sqrt(n))` mathematical answer - a nice reminder tha
 general hammer, not always the sharpest tool.
 
 [leetcode.com/problems/perfect-squares](https://leetcode.com/problems/perfect-squares/)
+
+`or` instead of `max` turns the table into subset sum: forget the values and ask only which
+totals are reachable. LeetCode 416 asks whether an array splits into two piles of equal sum,
+which is the question "is there a subset summing to `sum/2`" - a 0/1 knapsack with capacity
+`sum/2`, still scanning downwards so no number is used twice. `[1, 5, 11, 5]` splits;
+`[2, 2, 3, 5]` has an even total and still does not.
+
+And a boolean row is a bit vector, so Python's arbitrary-precision integers can hold the whole
+thing:
+
+```python
+def subset_sum_bits(nums, target):
+    bits = 1                       # bit 0 set: the empty subset sums to 0
+    for x in nums:
+        bits |= bits << x          # one shift offers x to every reachable sum at once
+    return (bits >> target) & 1 == 1
+```
+
+The shift reads a snapshot of the old value, so the "must run downwards" worry disappears as
+well. On 400 numbers with target 9545 the list version takes about 190 ms and this takes about
+0.2 ms - roughly a thousandfold, from moving the inner loop into the C-level big-integer
+routines. The same trick solves 494, 1049, 474 and 279, which are all the same row with a
+different operator.
+
+## Pseudo-polynomial: what "efficient" is hiding
+
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2034%20-%20knapsack%20problems/imgs/day34_6.png?raw=true)
+
+`O(n · cap)` looks polynomial and is not. Multiply every weight and the capacity by 10 and the
+answer is unchanged at 130, but the table grows from 44 cells to 404, then 4,004, then 40,004 -
+while the *input* grows from 15 bits to 30, 47 and 64. The runtime is polynomial in the
+magnitude of the numbers, not in their length, which is why 0/1 knapsack is NP-complete and
+this table is not a counterexample. It also tells you exactly when to reach for it: small
+capacities, small integer weights. Floating-point or astronomically large capacities need
+branch and bound or an approximation scheme instead.
 
 ## Complexity
 
