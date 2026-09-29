@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Backtracking and pruning: N-Queens and Sudoku</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Backtracking and pruning: N-Queens and Sudoku</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2039%20-%20backtracking%20and%20pruning">day 39 on GitHub</a></p>
+<p><em>100 Days of Python - day 39</em></p>
+<p>There are sixteen million ways to put one queen in each row of a chessboard. A backtracking search finds all 92 arrangements where no two queens attack each other after looking at 2,057 partial boards. On a Sudoku designed to punish the textbook solver, the same kind of search takes about two minutes of pure Python in reading order and a quarter of a second when it always fills the most constrained cell first.</p>
+<p>Those are the two numbers that pruning buys. The third lesson of today costs nothing to write and is much harder to see: <strong>backtracking bugs do not crash.</strong> Forget one line of cleanup and the search reports, with complete confidence, that 8-queens has no solution.</p>
+<p>Yesterday&#x27;s greedy made a choice and never took it back. Backtracking makes every choice <em>tentatively</em>, and the whole technique is built around taking it back.</p>
+<h2>The template: choose, explore, unchoose</h2>
+<p>The smallest problem that shows the shape is listing every subset of <code>[1, 2, 3]</code>:</p>
+<pre><code>def subsets(nums):
+    res, path = [], []
+
+    def go(start):
+        res.append(path[:])              # record a COPY of the path
+        for i in range(start, len(nums)):
+            path.append(nums[i])         # choose
+            go(i + 1)                    # explore
+            path.pop()                   # unchoose
+
+    go(0)
+    return res</code></pre>
+<p>One <code>path</code> list is shared by the entire search. It grows by one element on the way down and shrinks by one on the way back, so at any moment it spells out the route from the root to wherever the search is standing. The <code>pop()</code> is what lets the loop try <code>[1, 3]</code> after <code>[1, 2]</code>: the 2 has to come off first.</p>
+<p>That sharing is also the first trap. Write <code>res.append(path)</code> without the <code>[:]</code> and the function returns <code>[[], [], [], [], [], [], [], []]</code>. The length is right, so a test that checks <code>len(res) == 8</code> passes. But all eight entries are one and the same list object, and by the time the search finishes, the pops have emptied it.</p>
+<h2>N-Queens</h2>
+<p><strong>The task.</strong> Place <code>n</code> queens on an <code>n x n</code> chessboard so that no two of them share a row, a column or a diagonal, and list every way to do it.</p>
+<p><strong>Input / output.</strong> An integer <code>n</code>. Return a list of boards; each board is <code>n</code> strings of length <code>n</code>, with <code>&#x27;Q&#x27;</code> for a queen and <code>&#x27;.&#x27;</code> for an empty square.</p>
+<p><strong>Example.</strong> For <code>n = 4</code> there are exactly two boards: <code>[&quot;.Q..&quot;, &quot;...Q&quot;, &quot;Q...&quot;, &quot;..Q.&quot;]</code> and its mirror image <code>[&quot;..Q.&quot;, &quot;Q...&quot;, &quot;...Q&quot;, &quot;.Q..&quot;]</code>. Read row by row, the queens sit in columns 1, 3, 0, 2 and 2, 0, 3, 1.</p>
+<p><strong>Constraints.</strong> <code>1 &lt;= n &lt;= 9</code>. At 9 there are 352 answers, few enough that listing them all is fine, which is why plain backtracking is the intended solution. Watch the small cases: <code>n = 2</code> and <code>n = 3</code> have no solution at all and must return an empty list.</p>
+<p>Put exactly one queen in each row, and the only decision at row <code>r</code> is which column. A square <code>(r, c)</code> is then attacked along its column, along its &quot;\&quot; diagonal - every square on it has the same <code>r - c</code> - and along its &quot;/&quot; diagonal, where <code>r + c</code> is the same. Three sets turn the safety test into three lookups, and a failed test is the pruning: that square, and every board that would have continued from it, is skipped.</p>
+<img alt="day39_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2039%20-%20backtracking%20and%20pruning/imgs/day39_1.png">
+<p>That is the entire search on a 4 x 4 board: 17 nodes, two solutions, four dead ends, and 44 squares rejected without a queen ever being placed on them. On 8 x 8 the count of what would have to be searched falls with every rule built into the search:</p>
+<img alt="day39_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2039%20-%20backtracking%20and%20pruning/imgs/day39_2.png">
+<p>Any 8 of the 64 squares is 4.4 billion boards; one queen per row is 16.8 million; one per row and per column is 40,320. The backtracking search enters 2,057 nodes. The honest comparison is the full tree of column orders - what the search would walk without the diagonal check - which has 109,601 nodes, 53 times more.</p>
+<p>Day 37&#x27;s bit tricks make each node cheaper still: keep the three attack sets as bit rows, shift the diagonals by one bit per row, and pull out the lowest free column with <code>free &amp; -free</code>. On <code>n = 10</code> both versions enter exactly 35,539 nodes; the bitmask one is about four times faster. A faster check changes what a node costs, not how many there are.</p>
+<pre><code>class Solution:
+    def solveNQueens(self, n: int) -&gt; List[List[str]]:
+        cols, diag, anti = set(), set(), set()
+        board, out = [], []
+
+        def go(r):
+            if r == n:
+                out.append([&#x27;.&#x27; * c + &#x27;Q&#x27; + &#x27;.&#x27; * (n - c - 1) for c in board])
+                return
+            for c in range(n):
+                if c in cols or r - c in diag or r + c in anti:
+                    continue                                  # prune
+                cols.add(c); diag.add(r - c); anti.add(r + c); board.append(c)
+                go(r + 1)
+                board.pop(); cols.remove(c); diag.remove(r - c); anti.remove(r + c)
+
+        go(0)
+        return out</code></pre>
+<p><a href="https://leetcode.com/problems/n-queens/">leetcode.com/problems/n-queens</a></p>
+<h2>The missing unchoose: ghost queens</h2>
+<p>Now delete the three <code>remove</code> calls and keep only <code>board.pop()</code>. The board looks right - the queen is gone - but the three sets still remember her.</p>
+<img alt="day39_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2039%20-%20backtracking%20and%20pruning/imgs/day39_3.png">
+<p>Every queen that is taken back leaves a ghost that keeps attacking its column and both diagonals. The search enters nine partial boards, the last one with a single real queen at row 0, column 5, and seven ghosts around her. In row 1, three squares are blocked by the real queen and the other five only by ghosts. The function returns <strong>0 solutions</strong>. The correct answer is 92. Nothing is raised and nothing looks wrong unless you already know the answer.</p>
+<p>The rule it breaks is a symmetry. Whatever the choose step changed, the unchoose step has to change back - every piece of it, not just the one you can see.</p>
+<h2>A shortcut that is wrong on every odd board</h2>
+<p>Flip a solution left to right and you get another solution. So a tempting speed-up is to try only the left half of the first row and double the count.</p>
+<img alt="day39_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2039%20-%20backtracking%20and%20pruning/imgs/day39_4.png">
+<p>It is exact on every even board. On an odd board the middle column is its own mirror image, so the shortcut never searches it and never counts it: 8 instead of 10 for five queens, 34 instead of 40 for seven, 298 instead of 352 for nine. (Three queens comes out right only because there are no solutions to lose.) The fix is one extra call that searches the middle column once and counts it once. Pruning is only allowed to remove a subtree when you can prove it holds no answer; &quot;this half looks like the other half&quot; is not that proof.</p>
+<h2>Sudoku</h2>
+<p><strong>The task.</strong> Complete a partially filled 9 x 9 Sudoku so that every row, every column and every 3 x 3 box contains each digit from 1 to 9 exactly once.</p>
+<p><strong>Input / output.</strong> A 9 x 9 grid of characters, a digit or <code>&#x27;.&#x27;</code> for an empty cell. Nothing is returned; the grid has to be filled in place.</p>
+<p><strong>Example.</strong> The standard example starts with a first row of <code>5 3 . . 7 . . . .</code> and 30 digits given in total. Its only completion has first row <code>5 3 4 6 7 8 9 1 2</code>.</p>
+<p><strong>Constraints.</strong> Every input has exactly one solution. That guarantee means the search can stop at the first full grid and never has to report &quot;impossible&quot;. Filling in place means the unchoose step must write <code>&#x27;.&#x27;</code> back into the caller&#x27;s grid.</p>
+<p>The textbook solver takes the first empty cell in reading order and tries 1 to 9. The better rule is called MRV, <em>minimum remaining values</em>: branch on the empty cell with the <strong>fewest</strong> legal digits left. A cell with one legal digit gets filled with no guessing. A cell with zero legal digits proves the current path is dead immediately, many levels before reading order would find out.</p>
+<img alt="day39_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2039%20-%20backtracking%20and%20pruning/imgs/day39_5.png">
+<p>On the example above, reading order visits 4,209 nodes and MRV visits 52 - one per empty cell plus the root, without a single wrong guess. On Arto Inkala&#x27;s 21-clue puzzle from 2012 the gap is only a factor of three. The third board is the one that makes the point:</p>
+<img alt="day39_6" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2039%20-%20backtracking%20and%20pruning/imgs/day39_6.png">
+<p>It has 17 clues and its top row solves to 987654321, the exact reverse of the order the naive solver tries digits in. The top-left cell has seven legal digits and the answer is the last one, so the naive solver works through six wrong digits there, each with a whole subtree behind it: 69,175,317 nodes, about two minutes. MRV starts with the third cell of the second row, which has only three options, and finishes in 17,918 nodes, a quarter of a second.</p>
+<p>One honest caveat. MRV scans every empty cell at every node to find the tightest one, so each node costs more. On the Inkala puzzle, where it saves only a factor of three, a reading-order solver that checks with bitmasks is about twice as fast on the clock. MRV earns its keep on the worst cases, which are the ones that matter.</p>
+<pre><code>class Solution:
+    def solveSudoku(self, board: List[List[str]]) -&gt; None:
+        rows, cols, boxes = [0] * 9, [0] * 9, [0] * 9    # bit v = digit v used
+        empty = []
+        for r in range(9):
+            for c in range(9):
+                if board[r][c] == &#x27;.&#x27;:
+                    empty.append((r, c))
+                else:
+                    bit = 1 &lt;&lt; int(board[r][c])
+                    rows[r] |= bit; cols[c] |= bit; boxes[r // 3 * 3 + c // 3] |= bit
+
+        def go():
+            if not empty:
+                return True
+            best, best_free, best_k = -1, 0, 10          # MRV: fewest legal digits
+            for i, (r, c) in enumerate(empty):
+                free = ~(rows[r] | cols[c] | boxes[r // 3 * 3 + c // 3]) &amp; 0x3FE
+                k = bin(free).count(&#x27;1&#x27;)
+                if k &lt; best_k:
+                    best, best_free, best_k = i, free, k
+                    if k &lt;= 1:
+                        break
+            if best_k == 0:
+                return False                             # dead end, found early
+            r, c = empty[best]
+            empty[best] = empty[-1]; empty.pop()
+            b = r // 3 * 3 + c // 3
+            while best_free:
+                bit = best_free &amp; -best_free
+                best_free ^= bit
+                rows[r] |= bit; cols[c] |= bit; boxes[b] |= bit
+                board[r][c] = str(bit.bit_length() - 1)
+                if go():
+                    return True
+                rows[r] ^= bit; cols[c] ^= bit; boxes[b] ^= bit
+            board[r][c] = &#x27;.&#x27;
+            empty.append((r, c))
+            empty[best], empty[-1] = empty[-1], empty[best]
+            return False
+
+        go()</code></pre>
+<p><a href="https://leetcode.com/problems/sudoku-solver/">leetcode.com/problems/sudoku-solver</a></p>
+<h2>LeetCode 79 - Word Search</h2>
+<p><strong>The task.</strong> Decide whether a word can be spelled on a grid of letters by starting at any cell and stepping up, down, left or right one cell per letter, never using the same cell twice within one spelling.</p>
+<p><strong>Input / output.</strong> A grid of letters and a string. Return <code>True</code> or <code>False</code>.</p>
+<p><strong>Example.</strong> On the board with rows <code>ABCE</code>, <code>SFCS</code>, <code>ADEE</code>, the word <code>&quot;ABCCED&quot;</code> is found (along the top row to the second C, down one, then left along the bottom), <code>&quot;SEE&quot;</code> is found (the S on the right edge and the two Es under it), and <code>&quot;ABCB&quot;</code> is not: after A, B, C the only B is the one already used.</p>
+<p><strong>Constraints.</strong> The grid is 1 x 1 to 6 x 6, the word is 1 to 15 letters, and both use upper- and lower-case English letters, which count as different letters. The small grid is what makes a full search from every cell affordable. The &quot;no reuse&quot; rule is what makes it backtracking: a cell counts as used only while it is on the current path.</p>
+<p>The usual trick marks a cell as used by overwriting it with <code>&#x27;#&#x27;</code>, which never matches a letter, and the unchoose writes the letter back. Delete that one line and all three examples above still pass. But <code>&quot;CCB&quot;</code> - the C in the middle row, up to the C above it, left to the B - now comes back <code>False</code>. The first attempt starts on the top C, stamps both Cs with <code>&#x27;#&#x27;</code> and fails; when the search later starts on the middle C, it is already stamped. Of the 1,108 strings this board really spells along paths up to seven cells long, the broken version misses 201. Passing the examples is not evidence that the unchoose is there.</p>
+<pre><code>class Solution:
+    def exist(self, board: List[List[str]], word: str) -&gt; bool:
+        R, C = len(board), len(board[0])
+
+        def dfs(r, c, i):
+            if i == len(word):
+                return True
+            if not (0 &lt;= r &lt; R and 0 &lt;= c &lt; C) or board[r][c] != word[i]:
+                return False
+            saved, board[r][c] = board[r][c], &#x27;#&#x27;        # choose: mark as used
+            found = (dfs(r + 1, c, i + 1) or dfs(r - 1, c, i + 1)
+                     or dfs(r, c + 1, i + 1) or dfs(r, c - 1, i + 1))
+            board[r][c] = saved                          # unchoose: ALWAYS
+            return found
+
+        return any(dfs(r, c, 0) for r in range(R) for c in range(C))</code></pre>
+<p><a href="https://leetcode.com/problems/word-search/">leetcode.com/problems/word-search</a></p>
+<h2>Complexity</h2>
+<p>The worst-case bounds barely move under pruning - N-Queens is still bounded by <code>n!</code>, Sudoku by <code>9</code> to the power of the number of empty cells. What pruning changes is how much of that tree is ever visited, which is why every comparison today is counted in nodes: 2,057 against 109,601, 52 against 4,209, 17,918 against 69 million.</p>
+<h2>Why this matters later</h2>
+<p>Monte Carlo tree search, the planner behind game-playing agents, walks the same kind of tree of moves. It keeps the choose-explore-unchoose loop on a single game state - apply a move, look deeper, undo it - but instead of visiting every branch it samples the promising ones, because a game tree is far too large to prune to completion. SAT and constraint solvers are the other descendant: their &quot;a variable with only one possible value gets set without branching&quot; rule is MRV&#x27;s forced cell, applied over and over before any guess is made.</p>
+<p>And the discipline carries everywhere: when a search returns fewer answers than you expected, check the unchoose before you check the pruning.</p>
+<p>Tomorrow: bit manipulation tricks - masks and counting set bits.</p>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2039%20-%20backtracking%20and%20pruning">day 39 on GitHub</a></p>
+</body>
+</html>

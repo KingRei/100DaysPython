@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 39 — 回溯與剪枝：N-Queens 與數獨</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 39 — 回溯與剪枝：N-Queens 與數獨</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2039%20-%20backtracking%20and%20pruning">day 39 on GitHub</a></p>
+<p><em>100 Days of Python - day 39</em></p>
+<p>西洋棋盤上每一列放一顆皇后，一共有一千六百多萬種放法。用回溯搜尋，只看了 2,057 個「放到一半的盤面」，就把 92 種「任兩顆皇后都不互相攻擊」的擺法全部找齊。換到一題專門整教科書解法的數獨，同樣是回溯：照閱讀順序一格一格填，純 Python 要跑大約兩分鐘；改成每次先填「最沒得選的那一格」，四分之一秒就解完。</p>
+<p>這兩個數字就是剪枝買到的東西。今天第三件事寫起來一行都不用多，卻難看見得多：<strong>回溯的 bug 不會 crash。</strong>少寫一行收尾，搜尋會非常有自信地告訴你：8 皇后無解。</p>
+<p>昨天的貪心是選了就不反悔。回溯剛好相反：每一個選擇都只是「暫時的」，整個技巧就是圍繞著「把它收回來」建起來的。</p>
+<h2>模板：choose、explore、unchoose</h2>
+<p>能看出這個形狀的最小問題，是列出 <code>[1, 2, 3]</code> 的所有子集：</p>
+<pre><code>def subsets(nums):
+    res, path = [], []
+
+    def go(start):
+        res.append(path[:])              # record a COPY of the path
+        for i in range(start, len(nums)):
+            path.append(nums[i])         # choose
+            go(i + 1)                    # explore
+            path.pop()                   # unchoose
+
+    go(0)
+    return res</code></pre>
+<p>整個搜尋共用同一個 <code>path</code>。往下走時長一格、退回來時縮一格，所以任何時刻它剛好描述「從根走到目前位置」的那條路。<code>pop()</code> 就是讓迴圈能在 <code>[1, 2]</code> 之後試 <code>[1, 3]</code> 的那一行：2 得先拿下來。</p>
+<p>共用也是第一個陷阱。把 <code>[:]</code> 拿掉、寫成 <code>res.append(path)</code>，函式回傳 <code>[[], [], [], [], [], [], [], []]</code>。長度是對的，只檢查 <code>len(res) == 8</code> 的測試會過；但八個元素其實是同一個 list 物件，等搜尋跑完，一路的 pop 早就把它清空了。</p>
+<h2>N-Queens</h2>
+<p><strong>題目要做什麼。</strong>在 <code>n x n</code> 的棋盤上放 <code>n</code> 顆皇后，任兩顆不能在同一列、同一欄或同一條斜線上，列出所有放法。</p>
+<p><strong>輸入 / 輸出。</strong>一個整數 <code>n</code>。回傳盤面的 list；每個盤面是 <code>n</code> 個長度 <code>n</code> 的字串，<code>&#x27;Q&#x27;</code> 是皇后、<code>&#x27;.&#x27;</code> 是空格。</p>
+<p><strong>範例。</strong><code>n = 4</code> 剛好有兩個盤面：<code>[&quot;.Q..&quot;, &quot;...Q&quot;, &quot;Q...&quot;, &quot;..Q.&quot;]</code> 和它的鏡像 <code>[&quot;..Q.&quot;, &quot;Q...&quot;, &quot;...Q&quot;, &quot;.Q..&quot;]</code>。一列一列讀下來，皇后分別在第 1、3、0、2 欄和第 2、0、3、1 欄。</p>
+<p><strong>限制。</strong><code>1 &lt;= n &lt;= 9</code>。n = 9 時一共 352 組解，少到可以全部列出來，所以單純的回溯就是預期解法。小心小的 case：<code>n = 2</code> 和 <code>n = 3</code> 完全無解，要回傳空 list。</p>
+<p>每一列恰好放一顆，第 <code>r</code> 列唯一要決定的就是欄。格子 <code>(r, c)</code> 會被三條線攻擊：它的欄；它的「\」斜線，這條線上每一格的 <code>r - c</code> 都一樣；以及「/」斜線，上面每一格的 <code>r + c</code> 都一樣。三個 set 讓安全檢查變成三次查詢，而檢查失敗就是剪枝：這一格、以及所有從這一格接下去的盤面，全部跳過。</p>
+<img alt="day39_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2039%20-%20backtracking%20and%20pruning/imgs/day39_1.png">
+<p>這就是 4 x 4 棋盤上完整的搜尋：17 個節點、兩組解、四個死路，另外有 44 個格子從頭到尾沒放過皇后就被淘汰了。換到 8 x 8，每多一條寫進搜尋結構裡的規則，要搜的量就再掉一截：</p>
+<img alt="day39_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2039%20-%20backtracking%20and%20pruning/imgs/day39_2.png">
+<p>64 格任選 8 格是四十四億種；每列一顆是一千六百多萬；每列每欄各一顆是 40,320。回溯只走進 2,057 個節點。公平的比較對象是「所有欄順序」構成的完整樹——也就是拿掉斜線檢查之後搜尋會走的那棵——它有 109,601 個節點，多了 53 倍。</p>
+<p>Day 37 的位元技巧可以讓每個節點再便宜一點：三個 set 改成三排 bit，往下一列時斜線各位移一格，用 <code>free &amp; -free</code> 取出最低的空欄。<code>n = 10</code> 時兩個版本都剛好走 35,539 個節點，bitmask 版快了大約四倍。檢查變快改變的是每個節點的成本，不是節點的數量。</p>
+<pre><code>class Solution:
+    def solveNQueens(self, n: int) -&gt; List[List[str]]:
+        cols, diag, anti = set(), set(), set()
+        board, out = [], []
+
+        def go(r):
+            if r == n:
+                out.append([&#x27;.&#x27; * c + &#x27;Q&#x27; + &#x27;.&#x27; * (n - c - 1) for c in board])
+                return
+            for c in range(n):
+                if c in cols or r - c in diag or r + c in anti:
+                    continue                                  # prune
+                cols.add(c); diag.add(r - c); anti.add(r + c); board.append(c)
+                go(r + 1)
+                board.pop(); cols.remove(c); diag.remove(r - c); anti.remove(r + c)
+
+        go(0)
+        return out</code></pre>
+<p><a href="https://leetcode.com/problems/n-queens/">leetcode.com/problems/n-queens</a></p>
+<h2>忘了 unchoose：幽靈皇后</h2>
+<p>現在把三個 <code>remove</code> 刪掉，只留下 <code>board.pop()</code>。棋盤看起來沒問題——皇后確實拿走了——但三個 set 還記得她。</p>
+<img alt="day39_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2039%20-%20backtracking%20and%20pruning/imgs/day39_3.png">
+<p>每一顆被收回的皇后都留下一個幽靈，繼續攻擊她原本的欄和兩條斜線。搜尋一共走進九個盤面，最後一個只有一顆真的皇后（第 0 列第 5 欄），旁邊圍著七個幽靈。第 1 列的八個格子裡，三格是被真的皇后擋住，另外五格只是被幽靈擋住。函式回傳 <strong>0 組解</strong>，正確答案是 92。不丟例外，除非你本來就知道答案，否則什麼都看不出來。</p>
+<p>它違反的是一個對稱：choose 改了什麼，unchoose 就要一樣不差地改回來——每一樣都要，不是只改你看得到的那一樣。</p>
+<h2>在每個奇數棋盤上都錯的捷徑</h2>
+<p>把一組解左右翻過來還是一組解。所以有個很誘人的加速：第一列只試左半邊，最後把數量乘二。</p>
+<img alt="day39_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2039%20-%20backtracking%20and%20pruning/imgs/day39_4.png">
+<p>偶數棋盤上它完全正確。奇數棋盤的正中間那一欄翻過來還是自己，所以這個捷徑從來沒搜它、也從來沒算它：五皇后算出 8 而不是 10，七皇后 34 而不是 40，九皇后 298 而不是 352。（三皇后算對，只是因為它本來就沒有解可以漏。）修法是多一次呼叫：中間那一欄單獨搜一次、只算一次。剪枝只能砍掉「能證明裡面沒有答案」的子樹；「這半邊看起來跟那半邊一樣」不是證明。</p>
+<h2>數獨</h2>
+<p><strong>題目要做什麼。</strong>把一個填了一部分的 9 x 9 數獨補完，讓每一列、每一欄、每一個 3 x 3 宮都恰好出現 1 到 9 各一次。</p>
+<p><strong>輸入 / 輸出。</strong>一個 9 x 9 的字元格，每格是數字或代表空格的 <code>&#x27;.&#x27;</code>。不回傳任何東西，要直接在原本的格子上填好。</p>
+<p><strong>範例。</strong>標準範例的第一列是 <code>5 3 . . 7 . . . .</code>，一共給了 30 個數字。它唯一的解第一列是 <code>5 3 4 6 7 8 9 1 2</code>。</p>
+<p><strong>限制。</strong>每個輸入都保證恰好一組解。這個保證代表搜尋可以在第一個填滿的盤面就停下來，永遠不用回報「無解」。要求原地填寫則代表 unchoose 必須把 <code>&#x27;.&#x27;</code> 寫回呼叫者的那張格子。</p>
+<p>教科書解法照閱讀順序找第一個空格，從 1 試到 9。更好的規則叫 MRV（minimum remaining values，最少剩餘值）：每次挑<strong>合法數字最少</strong>的空格來分支。只剩一個合法數字的格子直接填，不用猜；一個合法數字都沒有的格子，當下就證明這條路死了——比閱讀順序要早好幾層發現。</p>
+<img alt="day39_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2039%20-%20backtracking%20and%20pruning/imgs/day39_5.png">
+<p>上面的範例，閱讀順序走 4,209 個節點，MRV 走 52 個——每個空格一個、加上根，一次都沒猜錯。Arto Inkala 2012 年那題 21 個提示的「最難數獨」，差距只有三倍。真正說明問題的是第三題：</p>
+<img alt="day39_6" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2039%20-%20backtracking%20and%20pruning/imgs/day39_6.png">
+<p>它只有 17 個提示，第一列的答案是 987654321，剛好和 naive 解法試數字的順序完全相反。左上角那格有七個合法數字，答案是最後一個，所以 naive 解法要在那裡先試錯六個數字，每一個後面都拖著一整棵子樹：69,175,317 個節點，大約兩分鐘。MRV 從第二列第三格開始，那格只有三個選項，17,918 個節點、四分之一秒解完。</p>
+<p>老實補一句：MRV 在每個節點都要掃過所有空格才找得到最緊的那一格，所以每個節點比較貴。在 Inkala 那題、它只省三倍節點的情況下，照閱讀順序但用 bitmask 檢查的解法，實際時間反而快了大約一倍。MRV 真正值回票價的是最壞的情況，而那正是要緊的情況。</p>
+<pre><code>class Solution:
+    def solveSudoku(self, board: List[List[str]]) -&gt; None:
+        rows, cols, boxes = [0] * 9, [0] * 9, [0] * 9    # bit v = digit v used
+        empty = []
+        for r in range(9):
+            for c in range(9):
+                if board[r][c] == &#x27;.&#x27;:
+                    empty.append((r, c))
+                else:
+                    bit = 1 &lt;&lt; int(board[r][c])
+                    rows[r] |= bit; cols[c] |= bit; boxes[r // 3 * 3 + c // 3] |= bit
+
+        def go():
+            if not empty:
+                return True
+            best, best_free, best_k = -1, 0, 10          # MRV: fewest legal digits
+            for i, (r, c) in enumerate(empty):
+                free = ~(rows[r] | cols[c] | boxes[r // 3 * 3 + c // 3]) &amp; 0x3FE
+                k = bin(free).count(&#x27;1&#x27;)
+                if k &lt; best_k:
+                    best, best_free, best_k = i, free, k
+                    if k &lt;= 1:
+                        break
+            if best_k == 0:
+                return False                             # dead end, found early
+            r, c = empty[best]
+            empty[best] = empty[-1]; empty.pop()
+            b = r // 3 * 3 + c // 3
+            while best_free:
+                bit = best_free &amp; -best_free
+                best_free ^= bit
+                rows[r] |= bit; cols[c] |= bit; boxes[b] |= bit
+                board[r][c] = str(bit.bit_length() - 1)
+                if go():
+                    return True
+                rows[r] ^= bit; cols[c] ^= bit; boxes[b] ^= bit
+            board[r][c] = &#x27;.&#x27;
+            empty.append((r, c))
+            empty[best], empty[-1] = empty[-1], empty[best]
+            return False
+
+        go()</code></pre>
+<p><a href="https://leetcode.com/problems/sudoku-solver/">leetcode.com/problems/sudoku-solver</a></p>
+<h2>LeetCode 79 - Word Search（單字搜尋）</h2>
+<p><strong>題目要做什麼。</strong>判斷一個單字能不能在字母格上拼出來：從任一格出發，每個字母往上下左右走一格，同一次拼寫裡同一格不能用兩次。</p>
+<p><strong>輸入 / 輸出。</strong>一個字母格和一個字串。回傳 <code>True</code> 或 <code>False</code>。</p>
+<p><strong>範例。</strong>格子三列分別是 <code>ABCE</code>、<code>SFCS</code>、<code>ADEE</code>。<code>&quot;ABCCED&quot;</code> 找得到（沿第一列走到第二個 C，往下一格，再沿最後一列往左）；<code>&quot;SEE&quot;</code> 找得到（右邊那個 S，再往下兩個 E）；<code>&quot;ABCB&quot;</code> 找不到：A、B、C 之後唯一的 B 已經用過了。</p>
+<p><strong>限制。</strong>格子從 1 x 1 到 6 x 6，單字長度 1 到 15，格子和單字都由大小寫英文字母組成（大寫和小寫算不同字母）。格子小，才讓「從每一格出發都完整搜一遍」負擔得起。「不能重複用」這條規則讓它成為回溯：一格只有在「目前這條路徑上」才算被用掉。</p>
+<p>常見寫法是把用過的格子改成 <code>&#x27;#&#x27;</code>，它永遠不會等於任何字母；unchoose 就是把字母寫回去。刪掉這一行，上面三個範例照樣全過。但 <code>&quot;CCB&quot;</code>——中間列的 C，往上到上面那個 C，再往左到 B——現在會回傳 <code>False</code>。第一次嘗試從上面的 C 出發，把兩個 C 都蓋成 <code>&#x27;#&#x27;</code> 然後失敗；等搜尋輪到從中間的 C 出發時，它已經被蓋掉了。這張格子沿著最多七格的路徑真正拼得出 1,108 個字串，壞掉的版本漏掉 201 個。範例全過，不代表 unchoose 有寫。</p>
+<pre><code>class Solution:
+    def exist(self, board: List[List[str]], word: str) -&gt; bool:
+        R, C = len(board), len(board[0])
+
+        def dfs(r, c, i):
+            if i == len(word):
+                return True
+            if not (0 &lt;= r &lt; R and 0 &lt;= c &lt; C) or board[r][c] != word[i]:
+                return False
+            saved, board[r][c] = board[r][c], &#x27;#&#x27;        # choose: mark as used
+            found = (dfs(r + 1, c, i + 1) or dfs(r - 1, c, i + 1)
+                     or dfs(r, c + 1, i + 1) or dfs(r, c - 1, i + 1))
+            board[r][c] = saved                          # unchoose: ALWAYS
+            return found
+
+        return any(dfs(r, c, 0) for r in range(R) for c in range(C))</code></pre>
+<p><a href="https://leetcode.com/problems/word-search/">leetcode.com/problems/word-search</a></p>
+<h2>複雜度</h2>
+<p>剪枝幾乎不會改變最壞情況的上界——N-Queens 還是被 <code>n!</code> 框住，數獨還是 9 的「空格數」次方。剪枝改變的是那棵樹實際被走到多少，所以今天每一個比較都是用節點數算的：2,057 對 109,601、52 對 4,209、17,918 對六千九百萬。</p>
+<h2>這件事之後會用在哪</h2>
+<p>蒙地卡羅樹搜尋（MCTS）是下棋 agent 背後的規劃器，它走的也是一棵「走法」構成的樹。它在同一個遊戲狀態上保留 choose、explore、unchoose 的迴圈——走一步、往下看、再退回來——但不會每條分支都走，而是抽樣挑有希望的走，因為遊戲樹大到不可能剪到走完。另一支後代是 SAT 與約束求解器：它們「只剩一個可能值的變數直接設定、不分支」的規則，就是 MRV 那個只剩一個選項的格子，在猜任何東西之前反覆套用。</p>
+<p>而這份紀律到哪裡都適用：搜尋回傳的答案比你預期的少時，先檢查 unchoose，再檢查剪枝。</p>
+<p>明天：位元運算技巧——mask 與計算 1 的個數（popcount）。</p>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2039%20-%20backtracking%20and%20pruning">day 39 on GitHub</a></p>
+</body>
+</html>
