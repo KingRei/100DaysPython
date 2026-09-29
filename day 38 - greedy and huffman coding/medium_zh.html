@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 38 — 貪心演算法：區間排程與 Huffman 編碼</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 38 — 貪心演算法：區間排程與 Huffman 編碼</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2038%20-%20greedy%20and%20huffman%20coding">day 38 on GitHub</a></p>
+<p><em>100 Days of Python - day 38</em></p>
+<p>八個人要搶同一間會議室。照結束時間排序，排得進五場；照誰先來排序，只排得進三場；照會議長短排序，排得進四場。三份時間表都完全合法——沒有人被重複預約，程式不會丟例外，測試也不會紅。只是其中兩份比較差，而程式完全沒有辦法告訴你這件事。</p>
+<p>這就是今天的全部主題。貪心演算法就是「當下看起來最好的就選，選了不反悔」，所以昨天 Held-Karp 要三十行的東西，今天三行就寫完。難的從來不是寫出來，而是<strong>貪心選錯 key 不會 crash</strong>——它會交回一個合法但悄悄比較差的答案，而只要你手邊沒有東西可以對照，你永遠不會發現。</p>
+<p>Day 33 到 Day 37 花了五天建表，正是因為必須把未來一起算進去。今天剛好相反：有些問題單一個局部規則就已經是最佳解。下面兩個例子都是經典——一個是貪心對了、而兩個很誘人的 key 錯了；另一個是貪心可以被證明為最佳，但只要動一行資料結構，輸出就會安靜地大 55%。</p>
+<h2>八個請求，一間會議室</h2>
+<img alt="day38_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2038%20-%20greedy%20and%20huffman%20coding/imgs/day38_1.png">
+<p>區間是半開區間：11:00 結束的會議和 11:00 開始的會議不算衝突。照結束時間排序，掃過一次，只要這場會議的開始時間不早於上一場已接受的結束時間就收下。</p>
+<pre><code>def select_by_end(intervals):
+    out, last_end = [], float(&#x27;-inf&#x27;)
+    for s, e in sorted(intervals, key=lambda iv: iv[1]):
+        if s &gt;= last_end:            # no clash with what we already took
+            out.append((s, e))
+            last_end = e
+    return out</code></pre>
+<p>排進五場：B、C、D、F、G。結束時間之所以是「對的」key 而不只是「其中一個」key，理由是：對後面所有還沒排的會議來說，唯一會限制它們的東西就是「會議室幾點會空出來」。挑最早結束的那一場，等於讓會議室在最早可能的時刻空出來，所以它不可能擋掉任何一個別種選法保得住的機會。</p>
+<h2>兩個會輸的 key</h2>
+<img alt="day38_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2038%20-%20greedy%20and%20huffman%20coding/imgs/day38_2.png">
+<p>「誰先來誰先用」是人類實際在管會議室的方式，「先把短的塞進去」是你在整理襪子抽屜的方式。兩個都講得出道理，兩個都只要同樣那四行，兩個都輸：</p>
+<pre><code>排序 key               排進幾場  選到誰
+---------------------  --------  ---------
+照結束時間             5         B C D F G
+照開始時間             3         A E G
+照會議長度             4         B C E G
+暴力枚舉 2^8 個子集合  5         B C D F G</code></pre>
+<p>照開始時間排，會議室第一個給了 A——一場兩小時的 design review，把 09:15 到 11:15 整段卡死，底下三場短會一起陪葬。照長度排，先抓走兩場十五分鐘的會議，因為它們看起來很便宜，結果 D 就塞不下了。</p>
+<p>重點不是這個排名，而是三份輸出<strong>都是不衝突的合法時間表</strong>，拿去給人 review 也會過。真實系統裡不會有一份暴力解擺在貪心旁邊，所以憑直覺挑的 key 一旦錯了，就會一直錯下去。</p>
+<h2>交換論證：把證明跑成實驗</h2>
+<img alt="day38_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2038%20-%20greedy%20and%20huffman%20coding/imgs/day38_3.png">
+<p>「貪心是最佳解」的證明幾乎都是同一個形狀。主張：最早結束的那個區間，一定屬於<strong>某一組</strong>最佳解。隨便拿一組不含它的最佳解，把裡面第一場會議換成最早結束的那一場——這個交換不可能造成衝突，因為替換進去的那場結束得不會更晚。於是存在一組同樣大小、而且含有貪心選擇的最佳解，代表這個貪心選擇不花任何代價，接著同一套論證再套用到剩下的部分。</p>
+<p>這件事不必用信的。把第一個貪心選擇強制鎖住，剩下的用暴力枚舉，看看答案有沒有變差：</p>
+<pre><code>first = min(intervals, key=lambda iv: iv[1])
+unrestricted = len(select_bruteforce(intervals))
+rest = [iv for iv in intervals if compatible(iv, first) and iv != first]
+forced = 1 + len(select_bruteforce(rest))</code></pre>
+<p>兩邊都是 5。這是個很便宜的習慣，任何你沒把握的貪心都值得跑一次：跑得出來的證明勝過半記得的證明。</p>
+<h2>題目稍微換一下，貪心就死了</h2>
+<p>現在每場會議都值錢，目標變成「總價值最高」而不是「排進最多場」。同一個照結束時間的貪心照跑，把撿到的價值加起來：12。最好的其實是 17，選 A、F、H——三場，不是五場。</p>
+<p>換任何 key 都救不回來，因為「現在收下這場會議值不值得」取決於為了它放棄了什麼。這正是表格存在的理由。加權區間排程就是 Day 33 的 DP 配上 Day 23 的 <code>bisect</code>，替每個區間找出「最後一個在它開始前就結束」的區間：</p>
+<pre><code>iv = sorted(intervals, key=lambda t: t[1])
+ends = [e for _, e in iv]
+best = [0] * (len(iv) + 1)
+for i, (s, e) in enumerate(iv):
+    j = bisect_right(ends, s, 0, i)      # last compatible interval, 0 if none
+    best[i + 1] = max(best[i], best[j] + value[(s, e)])</code></pre>
+<p>和選錯 key 是同一種失敗模式，只是再往前走一步：現在貪心連<strong>工具</strong>都用錯了，它還是照樣交回一份真的可以用的時間表，一聲不吭。</p>
+<h2>Huffman 編碼：可以被證明的貪心</h2>
+<img alt="day38_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2038%20-%20greedy%20and%20huffman%20coding/imgs/day38_4.png">
+<p>定長編碼花在最罕見符號上的位元數，和花在最常見符號上的一樣多。Huffman 的觀察是：最罕見的那兩個符號，永遠可以被擺成編碼樹最深一層的兄弟節點——把最長的編碼給最少用的符號，不會損失任何東西。這句話直接變成一個完全不需要看未來的演算法：從 min-heap 取出最輕的兩棵子樹、合併、把合併後的節點<strong>推回去</strong>，重複到只剩一棵。左邊是 <code>0</code>，右邊是 <code>1</code>。</p>
+<pre><code>while len(heap) &gt; 1:
+    w1, _, n1 = heapq.heappop(heap)
+    w2, _, n2 = heapq.heappop(heap)
+    heapq.heappush(heap, (w1 + w2, tie, (n1, n2)))   # back into the queue
+    tie += 1</code></pre>
+<p>拿 53 個字元的句子 <code>&#x27;greedy algorithms are easy to write and hard to prove&#x27;</code> 來試：裡面有 18 種不同字元，定長編碼每個要 5 bits，共 265 bits。Huffman 壓到 204 bits，小了 23%——出現九次的空白字元拿到 3 bits 的編碼，而整棵樹最長的編碼是 6 bits，落在只出現一次的字母上。</p>
+<p>上面那段有兩個細節是真的在撐場面。<code>tie</code> 這個計數器是為了在兩個權重相同時讓順序固定；少了它，Python 會往下去比較節點本身的內容，輸出就會取決於「tuple 巢狀 tuple 剛好怎麼排」。而 <code>heappush</code> 不是形式——合併後的節點比它的兩個小孩都重，必須以新的權重重新排進佇列裡。這就是這裡非得用 heap、而不能用排好序的 list 的唯一理由。</p>
+<p>解碼不需要任何分隔符號，這是 prefix code 買到的東西：沒有任何一個編碼是另一個的前綴，所以解碼器一個 bit 一個 bit 讀，讀到的東西一變成某個編碼就馬上吐出那個符號。</p>
+<h2>改一行，多付 55%</h2>
+<img alt="day38_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2038%20-%20greedy%20and%20huffman%20coding/imgs/day38_5.png">
+<p>把符號照頻率排序一次，然後從左往右合併，合併後的節點再也不放回佇列：</p>
+<pre><code>items = sorted(freqs.items(), key=lambda kv: (kv[1], kv[0]))
+node, weight = items[0][0], items[0][1]
+for sym, w in items[1:]:
+    node, weight = ((node, sym), weight + w)</code></pre>
+<p>每次合併一樣是把兩棵子樹接起來，所以結果依然是合法的 prefix code，依然能把原文一字不差地解回來。掉的是那個「重新排序」。合併後的節點權重已經超過旁邊那些符號，本來應該往佇列後面沉下去；這裡它永遠不會沉，於是永遠是最輕的兩個之一，整棵樹垮成一條掛在單邊的梯子。最長的編碼從 6 bits 變成 17 bits。</p>
+<pre><code>編碼方式                bits
+----------------------  ----
+Huffman（用 heap）      204
+單純 5-bit 定長編碼     265
+排序一次、從左往右合併  316</code></pre>
+<p>兩份編碼都是 prefix-free，都能完整還原原文，Kraft sum（把每個編碼的 2 的負長度次方加總）都剛好是 1.000——連「編碼樹有沒有長出一條通往空處的分枝」這個結構檢查都過得去。壞掉的那份只是比正確的那份大 55%，而且比完全不壓縮還糟。</p>
+<p>還有這個陷阱最老的版本：用面額 1、3、4 的硬幣付 6 塊。貪心先拿最大的，4 + 1 + 1，三枚；其實兩枚 3 就夠了。這個陷阱之所以活得這麼久，是因為拿真的在錢包裡的面額——1、5、10、25——同一套貪心永遠是最佳解。習慣是在會原諒你的面額上養成的，然後被帶到不原諒你的面額上。</p>
+<h2>LeetCode 435 - Non-overlapping Intervals（無重疊區間）</h2>
+<p><strong>題目在問什麼。</strong> 給一堆區間，移除盡可能少的區間，讓剩下的彼此都不重疊，回傳移除了幾個。</p>
+<p><strong>輸入與輸出。</strong> 一個 <code>[start, end]</code> 的清單。回傳一個整數：最少要刪掉幾個。</p>
+<p><strong>範例。</strong> <code>[[1,2], [2,3], [3,4], [1,3]]</code> 回傳 <code>1</code>。刪掉 <code>[1,3]</code> 之後剩下 <code>[1,2]</code>、<code>[2,3]</code>、<code>[3,4]</code>，它們只在端點相接，不算重疊。反過來只刪其他三個裡的任何一個，<code>[1,3]</code> 都還是會和兩個倖存者打架，所以刪一個既是必要也是足夠。</p>
+<p><strong>限制條件。</strong> 最多 100,000 個區間，座標落在 32 位元有號整數範圍內。區間數量決定了演算法：任何需要兩兩比較的寫法都是 10^10 次運算，一定 TLE，所以只剩「排序 + 線性掃一次」這個形狀付得起。另一個限制藏在敘述的用字裡——只在端點相接的區間<strong>不算</strong>重疊，所以判斷式是 <code>s &gt;= last_end</code> 而不是 <code>s &gt; last_end</code>。</p>
+<p>「保留最多」和「丟掉最少」是同一個問題，所以會議室那個貪心原封不動就能解：</p>
+<pre><code>class Solution:
+    def eraseOverlapIntervals(self, intervals: List[List[int]]) -&gt; int:
+        intervals.sort(key=lambda iv: iv[1])        # earliest finishing first
+        kept, last_end = 0, float(&#x27;-inf&#x27;)
+        for s, e in intervals:
+            if s &gt;= last_end:                       # fits after what we kept
+                kept += 1
+                last_end = e
+        return len(intervals) - kept</code></pre>
+<p><a href="https://leetcode.com/problems/non-overlapping-intervals/">leetcode.com/problems/non-overlapping-intervals</a></p>
+<p>面試時真正會被追問的是它的兄弟題。<strong>LeetCode 452, Minimum Number of Arrows to Burst Balloons（用最少數量的箭引爆氣球）</strong> 是同一個排序、只差一個字元。氣球是<strong>閉區間</strong>，所以射在 <code>x = 2</code> 的一箭會同時戳破 <code>[1,2]</code> 和 <code>[2,3]</code>，只有當下一顆氣球的起點<strong>嚴格大於</strong>上一箭的位置時才需要新的一箭：要寫 <code>if s &gt; last</code>，不是 <code>&gt;=</code>。把 435 寫對之後原封不動搬去解 452，是最常見的翻車方式之一。</p>
+<h2>這件事之後會用在哪</h2>
+<p>Huffman 是每個語言模型前面那顆 tokenizer 的直系祖先。BPE（byte-pair encoding）跑的是同一個形狀的反面——不是合併最罕見的兩個符號好給它們長編碼，而是一次又一次合併出現最頻繁的相鄰字元對、給它一個短的代號，掉出來的那張詞彙表就是把文字變成 token ID 的東西。那個由頻率驅動的合併迴圈，以及「優先佇列到底要依什麼重新排序」這個問題，在那裡會原封不動地再出現一次。</p>
+<p>而更大的那個教訓比這兩個例子走得更遠。今天每一個失敗——選錯 key、加權版本、沒有重新排序的 heap、那三種硬幣——交出來的都是<strong>有效的答案</strong>。貪心演算法不會大聲地壞掉，它是以百分比的方式壞掉。如果你要把一個貪心送上線，就把暴力解一起送上去，然後在小輸入上斷言兩邊相等：那一行 assert 是你和那安靜的 55% 之間唯一的東西。</p>
+<p>明天：回溯與剪枝——N-Queens 和數獨。和今天「選了就不反悔」相反，明天是選了、往下探、再把它收回來。</p>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2038%20-%20greedy%20and%20huffman%20coding">day 38 on GitHub</a></p>
+</body>
+</html>

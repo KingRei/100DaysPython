@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 37 — 狀態壓縮 DP 與 Held-Karp：用一個整數當集合索引，精確解出 TSP</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 37 — 狀態壓縮 DP 與 Held-Karp：用一個整數當集合索引，精確解出 TSP</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2037%20-%20bitmask%20dp%20and%20tsp">day 37 on GitHub</a></p>
+<p><em>100 Days of Python - day 37</em></p>
+<p>我以前寫過一支路線最佳化的程式，跑出來的數字比司機實際上跑得出來的成績還要低 25% 左右。它不會爆掉、不會警告，而且每次跑都穩定給同一個數字。我花了兩天才發現：我的 DP 狀態少了一個欄位，而我寫出來的那段遞迴其實完全正確——只是它在解另一個問題。</p>
+<p>今天就是在講這個 bug。</p>
+<p>從 Day 33 到 Day 36，DP 表格的索引一直在換形狀：前綴長度、剩餘容量、一段區間、一棵子樹。今天它變成一個<strong>集合</strong>。大約二十個元素以內的集合可以塞進一個整數裡，一個元素一個 bit，於是它可以直接拿來當陣列索引。一旦子問題可以用「哪些東西已經做完了」來編號，一整批看起來只能排列組合的問題就變成填表。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2037%20-%20bitmask%20dp%20and%20tsp/imgs/day37_1.png?raw=true">
+<h2>集合就是一個整數</h2>
+<p>整天的內容靠這五個操作撐起來：</p>
+<pre><code>def has(mask, i):    return (mask &gt;&gt; i) &amp; 1
+def add(mask, i):    return mask | (1 &lt;&lt; i)
+def remove(mask, i): return mask &amp; ~(1 &lt;&lt; i)
+def members(mask):   return [i for i in range(mask.bit_length()) if mask &gt;&gt; i &amp; 1]
+def popcount(mask):  return bin(mask).count(&#x27;1&#x27;)</code></pre>
+<p>有兩個運算子優先順序的細節值得講清楚。在 C 裡面，<code>mask &amp; 1 == 0</code> 會被解析成 <code>mask &amp; (1 == 0)</code>，是經典的 bug；在 Python 裡 <code>&amp;</code> 綁得<strong>比</strong> <code>==</code> <strong>還緊</strong>，所以這一行的意思跟看起來一樣。另外 <code>~mask</code> 在 Python 裡是負數（<code>~0b0101</code> 是 <code>-6</code>），當成數值沒問題，但拿去當 list 索引就很危險，因為 <code>dp[~mask]</code> 會安靜地從另一頭讀。表格剛好有 <code>2**n</code> 格時，你要的補集是 <code>mask ^ full</code>。</p>
+<p>列舉一個 mask 的所有子集是兩行慣用寫法，乍看像打錯字：</p>
+<pre><code>sub = mask
+while True:
+    yield sub
+    if sub == 0:
+        break
+    sub = (sub - 1) &amp; mask</code></pre>
+<p>減一會往低位的 0 借位，<code>&amp; mask</code> 再把借來、但不屬於這個集合的位元丟掉。如果寫成 <code>while sub:</code> 而不是上面的 do-while，就會漏掉空集合——而空集合通常正是放 base case 的那一格。</p>
+<p>還有，「對每個 mask，再對每個子 mask」的總工作量不是 <code>4^n</code>。每個元素只有三種身分：在子集裡、在 mask 裡但不在子集裡、或根本不在裡面，所以總和是 <code>3^n</code>：<code>n = 10</code> 時是 59,049，不是 1,048,576。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2037%20-%20bitmask%20dp%20and%20tsp/imgs/day37_2.png?raw=true">
+<h2>這一次填表順序是免費的</h2>
+<p>Day 36 的全部難處都在填表順序：區間 DP 一定要照長度由小到大填，直覺寫下去的 <code>for i: for j:</code> 會去讀還沒寫過的格子。狀態壓縮 DP 直接把這件事送給你。<code>mask | (1 &lt;&lt; nxt)</code> 的數值一定<strong>大於</strong> <code>mask</code>，因為 <code>nxt</code> 本來不在 <code>mask</code> 裡；所以單純一句 <code>for mask in range(1 &lt;&lt; n)</code> 永遠不會讀到空格子，不管轉移式長什麼樣。</p>
+<p>也就是說，今天的難處完全不在順序，而在狀態本身。</p>
+<h2>Held-Karp</h2>
+<p>題目是台灣的八個停靠點——台北、新竹、台中、日月潭、台南、高雄、台東、花蓮——串成一條封閉環線。總共有 5,040 種走法，暴力法全部檢查一遍，答案是 689 km。</p>
+<p>Held-Karp 的表格索引是一組：<strong>走過哪些城市</strong>，以及<strong>現在站在哪一個</strong>。</p>
+<pre><code>dp[1 &lt;&lt; 0][0] = 0
+for mask in range(1 &lt;&lt; n):
+    for last in members(mask):
+        if dp[mask][last] == INF:
+            continue
+        for nxt in range(n):
+            if has(mask, nxt):
+                continue
+            nm = add(mask, nxt)
+            cand = dp[mask][last] + D[last][nxt]
+            if cand &lt; dp[nm][nxt]:
+                dp[nm][nxt] = cand
+                parent[nm][nxt] = last
+best = min(dp[full][last] + D[last][0] for last in range(1, n))</code></pre>
+<p><code>last</code> 這個欄位就是整段的重點。兩條走法如果覆蓋同一組城市、又停在同一個城市，那麼對接下來的一切來說它們完全可以互換，所以只需要留便宜的那一條。五個城市、長度 4 的 24 條前綴會壓成 12 個狀態；一般情況就是 <code>(n-1)!</code> 條排列壓成 <code>2^n · n</code> 個狀態。</p>
+<p><code>parent</code> 是把一個數字變回行程表的東西。遞迴本身完全不需要它，所以它很常被省略，然後事後要補回來特別痛苦。</p>
+<h2>讓我花掉兩天的那個 bug</h2>
+<p>假設狀態只有 <code>dp[mask]</code>。遞迴照樣寫得出來、照樣會終止、照樣回傳一個數字。但既然不知道前一段停在哪裡，下一段唯一寫得出來的成本，就只剩「到最近的那個已走訪城市」的距離：</p>
+<pre><code>hop = min(D[i][nxt] for i in members(mask))
+dp[mask | 1 &lt;&lt; nxt] = min(dp[mask | 1 &lt;&lt; nxt], dp[mask] + hop)</code></pre>
+<p>這不是一段壞掉的遞迴。它是另一個問題的正確遞迴：它把每個新城市接到最近的已走訪城市上，長出來的是一棵<strong>樹</strong>，不是一條環線。沒有任何人回家。</p>
+<p>八城市的那組資料，它回傳 502 km。而同一組資料的最小生成樹重量也是 502 km——因為那就是它算出來的東西。這是 TSP 的經典下界：永遠比真正的最佳解 689 小，永遠看起來合理，而且永遠不會有人跳出來說話。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2037%20-%20bitmask%20dp%20and%20tsp/imgs/day37_3.png?raw=true">
+<h2>另一種錯法</h2>
+<p>乾脆不做 DP，每一步都挑最近的沒走過的城市。最近鄰居法只要 <code>O(n²)</code>，產生的是一條貨真價實的封閉環線，答案是 795 km——比最佳解貴 15.4%，而且<strong>看起來就像一份合理的行程表</strong>。</p>
+<p>出事的只有一步。站在日月潭，最近的沒走過的城市是花蓮（74 km），比往南的台南（116 km）近。走過去之後，整個南部——台南、高雄、台東——只能之後再繞回來拿，而那趟繞路的代價遠超過現在省下的 42 km。貪心看不到這件事，因為它的狀態裡根本沒有「還剩哪些城市」。</p>
+<p>這兩種錯誤剛好把正確答案夾在中間，所以值得一起記：樹永遠比最佳解小，貪心環線永遠比最佳解大，而且兩者都不丟例外。「它有跑完」不能當作 TSP 實作正確的證據。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2037%20-%20bitmask%20dp%20and%20tsp/imgs/day37_5.png?raw=true">
+<h2>複雜度，以及那道牆搬到哪裡</h2>
+<p><code>2^n · n²</code> 仍然是指數。Held-Karp 沒有讓 TSP 變得可解，它只是把牆往後搬。這支模組實測：暴力法在 <code>n = 8</code> 是 8.6 ms、<code>n = 9</code> 是 98.8 ms、<code>n = 10</code> 是 890 ms；Held-Karp 在 <code>n = 8</code> 是 1.2 ms，<code>n = 15</code> 是 614 ms——而暴力法在 <code>n = 15</code> 大約要跑 42 小時。</p>
+<pre><code> n                    (n-1)!        2^n * n^2
+ 8                     5,040           16,384
+10                   362,880          102,400
+13               479,001,600        1,384,448
+15            87,178,291,200        7,372,800
+20   121,645,100,408,832,000      419,430,400</code></pre>
+<p>超過大約二十個城市，表格本身就塞不進記憶體了，答案只能從別的地方來：放棄最佳性的啟發式方法，像是基因演算法或模擬退火；或是分支定界解法——而它用來剪枝的下界，正好就是上面那段「壞掉的」遞迴不小心算出來的東西。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2037%20-%20bitmask%20dp%20and%20tsp/imgs/day37_4.png?raw=true">
+<h2>LeetCode 847 - Shortest Path Visiting All Nodes（訪問所有節點的最短路徑）</h2>
+<p><strong>題意。</strong> 給一張連通的無向圖，求出「每個節點至少走訪一次」的最短走法有多少條邊。起點終點都可以任選，節點和邊都可以重複走。</p>
+<p><strong>輸入／輸出。</strong> <code>graph</code> 是相鄰串列，<code>graph[i]</code> 列出節點 <code>i</code> 的鄰居。回傳最短走法用到的邊數。</p>
+<p><strong>範例。</strong> <code>graph = [[1,2,3],[0],[0],[0]]</code> 的答案是 4。節點 0 是接著三片葉子的中心，所以像 1 - 0 - 2 - 0 - 3 這樣走要四條邊，而中心必須被經過兩次。</p>
+<p><strong>限制。</strong> <code>n</code> 最多 12，這就是全部的提示：<code>2^12 · 12</code> 個狀態很小，<code>12!</code> 不小。因為允許重走，所以這不是 Hamiltonian path 問題，而且每一步的成本固定是一條邊。</p>
+<p>既然每條邊成本相同，這題是 BFS 而不是填表——但狀態就是今天的狀態：<code>(走過哪些節點的 mask, 現在在哪個節點)</code>。每個 <code>i</code> 都用 <code>(1 &lt;&lt; i, i)</code> 當種子丟進 queue，因為任何節點都可以當起點，然後第一次看到 <code>mask</code> 滿了就停。唯一要寫對的是：visited 要記在 <code>(mask, node)</code> 這一對上，不是記在 node 上。記在 node 上的寫法，遇到必須繞回中心的圖就會給出太大的答案。</p>
+<p><a href="https://leetcode.com/problems/shortest-path-visiting-all-nodes/">leetcode.com/problems/shortest-path-visiting-all-nodes</a></p>
+<h2>LeetCode 943 - Find the Shortest Superstring（最短超級字串）</h2>
+<p><strong>題意。</strong> 把給定的所有字串排成一條字串，使每個輸入字串都是它的子字串，並且這條字串越短越好。最短答案有多個時回傳任何一個都可以。</p>
+<p><strong>輸入／輸出。</strong> <code>words</code> 是一組字串；回傳一條字串。</p>
+<p><strong>範例。</strong> <code>words = [&quot;catg&quot;,&quot;ctaagt&quot;,&quot;gcta&quot;,&quot;ttca&quot;,&quot;atgcatc&quot;]</code> 的其中一個最短答案是 <code>gctaagttcatgcatc</code>，16 個字元。五個輸入字串合計 25 個字元，而 <code>gcta, ctaagt, ttca, catg, atgcatc</code> 這個順序重疊掉了其中 9 個。</p>
+<p><strong>限制。</strong> 最多 12 個字串，每個最長 20 個字元，而且沒有任何一個字串是另一個的子字串——最後這一句才是讓「用某個順序接起來」變成完整搜尋空間的關鍵，而 12 又是 bitmask 的提示。</p>
+<p>這題就是把 TSP 換兩個東西：距離換成重疊、<code>min</code> 換成 <code>max</code>。先算好 <code>ov[a][b]</code>，也就是 <code>a</code> 的尾巴已經替 <code>b</code> 的頭寫掉幾個字元，然後跑同一張 <code>dp[mask][last]</code>，改成最大化總重疊。最小化最終長度和最大化重疊是同一件事，因為輸入長度總和是常數。</p>
+<p>陷阱在種子，而且它正好是 TSP 那件事的鏡像。環線裡任何城市都可以叫做起點，所以只種 <code>dp[1][0]</code> 是免費的；這一題求的是一條開放的鏈，第一個字是真的決定。只種一個起點照樣會得到一個合法的超級字串——以這組輸入來說是 <code>catgcatcgctaagttca</code>，18 個字元而不是 16。比較長、完全合法，而且小測資常常看不出來。</p>
+<p><a href="https://leetcode.com/problems/find-the-shortest-superstring/">leetcode.com/problems/find-the-shortest-superstring</a></p>
+<h2>LeetCode 526 - Beautiful Arrangement（優美的排列）</h2>
+<p><strong>題意。</strong> 數 <code>1..n</code> 的排列中，有多少個排列讓每個元素都跟它的位置相容：對每個 1 起算的位置 <code>i</code>，放在那裡的數字要能整除 <code>i</code>，或者 <code>i</code> 能整除那個數字。</p>
+<p><strong>輸入／輸出。</strong> 一個整數 <code>n</code>；回傳符合條件的排列數。</p>
+<p><strong>範例。</strong> <code>n = 2</code> 的答案是 2。<code>[1,2]</code> 可以，因為 1 整除 1、2 整除 2；<code>[2,1]</code> 也可以，因為 2 被位置 1 整除、1 整除位置 2。</p>
+<p><strong>限制。</strong> <code>1 &lt;= n &lt;= 15</code>。15 的階乘是 1.3 兆，<code>2^15 · 15</code> 大約五十萬。</p>
+<p>這一題的狀態只有 mask——而這正是有趣的地方。<code>popcount(mask)</code> 本身已經說出現在要填第幾個位置，所以第二個欄位是多餘的：<code>dp[mask] = sum(dp[拿掉 i 的 mask])</code>，對每個跟位置 <code>popcount(mask)</code> 相容的 <code>i</code> 加總。這也正是 TSP 裡少掉的 <code>last</code> 這麼容易被忽略的原因：有時候那個額外欄位真的可以從 mask 推回來。每次該問的不是「這個狀態看起來夠小嗎」，而是「下一步的成本，只用狀態記得的東西寫得出來嗎」。</p>
+<p><a href="https://leetcode.com/problems/beautiful-arrangement/">leetcode.com/problems/beautiful-arrangement</a></p>
+<h2>這件事之後會用在哪裡</h2>
+<p>同一張 <code>(mask, last)</code> 表格會在所有「一小組東西要決定順序」的地方再出現：指派問題、bitonic tour、少量活躍值的暫存器配置。而今天這兩個錯誤答案的壽命很長——生成樹下界正是分支定界 TSP 解法拿來剪枝的東西，最近鄰居法則是啟發式搜尋的標準起手式，然後那個搜尋接下來的時間，就花在修我們剛剛在日月潭看著它犯下的那個錯。</p>
+<p>明天：貪心演算法——區間排程與 Huffman 編碼——以及「每次拿眼前最好的」在什麼時候不再是今天這種錯誤。</p>
+<p>完整程式碼、notebook、圖片與互動演示：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2037%20-%20bitmask%20dp%20and%20tsp">day 37 on GitHub</a></p>
+</body>
+</html>

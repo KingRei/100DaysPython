@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Greedy algorithms: interval scheduling and Huffman coding</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Greedy algorithms: interval scheduling and Huffman coding</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2038%20-%20greedy%20and%20huffman%20coding">day 38 on GitHub</a></p>
+<p><em>100 Days of Python - day 38</em></p>
+<p>Eight people want the same meeting room. Sorting their requests by finish time seats five of them; sorting by who asked first seats three; sorting by how short the meeting is seats four. All three schedules are perfectly legal - nobody double-books, nothing raises, no test fails. Two of them are just worse, and the program has no way to say so.</p>
+<p>That is the whole subject of today. A greedy algorithm takes the choice that looks best right now and never reconsiders, which is why greedy code is three lines where yesterday&#x27;s Held-Karp table was thirty. The difficulty is not writing one. It is that <strong>a wrong greedy key does not crash</strong> - it hands back a legal answer that is quietly worse, and unless you have something to compare against, you never find out.</p>
+<p>Days 33 through 37 built tables precisely because the future had to be accounted for. Today is the opposite claim: that for some problems a single local rule is already optimal. Below are the two classic examples - one where the greedy is right and two tempting keys are wrong, and one where the greedy is provably right and a one-line change to the data structure quietly makes the output 55% bigger.</p>
+<h2>Eight requests, one room</h2>
+<img alt="day38_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2038%20-%20greedy%20and%20huffman%20coding/imgs/day38_1.png">
+<p>The intervals are half-open: a meeting that ends at 11:00 does not clash with one that starts at 11:00. Sort by finish time, walk the list once, accept a meeting whenever it starts at or after the end of the last one accepted.</p>
+<pre><code>def select_by_end(intervals):
+    out, last_end = [], float(&#x27;-inf&#x27;)
+    for s, e in sorted(intervals, key=lambda iv: iv[1]):
+        if s &gt;= last_end:            # no clash with what we already took
+            out.append((s, e))
+            last_end = e
+    return out</code></pre>
+<p>Five meetings: B, C, D, F, G. The reason the finish time is the right key and not just <em>a</em> key is that the only thing constraining everything still to come is the clock time at which the room becomes free again. Taking the meeting that finishes earliest leaves the room free at the earliest possible moment, so it can never close off an option another choice would have kept open.</p>
+<h2>The two keys that lose</h2>
+<img alt="day38_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2038%20-%20greedy%20and%20huffman%20coding/imgs/day38_2.png">
+<p>&quot;Whoever asked first goes first&quot; is how a human runs a room. &quot;Pack the short meetings first&quot; is how you fit socks into a drawer. Both are defensible, both fit in the same four lines, and both lose:</p>
+<pre><code>sort key                      seated  picks
+----------------------------  ------  ---------
+by finish time                5       B C D F G
+by start time                 3       A E G
+by duration                   4       B C E G
+brute force, all 2^8 subsets  5       B C D F G</code></pre>
+<p>Start time hands the room to A, a two-hour design review that blocks 09:15 to 11:15 and with it the three short meetings underneath. Duration grabs the two fifteen-minute meetings because they look cheap, and then cannot fit D.</p>
+<p>The ranking is not the point. The point is that all three are clash-free schedules that a reviewer would sign off on. In a real system there is no brute force sitting next to the greedy, so a key chosen on intuition stays wrong forever.</p>
+<h2>The exchange argument, run as an experiment</h2>
+<img alt="day38_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2038%20-%20greedy%20and%20huffman%20coding/imgs/day38_3.png">
+<p>Proofs that a greedy is optimal nearly always have one shape. Claim: the interval that finishes first belongs to <em>some</em> optimal schedule. Take any optimal schedule that does not contain it and swap its first meeting for the earliest finisher. The swap cannot create a clash, because the replacement ends no later than what it replaced. So there is an optimal schedule of the same size containing the greedy choice, the greedy choice costs nothing, and the argument applies again to whatever is left.</p>
+<p>You do not have to take that on faith. Force the first greedy choice, brute-force the rest, and see whether the answer got worse:</p>
+<pre><code>first = min(intervals, key=lambda iv: iv[1])
+unrestricted = len(select_bruteforce(intervals))
+rest = [iv for iv in intervals if compatible(iv, first) and iv != first]
+forced = 1 + len(select_bruteforce(rest))</code></pre>
+<p>Both come back 5. This is a cheap habit worth having on any greedy you are unsure of: a proof you can run beats a proof you half-remember.</p>
+<h2>Change the question slightly and the greedy dies</h2>
+<p>Now each meeting is worth money and the goal is the most valuable schedule, not the fullest one. Run the same by-finish-time greedy and add up what it happens to collect:</p>
+<ol><li>The best possible is 17, from A, F and H - three meetings, not five.</li></ol>
+<p>No sort key rescues this, because the value of taking a meeting now depends on what was given up for it. That is exactly what a table is for. Weighted interval scheduling is Day 33&#x27;s DP with Day 23&#x27;s <code>bisect</code> finding, for each interval, the last one that finishes before it starts:</p>
+<pre><code>iv = sorted(intervals, key=lambda t: t[1])
+ends = [e for _, e in iv]
+best = [0] * (len(iv) + 1)
+for i, (s, e) in enumerate(iv):
+    j = bisect_right(ends, s, 0, i)      # last compatible interval, 0 if none
+    best[i + 1] = max(best[i], best[j] + value[(s, e)])</code></pre>
+<p>Same failure mode as the wrong sort key, one step further along: the greedy is now the wrong <em>tool</em>, and it still hands back a real schedule without complaining.</p>
+<h2>Huffman coding: the greedy that is provably right</h2>
+<img alt="day38_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2038%20-%20greedy%20and%20huffman%20coding/imgs/day38_4.png">
+<p>A fixed-length code spends as many bits on the rarest symbol as on the most common one. Huffman&#x27;s observation is that the two rarest symbols can always sit as siblings at the deepest level of the code tree, because nothing is lost by giving the longest codewords to the symbols used least. That becomes an algorithm with no lookahead at all: pull the two lightest subtrees off a min-heap, merge them, push the merged node back, repeat. Left branch is a <code>0</code>, right is a <code>1</code>.</p>
+<pre><code>while len(heap) &gt; 1:
+    w1, _, n1 = heapq.heappop(heap)
+    w2, _, n2 = heapq.heappop(heap)
+    heapq.heappush(heap, (w1 + w2, tie, (n1, n2)))   # back into the queue
+    tie += 1</code></pre>
+<p>On the 53-character sentence <code>&#x27;greedy algorithms are easy to write and hard to prove&#x27;</code> there are 18 distinct characters, so a fixed-length code needs 5 bits each: 265 bits. Huffman gets it to 204, 23% smaller. The space character, which appears nine times, gets a 3-bit codeword; the longest codeword in the tree is 6 bits and goes to a letter that appears once.</p>
+<p>Two details there are load-bearing. The <code>tie</code> counter keeps the ordering deterministic when two weights are equal - without it Python falls through to comparing the node payloads, and the output depends on how tuples of tuples happen to order. And the <code>heappush</code> is not a formality: a merged node is heavier than either child and has to re-enter the queue at its new position. That is the entire reason this needs a heap rather than a sorted list.</p>
+<p>Decoding needs no separators, which is what a prefix code buys. No codeword is a prefix of another, so the decoder reads bits one at a time and emits a symbol the moment what it has read is a codeword.</p>
+<h2>The one-line change that costs 55%</h2>
+<img alt="day38_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2038%20-%20greedy%20and%20huffman%20coding/imgs/day38_5.png">
+<p>Sort the symbols by frequency once, then merge left to right and never put the merged node back into the queue:</p>
+<pre><code>items = sorted(freqs.items(), key=lambda kv: (kv[1], kv[0]))
+node, weight = items[0][0], items[0][1]
+for sym, w in items[1:]:
+    node, weight = ((node, sym), weight + w)</code></pre>
+<p>Every merge still joins two subtrees, so the result is still a legal prefix code and still decodes the text exactly. What is lost is the re-sort. A merged node whose weight has grown past its neighbours should sink back down the queue; here it never does, so it stays one of the two lightest forever and the tree falls into a ladder hanging off one side. The longest codeword goes from 6 bits to 17.</p>
+<pre><code>code                               bits
+---------------------------------  ----
+Huffman with a heap                204
+plain 5-bit fixed-length code      265
+sorted once, merged left to right  316</code></pre>
+<p>Both codes are prefix-free. Both round-trip the text exactly. Both have a Kraft sum - the sum of 2 to the power of minus the codeword length - of exactly 1.000, so even the structural check that catches a code tree with a branch leading nowhere passes. The broken one is simply 55% bigger than the correct one, and worse than not compressing at all.</p>
+<p>And the oldest version of this trap: paying 6 with coins of 1, 3 and 4. Greedy takes the largest coin that fits, so 4 + 1 + 1, three coins; two coins of 3 would have done it. What makes the trap durable is that with the coins actually in a wallet - 1, 5, 10, 25 - the same greedy is always optimal. The habit gets formed on denominations that forgive it and then carried to ones that do not.</p>
+<h2>LeetCode 435 - Non-overlapping Intervals</h2>
+<p><strong>The task.</strong> Given a list of intervals, remove as few as possible so none of the survivors overlap, and return how many were removed.</p>
+<p><strong>Input / output.</strong> A list of <code>[start, end]</code> pairs. Returns one integer: the minimum number of deletions.</p>
+<p><strong>Example.</strong> <code>[[1,2], [2,3], [3,4], [1,3]]</code> returns <code>1</code>. Deleting <code>[1,3]</code> leaves <code>[1,2]</code>, <code>[2,3]</code> and <code>[3,4]</code>, which meet only at their endpoints and so do not overlap. Deleting any one of the other three would leave <code>[1,3]</code> still clashing with two survivors, so one deletion is both necessary and sufficient.</p>
+<p><strong>Constraints.</strong> Up to 100,000 intervals, coordinates inside the signed 32-bit range. The interval count decides the algorithm: anything comparing intervals pairwise is 10^10 operations and times out, so a sort plus one linear pass is the only affordable shape. The other constraint hides in the wording - intervals that merely touch at an endpoint are <em>not</em> overlapping, which is why the test is <code>s &gt;= last_end</code> and not <code>s &gt; last_end</code>.</p>
+<p>Maximising what is kept is the same problem as minimising what is thrown away, so the meeting-room greedy solves it unchanged:</p>
+<pre><code>class Solution:
+    def eraseOverlapIntervals(self, intervals: List[List[int]]) -&gt; int:
+        intervals.sort(key=lambda iv: iv[1])        # earliest finishing first
+        kept, last_end = 0, float(&#x27;-inf&#x27;)
+        for s, e in intervals:
+            if s &gt;= last_end:                       # fits after what we kept
+                kept += 1
+                last_end = e
+        return len(intervals) - kept</code></pre>
+<p><a href="https://leetcode.com/problems/non-overlapping-intervals/">leetcode.com/problems/non-overlapping-intervals</a></p>
+<p>The interview-relevant caveat is the sibling problem. <strong>LeetCode 452, Minimum Number of Arrows to Burst Balloons</strong>, is the same sort with one character changed. Balloons are <em>closed</em> intervals, so an arrow at <code>x = 2</code> bursts both <code>[1,2]</code> and <code>[2,3]</code>, and a new arrow is only needed when the next balloon starts <em>strictly after</em> the last arrow: <code>if s &gt; last</code>, not <code>&gt;=</code>. Getting 435 right and then reusing it verbatim on 452 is one of the most common ways to fail the follow-up.</p>
+<h2>Why this matters later</h2>
+<p>Huffman is the direct ancestor of the tokenizer sitting in front of every language model. Byte-pair encoding runs the same shape in reverse - instead of merging the two rarest symbols to give them long codes, it merges the most <em>frequent</em> adjacent pair to give it a short one, over and over, and the vocabulary that falls out is what turns text into token IDs. The frequency-driven merge loop, and the question of what the priority queue has to be re-sorted on, come back unchanged there.</p>
+<p>The wider lesson travels further than either example. Every one of the failures here - the wrong sort key, the weighted version, the un-re-sorted heap, the coins - produced a valid answer. Greedy algorithms do not fail loudly; they fail by a percentage. If you ship one, ship the brute force next to it and assert they agree on small inputs, because that assert is the only thing standing between you and a silent 55%.</p>
+<p>Tomorrow: backtracking and pruning - N-Queens and Sudoku, where instead of committing to one choice forever we commit, explore, and take it back.</p>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2038%20-%20greedy%20and%20huffman%20coding">day 38 on GitHub</a></p>
+</body>
+</html>

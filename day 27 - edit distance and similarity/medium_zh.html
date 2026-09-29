@@ -29,7 +29,7 @@ li     { margin: .3em 0; }
 <h1>Day 27 — 編輯距離與相似度：Levenshtein、Jaccard、MinHash</h1>
 <p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2027%20-%20edit%20distance%20and%20similarity">day 27 on GitHub</a></p>
 <p><em>100 Days of Python - day 27</em></p>
-<p>一千萬份文件要去重，就是 5 × 10¹³ 個 pair。就算一個 pair 只花一微秒，也要跑一年以上。所以真正的問題從來不是「怎麼把兩份文件比得更快」，而是「怎麼讓大部分的 pair 根本不用比」。今天兩件事都要講：精確但昂貴的那個答案，還有讓 pair 數量消失的那個 sketch。</p>
+<p>一千萬份文件裡要把重複的挑掉，得拿每一份去比對其他每一份，也就是五十兆次比較。就算一次只花一微秒，也要跑上一年多。所以真正該問的從來不是「兩份文件怎麼比得更快」，而是「怎麼讓絕大多數的比較根本不用做」。今天兩邊都會講：一邊是編輯距離（Levenshtein），它算得出兩段文字到底差幾個字，答案精準，但一千萬份文件跑不完；另一邊是 MinHash 加 LSH，把每份文件壓成一小串指紋，只有指紋對得上的文件才會被放進同一個桶子裡，落在不同桶子的那幾兆組從頭到尾不會被比到。</p>
 <p>前三天問的都是精確問題。Trie 回答「這是不是某個前綴」，KMP 回答「這個 pattern 有沒有出現」，suffix array 回答「哪一段一字不差地重複了」。但真實的文字不配合：使用者打成 <code>recieve</code>、ASR 模型漏掉一個字、兩個爬下來的網頁只差一條 cookie 橫幅 — 這些全都是<strong>接近</strong>的匹配，而精確結構會一致回報「不匹配」。</p>
 <img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2027%20-%20edit%20distance%20and%20similarity/imgs/day27_1.png">
 <h2>Levenshtein：三個前驅，每一個都是一種操作</h2>
