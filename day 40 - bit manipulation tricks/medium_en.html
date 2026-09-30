@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bit tricks: masks and popcount, and where Python&#x27;s endless integers break them</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Bit tricks: masks and popcount, and where Python&#x27;s endless integers break them</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2040%20-%20bit%20manipulation%20tricks">day 40 on GitHub</a></p>
+<p><em>100 Days of Python - day 40</em></p>
+<p>Store a set of numbers as the bits of one Python integer, and &quot;how many members do these two sets share?&quot; gets about sixty times faster than asking two <code>set</code> objects, while the set shrinks to a thirty-first of the memory. Count the ones in that integer with <code>int.bit_count()</code> and it beats every clever popcount formula from C, by four to thirty-five times.</p>
+<p>That is the good half of today. The other half is what happens when a bit trick copied from C or Java meets a Python integer. <code>bin(-5).count(&#x27;1&#x27;)</code> returns 2, where C says 31. The textbook answer to &quot;add two numbers without <code>+</code>&quot; never returns on <code>-1 + 1</code>. A standard answer to LeetCode 137 passes both of its examples and then fails on every test whose answer is negative. None of them raises an error.</p>
+<p>Yesterday&#x27;s bitmask N-Queens picked its next column with <code>free &amp; -free</code> and moved on without saying why that works. Today is the why - and the one property of Python integers that decides which bit tricks you can trust.</p>
+<h2>Python integers have no width</h2>
+<p>In C, an <code>int</code> is 32 bits. -5 is stored as 32 bits: twenty-nine ones and then <code>011</code> at the bottom. A Python <code>int</code> has no 32. It behaves as if it had infinitely many bits, so -5 is a 1 in every position from bit 3 upward, forever.</p>
+<img alt="day40_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2040%20-%20bit%20manipulation%20tricks/imgs/day40_1.png">
+<p>That one fact splits every bit trick into two groups.</p>
+<p><strong>Tricks that look at each column on its own are safe.</strong> <code>&amp;</code>, <code>|</code>, <code>^</code> and <code>~</code> compute bit k of the answer from bit k of the inputs and nothing else. They give the same answer at every width, so they work on negative Python integers exactly as in C.</p>
+<p><strong>Tricks that ask &quot;how many bits?&quot; need a width, and Python never stores one.</strong> That covers popcount of a negative number, &quot;which is the top bit?&quot;, and any loop that waits for a carry to fall off bit 31. On a Python integer there is no bit 31 to fall off.</p>
+<p>Two tiny functions pin the width back on, and they fix every trap in this article:</p>
+<pre><code>M32 = (1 &lt;&lt; 32) - 1
+
+def u32(x):           # keep the low 32 bits - what a C uint32_t would hold
+    return x &amp; M32
+
+def s32(u):           # read 32 bits as signed: bit 31 is worth -2**31, not +2**31
+    u &amp;= M32
+    return u - (1 &lt;&lt; 32) if u &gt;&gt; 31 else u</code></pre>
+<p><code>u32(-5)</code> is 4,294,967,291, and <code>s32</code> turns that back into -5.</p>
+<h2>The toolkit, on x = 180</h2>
+<p>Testing, setting, clearing and toggling bit <code>k</code> are one shift and one operator each: <code>x &gt;&gt; k &amp; 1</code>, <code>x | 1 &lt;&lt; k</code>, <code>x &amp; ~(1 &lt;&lt; k)</code>, <code>x ^ 1 &lt;&lt; k</code>. The three worth memorising work on the <em>lowest</em> bit:</p>
+<img alt="day40_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2040%20-%20bit%20manipulation%20tricks/imgs/day40_2.png">
+<p>They all come from one fact. Subtracting 1 turns the lowest 1 into a 0 and every 0 below it into a 1, and everything above it stays. So <code>x &amp; (x - 1)</code> wipes out exactly the lowest 1: 180 becomes 176. <code>-x</code> is <code>~x + 1</code>, which flips everything above the lowest 1 and leaves the lowest 1 alone, so <code>x &amp; -x</code> keeps only that bit: 4. And <code>x | (x + 1)</code> turns on the lowest 0: 181.</p>
+<p><code>x &amp; -x</code> is the step a Fenwick tree takes to jump between the ranges it stores (Day 29), and it is how yesterday&#x27;s N-Queens pulled one free column out of a mask. <code>(x &amp; -x).bit_length() - 1</code> gives the number of trailing zeros, 2 for 180.</p>
+<p>One precedence trap before moving on. Arithmetic binds tighter than a shift, so <code>1 &lt;&lt; n - 1</code> means <code>1 &lt;&lt; (n - 1)</code>. For <code>n = 4</code> that is 8 (<code>1000</code>), not the four ones you wanted (15). Write <code>(1 &lt;&lt; n) - 1</code>. The opposite trap from C, <code>x &amp; 1 == 0</code>, does not exist in Python, because <code>&amp;</code> binds tighter than <code>==</code> here.</p>
+<h2>popcount five ways</h2>
+<p>Counting the 1s in a number (its &quot;popcount&quot;) has a whole folklore of methods:</p>
+<pre><code>def popcount_shift(x):          # one round per bit, up to the top 1
+    count = 0
+    while x:
+        count += x &amp; 1
+        x &gt;&gt;= 1
+    return count
+
+def popcount_kernighan(x):      # one round per 1
+    count = 0
+    while x:
+        x &amp;= x - 1              # drop the lowest 1
+        count += 1
+    return count</code></pre>
+<p>The shift loop looks at every bit. Kernighan&#x27;s loop uses <code>x &amp; (x - 1)</code> to jump straight from one 1 to the next, so it runs once per 1:</p>
+<img alt="day40_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2040%20-%20bit%20manipulation%20tricks/imgs/day40_3.png">
+<p>On 200,000 random 32-bit numbers that is 3,199,046 rounds against 6,200,129 - half, because a random 32-bit number has about 16 ones but about 31 bits up to its top 1.</p>
+<p>The cleverest of the classic methods adds all 32 bits at once without any loop, a technique called SWAR (&quot;SIMD within a register&quot;):</p>
+<pre><code>def popcount_swar32(x):
+    x = x - ((x &gt;&gt; 1) &amp; 0x55555555)                   # 16 two-bit counts
+    x = (x &amp; 0x33333333) + ((x &gt;&gt; 2) &amp; 0x33333333)    # 8 four-bit counts
+    x = (x + (x &gt;&gt; 4)) &amp; 0x0F0F0F0F                   # 4 byte counts
+    return ((x * 0x01010101) &amp; 0xFFFFFFFF) &gt;&gt; 24      # add the 4 bytes</code></pre>
+<p>The first line turns each pair of bits into the count of 1s in that pair. The second adds neighbouring pairs into 4-bit counts, the third adds those into byte counts, and the multiply adds all four bytes into the top byte. In C this is the fast one. In Python:</p>
+<img alt="day40_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2040%20-%20bit%20manipulation%20tricks/imgs/day40_4.png">
+<p>The builtin <code>int.bit_count()</code> (Python 3.10 and later) wins by five times over SWAR. Every <code>&amp;</code>, <code>&gt;&gt;</code> and <code>+</code> in Python is a separate trip through the interpreter, so the fastest method is the one with the fewest Python-level operations, and <code>bit_count()</code> runs its whole loop in C. It also works on integers of any size: on a single million-bit integer it takes about 70 microseconds, while <code>bin(x).count(&#x27;1&#x27;)</code> takes about 6 milliseconds because it first builds a million-character string.</p>
+<h2>Silent failure: popcount of a negative number</h2>
+<p>Now ask all of them about -5. C&#x27;s <code>__builtin_popcount</code> and Java&#x27;s <code>Integer.bitCount</code> say 31. Python says:</p>
+<pre><code>bin(-5).count(&#x27;1&#x27;)     -&gt; 2          bin(-5) is &#x27;-0b101&#x27;: it counts the digits of 5
+(-5).bit_count()       -&gt; 2          documented as the popcount of abs(x)
+Kernighan / shift loop -&gt; never returns
+(-5 &amp; M32).bit_count() -&gt; 31</code></pre>
+<p>Kernighan never returns because <code>x &amp; (x - 1)</code> of a negative number is still negative. The values go -5, -6, -8, -16, -32, ..., and after 40 rounds x is about minus 2.2 trillion. There is always another 1 further up. The fix is to pin the width before counting.</p>
+<h2>LeetCode 338 - Counting Bits</h2>
+<p><strong>The task.</strong> For every whole number from 0 up to <code>n</code>, report how many 1s its binary form contains.</p>
+<p><strong>Input / output.</strong> One integer <code>n</code>; return a list of <code>n + 1</code> integers where entry <code>i</code> is the number of 1 bits in <code>i</code>.</p>
+<p><strong>Example.</strong> <code>n = 5</code> gives <code>[0, 1, 1, 2, 1, 2]</code>: 0 is <code>0</code>, 1 is <code>1</code>, 2 is <code>10</code>, 3 is <code>11</code>, 4 is <code>100</code>, 5 is <code>101</code>.</p>
+<p><strong>Constraints.</strong> <code>0 &lt;= n &lt;= 100,000</code>. Calling popcount on every number is already fast enough. The follow-up asks for a single linear pass with no builtin popcount, and that is what turns it into a DP problem.</p>
+<p><a href="https://leetcode.com/problems/counting-bits/">leetcode.com/problems/counting-bits</a></p>
+<pre><code>class Solution:
+    def countBits(self, n: int) -&gt; list[int]:
+        ans = [0] * (n + 1)
+        for i in range(1, n + 1):
+            ans[i] = ans[i &gt;&gt; 1] + (i &amp; 1)   # i without its last bit, plus that bit
+        return ans</code></pre>
+<p><code>i &gt;&gt; 1</code> drops the last bit, so it is a smaller number whose entry is already in the table, and <code>i &amp; 1</code> is the bit that was dropped. The same table also falls out of the lowest-bit trick: <code>ans[i] = ans[i &amp; (i - 1)] + 1</code>, because <code>i</code> has exactly one more 1 than <code>i</code> with its lowest 1 removed.</p>
+<h2>A Python int as a set of a million members</h2>
+<p>Bit <code>v</code> being set means &quot;v is in the set&quot;. Then intersection is <code>&amp;</code>, union is <code>|</code>, and the size is <code>bit_count()</code>, each one a single loop in C over machine words. Two random 100,000-member sets drawn from the numbers 0 to 999,999 share 9,955 members. Asking two <code>set</code> objects takes about 5 ms; <code>(a &amp; b).bit_count()</code> takes about 0.08 ms. The <code>set</code> weighs 4,194,520 bytes; the integer weighs 133,360.</p>
+<p>This is the same move as Day 34&#x27;s subset sum (<code>bits |= bits &lt;&lt; x</code> updated a whole row of the DP table at once), Day 32&#x27;s Bloom filter, and Day 27&#x27;s Jaccard similarity.</p>
+<p>There is one slowdown that never shows up in small tests. <code>x |= 1 &lt;&lt; v</code> looks like a constant-time &quot;add one member&quot;, but a Python integer cannot be changed in place, so every <code>|=</code> builds a brand-new integer as long as the whole set. Adding 20,000 members to a million-bit set that way takes about 220 ms. Filling a <code>bytearray</code> and converting once takes about 3 ms:</p>
+<pre><code>def to_bitset(values, universe):
+    buf = bytearray((universe + 7) // 8)
+    for v in values:
+        buf[v &gt;&gt; 3] |= 1 &lt;&lt; (v &amp; 7)       # byte v // 8, bit v % 8
+    return int.from_bytes(buf, &#x27;little&#x27;)</code></pre>
+<h2>LeetCode 136 / 137 - what XOR can and cannot cancel</h2>
+<h3>LeetCode 136 - Single Number</h3>
+<p><strong>The task.</strong> In a list where every value shows up exactly twice except one, find the one that shows up once.</p>
+<p><strong>Input / output.</strong> A non-empty list of integers <code>nums</code>; return the lone value.</p>
+<p><strong>Example.</strong> <code>[4, 1, 2, 1, 2]</code> gives 4: the two 1s pair up, the two 2s pair up, and 4 is left over.</p>
+<p><strong>Constraints.</strong> Up to 30,000 values between -30,000 and 30,000, linear time <em>and</em> constant extra space. The space rule is what forbids a <code>Counter</code> or a <code>set</code> and forces a bit trick.</p>
+<p><a href="https://leetcode.com/problems/single-number/">leetcode.com/problems/single-number</a></p>
+<h3>LeetCode 137 - Single Number II</h3>
+<p><strong>The task.</strong> The same, except every other value shows up exactly three times.</p>
+<p><strong>Input / output.</strong> A non-empty list of integers <code>nums</code>; return the value that appears once.</p>
+<p><strong>Example.</strong> <code>[0, 1, 0, 1, 0, 1, 99]</code> gives 99, since 0 and 1 each appear three times.</p>
+<p><strong>Constraints.</strong> Up to 30,000 values anywhere in the signed 32-bit range, linear time and constant extra space again. The signed range is the trap: the answer can be negative, and in Python that decides whether the column-counting answer is right.</p>
+<p><a href="https://leetcode.com/problems/single-number-ii/">leetcode.com/problems/single-number-ii</a></p>
+<pre><code>class Solution136:
+    def singleNumber(self, nums):
+        return reduce(xor, nums, 0)       # every pair cancels, column by column
+
+class Solution137:
+    def singleNumber(self, nums):
+        ones = twos = 0                   # per column: seen once / seen twice
+        for x in nums:
+            ones = (ones ^ x) &amp; ~twos
+            twos = (twos ^ x) &amp; ~ones
+        return ones</code></pre>
+<p>XOR cancels pairs, so 136 is one line. It cannot cancel triples, so 137 keeps a counter that goes 0, 1, 2, 0 in every column, stored across the two integers <code>ones</code> and <code>twos</code>. Both answers use only <code>^</code>, <code>&amp;</code> and <code>~</code>, so both work on negatives with no width at all: <code>[-7, 3, 3]</code> gives -7.</p>
+<p>The other well-known answer to 137 counts how many numbers have bit k set, for each of the 32 columns, and keeps the columns whose count is not a multiple of 3. Leave off the final <code>s32</code> and this is what happens:</p>
+<img alt="day40_6" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2040%20-%20bit%20manipulation%20tricks/imgs/day40_6.png">
+<pre><code>nums                      ones/twos   count + s32   count, no s32
+[2, 2, 3, 2]                      3             3               3
+[0, 1, 0, 1, 0, 1, 99]           99            99              99
+[-2, -2, -3, -2]                 -3            -3   4,294,967,293</code></pre>
+<p>The rebuilt number has bit 31 set. Without <code>s32</code>, Python counts that bit as plus 2.1 billion instead of minus 2.1 billion, and -3 comes back as 4,294,967,293. Both examples pass. On 1,000 random tests over the full range it is wrong on 502 - exactly the ones whose answer is negative.</p>
+<h2>LeetCode 371 - Sum of Two Integers</h2>
+<p><strong>The task.</strong> Add two integers without using the <code>+</code> or <code>-</code> operators.</p>
+<p><strong>Input / output.</strong> Two integers <code>a</code> and <code>b</code>; return their sum.</p>
+<p><strong>Example.</strong> <code>a = 2, b = 3</code> gives 5. <code>2 ^ 3 = 1</code> is the sum if you ignore carries, <code>(2 &amp; 3) &lt;&lt; 1 = 4</code> is the carry, and <code>1 ^ 4 = 5</code> leaves no carry.</p>
+<p><strong>Constraints.</strong> <code>-1000 &lt;= a, b &lt;= 1000</code>. Small, but negative numbers are allowed, and in Python that is the whole problem.</p>
+<p><a href="https://leetcode.com/problems/sum-of-two-integers/">leetcode.com/problems/sum-of-two-integers</a></p>
+<p>The C answer, typed into Python, is:</p>
+<pre><code>while b:
+    a, b = a ^ b, (a &amp; b) &lt;&lt; 1
+return a</code></pre>
+<p>It passes both examples. Then try <code>-1 + 1</code>. The pair becomes <code>(-2, 2)</code>, <code>(-4, 4)</code>, <code>(-8, 8)</code>, ... The carry moves one place to the left each round. In C it would reach bit 31, shift out of the word and vanish after 32 rounds. In Python there is nowhere for it to go: after 40 rounds the carry is 1,099,511,627,776 and still growing, and the loop never ends.</p>
+<img alt="day40_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2040%20-%20bit%20manipulation%20tricks/imgs/day40_5.png">
+<p>Masking both values to 32 bits every round makes the carry fall off, and <code>-1 + 1</code> stops at 0 after 32 rounds. But masking alone gives <code>-1 + -1 = 4,294,967,294</code>, because the answer comes back as an unsigned 32-bit number. The last line reads bit 31 as the sign:</p>
+<pre><code>class Solution:
+    def getSum(self, a: int, b: int) -&gt; int:
+        a, b = a &amp; M32, b &amp; M32
+        while b:
+            a, b = (a ^ b) &amp; M32, ((a &amp; b) &lt;&lt; 1) &amp; M32   # carry falls off bit 31
+        return a if a &lt; 1 &lt;&lt; 31 else a - (1 &lt;&lt; 32)       # bit 31 is the sign</code></pre>
+<p>This is the interview caveat for 371 in Python. The algorithm is three lines, and all the difficulty is in putting back the width that C gives you for free.</p>
+<h2>Complexity</h2>
+<pre><code>operation                                   time               space
+test / set / clear / lowbit (fixed width)   O(1)               O(1)
+popcount, shift loop                        O(bit length)      O(1)
+popcount, Kernighan                         O(number of 1s)    O(1)
+int.bit_count() on an n-bit int             O(n / 64)          O(1)
+Counting Bits (LeetCode 338)                O(n)               O(n)
+bitset &amp;, |, bit_count over a universe U    O(U / 64)          O(U / 8) bytes
+bitset built by x |= 1 &lt;&lt; v, m members      O(m * U / 64)      O(U / 8) bytes
+Single Number I / II (136 / 137)            O(n)               O(1)
+Sum of Two Integers (371), 32-bit           32 rounds at most  O(1)</code></pre>
+<p>Every O(1) in the first row assumes a fixed width. On a million-bit Python integer each of those operations costs time proportional to its length, which is why building a bitset one bit at a time is quadratic.</p>
+<h2>Why this matters later</h2>
+<p>Bitsets come back wherever a large set needs fast intersections: a graph stored as one integer per node turns &quot;common neighbours&quot; into one <code>&amp;</code>, and HyperLogLog estimates how many distinct items it has seen from the number of leading zeros in their hashes, which in Python is <code>bit_length()</code>. On the AI side, int4 quantization stores two 4-bit weights per byte, and reading them back is nothing but shifts and masks - with the same question of whether bit 3 is a sign bit. Hashing functions and random number generators are built from XOR and shifts too, and they always work at a fixed width, so a Python port of one needs <code>&amp; M32</code> or <code>&amp; M64</code> after every step.</p>
+<p>And the habit carries everywhere: when a bit trick from another language gives you a strange number in Python, check whether it asked &quot;how many bits?&quot;.</p>
+<p>Tomorrow: prime sieves, fast exponentiation, GCD and modular arithmetic.</p>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2040%20-%20bit%20manipulation%20tricks">day 40 on GitHub</a></p>
+</body>
+</html>

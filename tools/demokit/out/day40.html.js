@@ -1,0 +1,1085 @@
+// DAY: 40
+// TITLE_ZH: 位元運算技巧：mask、popcount
+// TITLE_EN: Bit tricks: masks and popcount
+// SUB_ZH: 一個 int 就是一排開關：x & -x 取出最低的 1、x & (x - 1) 把它關掉、x.bit_count() 一次數完所有的 1。這些技巧在 C 和 Java 裡寫起來一模一樣，搬到 Python 卻有一半會出事——Python 的整數沒有寬度，負數往左有無限多個 1。逐欄運算的 & | ^ ~ 不受影響；凡是需要「第 31 位就是盡頭」的寫法都會壞：Kernighan 對 -5 永遠停不下來，LeetCode 371 的進位一路往左跑，LeetCode 137 在負數答案上回傳 4,294,967,293。補一個 & 0xFFFFFFFF、最後把第 31 位讀成正負號，就全部修好。
+// SUB_EN: An int is a row of switches: x & -x isolates the lowest 1, x & (x - 1) turns it off, x.bit_count() counts every 1 at once. These tricks read identically in C and Java, and half of them break in Python - Python integers have no width, and a negative number carries infinitely many 1s to its left. The column-wise & | ^ ~ are unaffected; anything that relies on bit 31 being the end breaks: Kernighan never stops on -5, the carry in LeetCode 371 marches left forever, and LeetCode 137 returns 4,294,967,293 for a negative answer. One & 0xFFFFFFFF plus reading bit 31 as the sign fixes all of them.
+// FOLDER: day%2040%20-%20bit%20manipulation%20tricks
+// MEDIUM: https://medium.com/100-days-of-python
+
+const VIEW = [9.8, 6.4];
+function chip(t, cls){ return {t:t, cls:cls || ''}; }
+const curV = () => (typeof varIx !== 'undefined' ? varIx : 0);
+
+const isCJK = ch => { const c = ch.codePointAt(0);
+  return (c >= 0x2e80 && c <= 0x9fff) || (c >= 0xff00 && c <= 0xff60) || (c >= 0x3000 && c <= 0x303f); };
+function tw(str, fs){ let w = 0;
+  for (const ch of String(str)) w += isCJK(ch) ? 1.0 : .55;
+  return w * fs; }
+function fitT(x, y, s, opt){
+  opt = Object.assign({}, opt || {});
+  const fs = opt.fs || .32, a = opt.anchor || 'middle', pad = .20;
+  const room = a === 'start' ? VIEW[0] - pad - x
+             : a === 'end'   ? x - pad
+             : 2 * Math.min(x - pad, VIEW[0] - pad - x);
+  const strs = (typeof s === 'string') ? [s] : [s.zh, s.en].filter(t => t != null);
+  const w = Math.max.apply(null, strs.map(t => tw(t, fs)));
+  if (w > room) opt.fs = fs * room / w;
+  return S.t(x, y, s, opt);
+}
+function fitFs(lab, w, fs){
+  const strs = (typeof lab === 'string') ? [lab] : [lab.zh, lab.en];
+  const need = Math.max.apply(null, strs.map(t => tw(t, fs)));
+  return need > w - .08 ? fs * (w - .08) / need : fs;
+}
+const pyList = a => '[' + a.join(', ') + ']';
+/* thousands separators for Number or BigInt, sign kept */
+const fmt = n => { const s = String(n), neg = s[0] === '-', d = neg ? s.slice(1) : s;
+  return (neg ? '-' : '') + d.replace(/\B(?=(\d{3})+(?!\d))/g, ','); };
+
+/* Python int semantics on BigInt: >> is an arithmetic (floor) shift, & | ^ work
+   on the infinite two's-complement expansion - exactly what CPython does. */
+const B = BigInt;
+const M32 = (1n << 32n) - 1n;
+const bitAt = (v, k) => Number((v >> B(k)) & 1n);
+const s32 = u => { u &= M32; return (u >> 31n) ? u - (1n << 32n) : u; };
+const bin8 = (v, n) => { let s = ''; for (let k = n - 1; k >= 0; k--) s += bitAt(v, k); return s; };
+
+/* one register row, most significant bit on the left.
+   o.st(k) -> style of bit k, o.title, o.prefix (draw the ...0 / ...1 cell that
+   stands for the infinitely many copies of the sign bit), o.val (right-hand text),
+   o.wall (draw a wall between bit wall-1 and bit wall) */
+function bitRow(v, n, x0, y, w, h, o){
+  o = o || {};
+  const out = [], gap = (o.gap == null ? .05 : o.gap), fs = o.fs || Math.min(h * .55, (w - gap - .07) / .55);
+  for (let k = n - 1; k >= 0; k--){
+    const x = x0 + (n - 1 - k) * w, b = bitAt(v, k);
+    const st = o.st ? o.st(k, b) : (b ? 'soft' : 'ghost');
+    out.push(S.r(x, y, w - (o.gap == null ? .05 : o.gap), h, st, String(b), {fs:fs}));
+  }
+  if (o.prefix){
+    const neg = v < 0n, pw = Math.max(.42, w);
+    out.push(S.r(x0 - pw - .06, y, pw, h, neg ? 'bad' : 'ghost', neg ? '…1' : '…0',
+                 {fs:fitFs('…1', pw, fs)}));
+  }
+  if (o.wall != null){
+    const xw = x0 + (n - o.wall) * w - .025;
+    out.push(S.e(xw, y - .12, xw, y + h + .12, {s:'bad', arrow:false, w:.05}));
+  }
+  if (o.title) out.push(fitT(o.tx == null ? x0 - (o.prefix ? Math.max(.42, w) + .2 : .16) : o.tx,
+                             y + h * .66, o.title, {c:o.tc || COL.tealL, fs:o.tfs || .28, anchor:'end'}));
+  if (o.val != null) out.push(fitT(x0 + n * w + .12, y + h * .66, o.val,
+                                   {c:o.vc || COL.pale, fs:o.vfs || .28, anchor:'start'}));
+  return out;
+}
+/* bit-index labels above a row; ks = which indices to print */
+function bitIdx(n, x0, y, w, ks, fs){
+  return ks.map(k => S.t(x0 + (n - 1 - k) * w + (w - .05) / 2, y, String(k),
+                         {c:COL.grey, fs:fs || .2}));
+}
+function caps(sh, o){
+  if (o.cap) sh.push(fitT(4.9, 5.62, o.cap, {c:o.capc || COL.pale, fs:.30}));
+  if (o.cap2) sh.push(fitT(4.9, 6.06, o.cap2, {c:COL.grey, fs:.26}));
+  return sh;
+}
+
+/* ================================================================ tab 1: toolkit */
+const CODE_TK = [
+  'x = 180                  # 0b10110100',
+  'x >> 2 & 1               # test bit 2',
+  'x | 1 << 3               # set bit 3',
+  'x & ~(1 << 4)            # clear bit 4',
+  'x ^ 1 << 7               # toggle bit 7',
+  'x & -x                   # keep only the lowest 1',
+  'x & (x - 1)              # drop the lowest 1',
+  'x | (x + 1)              # turn on the lowest 0',
+  'x ^ (x >> 1)             # Gray code of x'
+];
+const CODE_PREC = [
+  'def full_mask_buggy(n):',
+  '    return 1 << n - 1        # - binds tighter: 1 << (n - 1)',
+  '',
+  'def full_mask(n):',
+  '    return (1 << n) - 1',
+  '',
+  'x & full_mask(4)             # the low 4 bits of x'
+];
+const X0 = 180n;
+/* each tool: the operand row, the operator, the result - all computed here */
+const TOOLS = [
+  {line:1, name:{zh:'測試第 2 位', en:'test bit 2'}, opnd:X0 >> 2n, olab:'x >> 2', op:'& 1',
+   res:(X0 >> 2n) & 1n, focus:[2],
+   why:{zh:'先把 x 往右推 2 格，第 2 位就落到最右邊，再 & 1 把其他位全部遮掉。結果只可能是 0 或 1。注意 >> 比 & 優先，所以 x >> 2 & 1 不用加括號；比較運算又比 & 更低，所以 x >> 2 & 1 == 1 在 Python 裡也是對的（C 剛好相反）。',
+        en:'Shift x right by 2 and bit 2 lands in the last position; & 1 then masks everything else away, so the answer is only ever 0 or 1. >> binds tighter than &, so x >> 2 & 1 needs no parentheses, and comparisons bind looser still, so x >> 2 & 1 == 1 is also fine in Python (C gets this one backwards).'}},
+  {line:2, name:{zh:'設定第 3 位', en:'set bit 3'}, opnd:1n << 3n, olab:'1 << 3', op:'|',
+   res:X0 | (1n << 3n), focus:[3],
+   why:{zh:'1 << 3 是只有第 3 位是 1 的 mask。| 的規則是「任一邊是 1 就是 1」，所以 mask 是 0 的位置 x 原封不動，mask 是 1 的位置一定變成 1。這個技巧可以重複做：已經是 1 的位元再設一次也不會變。',
+        en:'1 << 3 is a mask with only bit 3 on. The rule of | is "1 if either side is 1", so wherever the mask is 0 x passes through untouched, and where it is 1 the result is 1 no matter what. Setting a bit that is already set changes nothing, so the operation is safe to repeat.'}},
+  {line:3, name:{zh:'清除第 4 位', en:'clear bit 4'}, opnd:~(1n << 4n), olab:'~(1 << 4)', op:'&',
+   res:X0 & ~(1n << 4n), focus:[4],
+   why:{zh:'~(1 << 4) 把 mask 反過來：只有第 4 位是 0，其他全是 1。在 Python 裡它等於 -17，左邊有無限多個 1（左側的 …1 格）——但這裡沒關係，& 是一欄一欄算的，x 左邊全是 0，0 & 1 還是 0。逐欄運算不管寬度，這是今天安全的那一半。',
+        en:'~(1 << 4) inverts the mask: only bit 4 is 0, every other bit is 1. In Python that is -17, with infinitely many 1s to the left (the …1 cell). Here it does no harm: & works column by column, x is all 0s up there, and 0 & 1 is still 0. Column-wise operators do not care about width - they are the safe half of today.'}},
+  {line:4, name:{zh:'翻轉第 7 位', en:'toggle bit 7'}, opnd:1n << 7n, olab:'1 << 7', op:'^',
+   res:X0 ^ (1n << 7n), focus:[7],
+   why:{zh:'^ 的規則是「兩邊不同才是 1」：mask 是 0 的位置 x 不變，mask 是 1 的位置 x 被翻過來。第 7 位原本是 1，所以變成 0，180 變成 52。再 ^ 一次同一個 mask 就翻回來——這就是 ^ 能拿來「抵銷」的原因，LeetCode 136 用的就是它。',
+        en:'The rule of ^ is "1 when the two sides differ": where the mask is 0, x stays; where it is 1, x flips. Bit 7 was 1, so it becomes 0 and 180 becomes 52. Applying the same mask again flips it back - which is exactly why ^ can cancel things out, the whole idea behind LeetCode 136.'}},
+  {line:5, name:{zh:'只留最低的 1', en:'keep only the lowest 1'}, opnd:-X0, olab:'-x', op:'&',
+   res:X0 & -X0, focus:[2],
+   why:{zh:'-x 在二補數裡等於 ~x + 1：先全部翻過來，最低的 1 下面那些 0 翻成 1，再 +1 一路進位，剛好停在原本最低的 1 那一格。結果是：那一格以下和 x 一樣，那一格以上和 x 完全相反。& 起來只剩那一個 1。Fenwick tree 靠它跳到下一個節點。',
+        en:'In two\'s complement -x is ~x + 1: flip everything, which turns the 0s below the lowest 1 into 1s, then +1 carries through them and stops exactly at the original lowest 1. Below that position -x matches x, above it -x is the exact opposite, so & leaves that single 1. A Fenwick tree uses this to jump to its next node.'}},
+  {line:6, name:{zh:'關掉最低的 1', en:'drop the lowest 1'}, opnd:X0 - 1n, olab:'x - 1', op:'&',
+   res:X0 & (X0 - 1n), focus:[2, 1, 0],
+   why:{zh:'x - 1 要向最低的 1 借位：那個 1 變 0，它下面的 0 全變成 1，更高的位不動。& 回去，最低的 1 和它下面那段都變 0，其他照舊。所以 x & (x - 1) == 0 恰好表示 x 只有一個 1——也就是 2 的冪（x > 0 時）。Kernighan 的 popcount 就是一直做這一步。',
+        en:'x - 1 has to borrow from the lowest 1: that 1 becomes 0, every 0 below it becomes 1, and higher bits stay put. & it back and the lowest 1 together with everything below it is 0, the rest unchanged. So x & (x - 1) == 0 means x had exactly one 1 - a power of two, provided x > 0. Kernighan\'s popcount just repeats this step.'}},
+  {line:7, name:{zh:'打開最低的 0', en:'turn on the lowest 0'}, opnd:X0 + 1n, olab:'x + 1', op:'|',
+   res:X0 | (X0 + 1n), focus:[0],
+   why:{zh:'和上一個是鏡像：x + 1 會把最低的 0 變成 1，它下面那串 1 全部進位成 0。| 回去，下面那串 1 從 x 那邊補回來，於是只多了一個 1。180 的最低位本來就是 0，所以結果是 181。',
+        en:'The mirror image of the previous trick: x + 1 turns the lowest 0 into a 1 and carries the run of 1s below it into 0s. | it back and those 1s return from x, so the net effect is a single extra 1. The lowest bit of 180 is already a 0, so the answer is 181.'}},
+  {line:8, name:{zh:'Gray code', en:'Gray code'}, opnd:X0 >> 1n, olab:'x >> 1', op:'^',
+   res:X0 ^ (X0 >> 1n), focus:[],
+   why:{zh:'x ^ (x >> 1) 把每一位和它左邊的鄰居比：一樣就是 0，不一樣就是 1。這樣編出來的 Gray code 有個性質：相鄰的兩個數剛好只差一個 bit。旋轉編碼器、卡諾圖、還有「一次只改一個開關」走遍所有狀態的搜尋都用它。',
+        en:'x ^ (x >> 1) compares every bit with its left-hand neighbour: 0 where they agree, 1 where they differ. The resulting Gray code has one property that matters: consecutive numbers differ in exactly one bit. Rotary encoders, Karnaugh maps and any search that walks every state flipping one switch at a time rely on it.'}}
+];
+function tkStage(o){
+  const sh = [], n = 8, x0 = 3.4, w = .66, h = .56;
+  sh.push(...bitIdx(n, x0, .55, w, [7, 6, 5, 4, 3, 2, 1, 0], .22));
+  const foc = new Set(o.focus || []);
+  const st = (row) => (k, b) => foc.has(k) ? (row === 2 ? 'hot' : 'act') : (b ? (row === 2 ? 'ok' : 'soft') : 'ghost');
+  sh.push(...bitRow(X0, n, x0, .75, w, h, {title:'x', prefix:true, st:st(0), val:'180'}));
+  if (o.opnd != null)
+    sh.push(...bitRow(o.opnd, n, x0, 1.65, w, h, {title:o.olab, prefix:true, st:st(1), val:fmt(o.opnd)}));
+  if (o.op){
+    sh.push(S.t(x0 - 1.7, 2.62, o.op, {c:COL.orangeL, fs:.34, anchor:'end'}));
+    sh.push(S.e(x0 - 1.6, 2.5, x0 + n * w, 2.5, {s:'soft', arrow:false, w:.03}));
+  }
+  if (o.res != null)
+    sh.push(...bitRow(o.res, n, x0, 2.75, w, h, {title:{zh:'結果', en:'result'}, prefix:true, st:st(2),
+                                                  val:fmt(o.res), vc:COL.orangeL}));
+  if (o.big) sh.push(fitT(4.9, 4.4, o.big, {c:o.bigc || COL.orangeL, fs:.40}));
+  return caps(sh, o);
+}
+function tkFrames(v){
+  const F = new Frames();
+  if (v === 0){
+    F.push({shapes:tkStage({cap:{zh:'x = 180 = 0b10110100：八個開關，第 7 位在最左邊',
+                                 en:'x = 180 = 0b10110100: eight switches, bit 7 on the left'},
+                            cap2:{zh:'左邊的 …0 代表「往左還有無限多個 0」——Python 的整數沒有寬度',
+                                  en:'the …0 cell means "infinitely many 0s further left" - Python ints have no width'}}),
+      panels:[{lbl:'x', chips:[chip('180', 'act'), chip('0b10110100', '')]}], line:0,
+      msg:{zh:'把整數看成一排開關：第 k 位是 1 就代表集合裡有 k。今天的八個工具全部是對這一排開關做的一行運算。每一格右邊是十進位值；左邊那格 …0 很重要——C 的 int 到第 31 位就結束了，Python 的整數卻是往左無限延伸，正數延伸出無限個 0，負數延伸出無限個 1。',
+           en:'Read the integer as a row of switches: bit k is 1 when k is in the set. All eight tools today are one-line operations on such a row. The decimal value sits on the right; the …0 cell on the left matters - a C int ends at bit 31, while a Python int extends forever to the left, with infinitely many 0s for a positive number and infinitely many 1s for a negative one.'}});
+    TOOLS.forEach(t => {
+      F.push({shapes:tkStage({opnd:t.opnd, olab:t.olab, focus:t.focus,
+                              cap:{zh:t.olab + '：先把運算元擺出來', en:t.olab + ': line up the operand first'},
+                              cap2:t.name}),
+        panels:[{lbl:'x', chips:[chip('180', 'act')]}, {lbl:t.olab, chips:[chip(fmt(t.opnd), 'act'), chip(bin8(t.opnd, 8), '')]}],
+        line:t.line,
+        msg:{zh:t.name.zh + '：運算元是 ' + t.olab + ' = ' + fmt(t.opnd) + '，低 8 位是 ' + bin8(t.opnd, 8) + '。' + (t.opnd < 0n ? '它是負數，所以左邊那格是 …1：往左是無限多個 1。' : '紫色的是這一招要動的位置。'),
+             en:t.name.en + ': the operand is ' + t.olab + ' = ' + fmt(t.opnd) + ', whose low 8 bits are ' + bin8(t.opnd, 8) + '.' + (t.opnd < 0n ? ' It is negative, so the left cell reads …1: infinitely many 1s to the left.' : ' Purple marks the bits this trick is about.')}});
+      F.push({shapes:tkStage({opnd:t.opnd, olab:t.olab, op:t.op, res:t.res, focus:t.focus,
+                              big:CODE_TK[t.line].split('#')[0].trim() + '   =   ' + fmt(t.res),
+                              cap:t.name, capc:COL.orangeL,
+                              cap2:{zh:'180 → ' + fmt(t.res) + '（' + bin8(t.res, 8) + '）', en:'180 -> ' + fmt(t.res) + ' (' + bin8(t.res, 8) + ')'}}),
+        panels:[{lbl:'x', chips:[chip('180', 'act')]}, {lbl:t.olab, chips:[chip(fmt(t.opnd), 'act')]},
+                {lbl:{zh:'結果', en:'result'}, chips:[chip(fmt(t.res), 'hot')]}],
+        line:t.line, msg:t.why});
+    });
+    F.push({shapes:tkStage({res:X0, big:{zh:'八招全部是逐欄運算，任何寬度都安全', en:'all eight are column-wise - safe at any width'},
+                            bigc:COL.tealL,
+                            cap:{zh:'危險的是需要寬度的寫法：數負數的 1、等進位掉出去', en:'the danger is code that needs a width: 1s of a negative, a carry falling off'},
+                            cap2:{zh:'下一個變體：少一對括號的 mask', en:'next variant: a mask missing one pair of parentheses'}}),
+      panels:[{lbl:{zh:'結果', en:'results'}, chips:TOOLS.map(t => chip(fmt(t.res), 'ok'))}], line:8,
+      msg:{zh:'八個結果是 1、188、164、52、4、176、181、238，和 bit_tricks.py 印出來的一樣。這八招有個共同點：每一欄的答案只看同一欄的輸入，所以 Python 左邊那無限多位也只是「0 op 0」或「1 op 1」，不會出事。真正會出事的是需要知道「第 31 位是盡頭」的寫法，popcount 和 LC 371、137 那幾個分頁會一一看到。',
+           en:'The eight results are 1, 188, 164, 52, 4, 176, 181 and 238, matching what bit_tricks.py prints. They share one property: each output column depends only on the same input column, so the infinite bits to the left are just 0 op 0 or 1 op 1 and nothing goes wrong. What does go wrong is code that needs bit 31 to be the end - the popcount, LC 371 and LC 137 tabs show each case.'}});
+  } else {
+    const n = 4n, bug = 1n << (n - 1n), good = (1n << n) - 1n;
+    F.push({shapes:tkStage({cap:{zh:'想要一個「低 n 位全是 1」的 mask，n = 4', en:'we want a mask with the low n bits on, n = 4'},
+                            cap2:{zh:'答案應該是 0b1111 = 15', en:'the answer should be 0b1111 = 15'}}),
+      panels:[{lbl:'n', chips:[chip('4', 'act')]}], line:0,
+      msg:{zh:'要取出 x 的低 n 位，標準做法是 x & mask，mask 是 n 個 1。n = 4 時 mask 應該是 0b1111 = 15。直覺寫法是「1 左移 n 位再減 1」，問題出在沒寫括號的那一版。',
+           en:'Taking the low n bits of x is x & mask, where mask is n ones - for n = 4 that is 0b1111 = 15. The usual recipe is "shift 1 left by n, then subtract 1"; the trouble is the version typed without parentheses.'}});
+    F.push({shapes:tkStage({opnd:bug, olab:'1 << n - 1', focus:[3],
+                            cap:{zh:'1 << n - 1 被解讀成 1 << (n - 1) = 1 << 3 = 8', en:'1 << n - 1 parses as 1 << (n - 1) = 1 << 3 = 8'}, capc:COL.red,
+                            cap2:{zh:'- 比 << 優先：先算 n - 1', en:'- binds tighter than <<: n - 1 happens first'}}),
+      panels:[{lbl:'1 << n - 1', chips:[chip(fmt(bug), 'bad'), chip(bin8(bug, 8), '')]}], line:1,
+      msg:{zh:'Python（和 C、Java 一樣）的優先順序是 + - 比 << >> 高，<< 又比 & 高。所以 1 << n - 1 是 1 << 3 = 8 = 0b1000：只有一個 1，不是四個。不會有錯誤訊息，因為 8 本身是個合法的整數。',
+           en:'In Python - as in C and Java - + and - bind tighter than << and >>, which in turn bind tighter than &. So 1 << n - 1 is 1 << 3 = 8 = 0b1000: a single 1, not four. Nothing raises, because 8 is a perfectly valid integer.'}});
+    F.push({shapes:tkStage({opnd:bug, olab:'1 << n - 1', op:'&', res:X0 & bug, focus:[3],
+                            big:'180 & 8 = ' + fmt(X0 & bug), bigc:COL.red,
+                            cap:{zh:'x & 8 只看第 3 位：180 的第 3 位是 0，答案變成 0', en:'x & 8 looks at bit 3 alone: bit 3 of 180 is 0, so the answer is 0'}, capc:COL.red,
+                            cap2:{zh:'應該是 180 的低 4 位 = 0b0100 = 4', en:'it should be the low 4 bits of 180 = 0b0100 = 4'}}),
+      panels:[{lbl:{zh:'錯的 mask', en:'wrong mask'}, chips:[chip('8', 'bad')]}, {lbl:'x & mask', chips:[chip(fmt(X0 & bug), 'bad')]}], line:6,
+      msg:{zh:'拿錯的 mask 去 &，得到的是「第 3 位」而不是「低 4 位」：180 & 8 = 0。這種 bug 很難發現，因為對某些 x（例如第 3 位是 1 且低 3 位剛好都是 0 的數）答案碰巧是對的。',
+           en:'With the wrong mask, & extracts bit 3 instead of the low 4 bits: 180 & 8 = 0. The bug hides well, because for some x - one whose bit 3 is on and whose lower bits happen to be 0 - the answer comes out right by accident.'}});
+    F.push({shapes:tkStage({opnd:good, olab:'(1 << n) - 1', op:'&', res:X0 & good, focus:[3, 2, 1, 0],
+                            big:'180 & 15 = ' + fmt(X0 & good), bigc:COL.tealL,
+                            cap:{zh:'(1 << 4) - 1 = 16 - 1 = 15 = 0b1111', en:'(1 << 4) - 1 = 16 - 1 = 15 = 0b1111'}, capc:COL.tealL,
+                            cap2:{zh:'10000 減 1 會把最高那個 1 借光，下面全變成 1', en:'16 = 10000; subtracting 1 borrows it away and turns every bit below into 1'}}),
+      panels:[{lbl:'(1 << n) - 1', chips:[chip('15', 'ok')]}, {lbl:'x & mask', chips:[chip(fmt(X0 & good), 'ok')]}], line:4,
+      msg:{zh:'加上括號：先 1 << 4 = 16 = 0b10000，再減 1。減 1 會向唯一那個 1 借位，它變 0、下面四位全變 1，得到 0b1111 = 15。180 & 15 = 4，就是 180 的低 4 位 0100。位元運算混著 + - == 寫的時候，括號永遠不嫌多。',
+           en:'With the parentheses: first 1 << 4 = 16 = 0b10000, then subtract 1. The subtraction borrows from the only 1, which becomes 0 while the four bits below become 1: 0b1111 = 15. 180 & 15 = 4, the low four bits 0100 of 180. When bit operators mix with + - or ==, there is no such thing as too many parentheses.'}});
+  }
+  return F.list;
+}
+
+/* =============================================================== tab 2: popcount */
+const CODE_KER = [
+  'def popcount_kernighan(x):',
+  '    count = 0',
+  '    while x:',
+  '        x &= x - 1           # drop the lowest 1',
+  '        count += 1',
+  '    return count'
+];
+const CODE_SHIFT = [
+  'def popcount_shift(x):',
+  '    count = 0',
+  '    while x:',
+  '        count += x & 1       # look at the last bit',
+  '        x >>= 1',
+  '    return count'
+];
+function pcStage(o){
+  const sh = [], n = 16, x0 = 1.75, w = .40, h = .52;
+  sh.push(...bitIdx(n, x0, .5, w, [15, 12, 8, 4, 0], .2));
+  const hot = o.hot == null ? -1 : o.hot;
+  sh.push(...bitRow(o.x, n, x0, .7, w, h, {title:'x', prefix:true, val:fmt(o.x), vfs:.24,
+    st:(k, b) => k === hot ? 'hot' : b ? (o.neg ? 'bad' : 'act') : 'ghost'}));
+  if (o.x1 != null)
+    sh.push(...bitRow(o.x1, n, x0, 1.55, w, h, {title:o.x1lab, prefix:true, val:fmt(o.x1), vfs:.24,
+      st:(k, b) => b ? 'soft' : 'ghost'}));
+  if (o.nx != null)
+    sh.push(...bitRow(o.nx, n, x0, 2.4, w, h, {title:o.nxlab, prefix:true, val:fmt(o.nx), vfs:.24, vc:COL.orangeL,
+      st:(k, b) => k === o.gone ? 'hot' : b ? 'ok' : 'ghost'}));
+  /* the loop counters */
+  const bx = 2.2;
+  sh.push(S.r(bx, 3.45, 2.3, .62, 'act', 'count = ' + o.count, {fs:.30}));
+  sh.push(S.r(bx + 2.6, 3.45, 2.3, .62, o.neg && o.rounds > 3 ? 'bad' : 'soft',
+              {zh:'第 ' + o.rounds + ' 圈', en:'round ' + o.rounds}, {fs:.30}));
+  if (o.big) sh.push(fitT(4.9, 4.75, o.big, {c:o.bigc || COL.orangeL, fs:.36}));
+  return caps(sh, o);
+}
+function pcFrames(v){
+  const F = new Frames();
+  const ker = v !== 1, neg = v === 2;
+  const x0 = neg ? -5n : 180n;
+  const code = ker ? CODE_KER : CODE_SHIFT;
+  const pan = (x, count, rounds) => [{lbl:'x', chips:[chip(fmt(x), neg ? 'bad' : 'act')]},
+                                     {lbl:'count', chips:[chip(String(count), 'hot')]},
+                                     {lbl:{zh:'迴圈圈數', en:'rounds'}, chips:[chip(String(rounds), neg && rounds > 3 ? 'bad' : '')]}];
+  F.push({shapes:pcStage({x:x0, count:0, rounds:0, neg:neg,
+      cap:neg ? {zh:'x = -5：在 C 的 32 位 int 裡有 31 個 1', en:'x = -5: a 32-bit C int holds 31 ones'}
+              : {zh:'x = 180 = 0b10110100：4 個 1、8 個 bit', en:'x = 180 = 0b10110100: four 1s in eight bits'},
+      cap2:neg ? {zh:'Python 裡它是 …11111011：左邊有無限多個 1', en:'in Python it is …11111011, with infinitely many 1s to the left'}
+               : (ker ? {zh:'Kernighan：每圈拿掉一個 1，所以跑 4 圈', en:'Kernighan removes one 1 per round, so 4 rounds'}
+                      : {zh:'逐位移：每圈看一個 bit，所以跑 8 圈', en:'the shift loop looks at one bit per round, so 8 rounds'})}),
+    panels:pan(x0, 0, 0), line:1,
+    msg:neg ? {zh:'同一個 Kernighan 迴圈，換成 -5。在 C 或 Java 裡 int 只有 32 位，-5 是 0xFFFFFFFB，popcount 是 31，迴圈跑 31 圈後 x 變成 0。Python 的 -5 沒有第 32 位可以「掉出去」：它左邊是無限多個 1，看看 while x 會發生什麼事。',
+               en:'The same Kernighan loop, fed -5. In C or Java an int has 32 bits, -5 is 0xFFFFFFFB, its popcount is 31, and the loop ends after 31 rounds with x at 0. Python\'s -5 has no bit 32 to fall off: to its left lie infinitely many 1s. Watch what while x does with that.'}
+            : ker ? {zh:'popcount 就是「x 有幾個 1」。Kernighan 的做法不看每一位，而是一直做 x &= x - 1——上一個分頁看過，這一步剛好拿掉最低的 1。所以迴圈跑幾圈，就有幾個 1：180 有 4 個 1，跑 4 圈。',
+                    en:'popcount means "how many 1s does x have". Kernighan\'s method never inspects bit by bit; it keeps doing x &= x - 1, which - as the toolkit tab showed - removes exactly the lowest 1. So the number of rounds IS the answer: 180 has four 1s and the loop runs four times.'}
+                  : {zh:'最直接的 popcount：看最後一位是不是 1（x & 1），加進 count，然後把 x 右移一格丟掉那一位。它跑的圈數等於 x 的位元長度，和有幾個 1 無關：180 有 8 位，就跑 8 圈，就算其中一半是 0。',
+                     en:'The most direct popcount: check whether the last bit is 1 (x & 1), add it to count, then shift x right to discard that bit. The number of rounds equals the bit length of x regardless of how many 1s there are: 180 has 8 bits, so 8 rounds, even though half of them are 0.'}});
+  let x = x0, count = 0, rounds = 0;
+  const CAP = neg ? 12 : 64;
+  while (x !== 0n && rounds < CAP){
+    rounds++;
+    if (ker){
+      const xm = x - 1n, nx = x & xm, gone = (x & -x);
+      const gk = gone === 0n ? -1 : gone.toString(2).length - 1;
+      F.push({shapes:pcStage({x:x, x1:xm, x1lab:'x - 1', hot:gk, count:count, rounds:rounds, neg:neg,
+          cap:{zh:'x - 1：最低的 1（第 ' + gk + ' 位）借出去，下面全變 1', en:'x - 1: the lowest 1 (bit ' + gk + ') is borrowed, everything below turns to 1'},
+          cap2:{zh:'while x：x = ' + fmt(x) + ' 不是 0，所以進入第 ' + rounds + ' 圈', en:'while x: x = ' + fmt(x) + ' is not 0, so round ' + rounds + ' starts'}}),
+        panels:pan(x, count, rounds), line:3,
+        msg:{zh:'第 ' + rounds + ' 圈。x = ' + fmt(x) + '，最低的 1 在第 ' + gk + ' 位。x - 1 = ' + fmt(xm) + '：那個 1 被借走變 0，它下面的 ' + gk + ' 個 0 全變成 1，更高的位不變。' + (neg ? '注意兩列最左邊都是 …1：負數往左永遠是 1。' : ''),
+             en:'Round ' + rounds + '. x = ' + fmt(x) + ' and its lowest 1 is bit ' + gk + '. x - 1 = ' + fmt(xm) + ': that 1 is borrowed away and becomes 0, the ' + gk + ' zeros below it become 1s, higher bits stay.' + (neg ? ' Note that both rows start with …1: a negative number is 1s all the way to the left.' : '')}});
+      count++;
+      F.push({shapes:pcStage({x:x, x1:xm, x1lab:'x - 1', nx:nx, nxlab:'x & (x-1)', gone:gk, count:count, rounds:rounds, neg:neg,
+          big:neg ? 'x = ' + fmt(nx) : {zh:'拿掉一個 1，count = ' + count, en:'one 1 removed, count = ' + count},
+          bigc:neg ? COL.red : COL.orangeL,
+          cap:{zh:'x &= x - 1 → ' + fmt(nx), en:'x &= x - 1 -> ' + fmt(nx)}, capc:neg ? COL.red : COL.orangeL,
+          cap2:nx === 0n ? {zh:'x 變成 0，while 結束，回傳 ' + count, en:'x is 0, the while ends and returns ' + count}
+                         : {zh:'x 還不是 0，繼續下一圈', en:'x is not 0 yet, so another round follows'}}),
+        panels:pan(nx, count, rounds), line:4,
+        msg:neg
+          ? {zh:'x &= x - 1 確實拿掉了最低的 1，x 變成 ' + fmt(nx) + '。但左邊那無限多個 1 一個也沒少：每拿掉一個，x 就變成另一個負數，永遠不會等於 0。count 已經 ' + count + '，再算下去也只會一直加。' + (rounds >= 3 ? '從第 2 圈開始 x 每次都是 -2 的冪次，1 的位置一路往左爬。' : ''),
+             en:'x &= x - 1 did remove the lowest 1, and x is now ' + fmt(nx) + '. But not one of the infinitely many 1s on the left has gone: each removal just produces another negative number, never 0. count is at ' + count + ' and will keep climbing.' + (rounds >= 3 ? ' From round 2 on, x is always minus a power of two, and its lowest 1 creeps left.' : '')}
+          : {zh:'& 回去：最低的 1 和下面那段都變 0，其他不變，x = ' + fmt(nx) + '。count 加 1 變 ' + count + '。' + (nx === 0n ? '所有的 1 都拿掉了，x == 0，迴圈結束。4 個 1 就是 4 圈——Kernighan 的成本只看 1 的個數，稀疏的 bitset 上比逐位移快很多。' : '每一圈剛好拿掉一個 1，不多不少，所以圈數就是答案。'),
+             en:'& it back: the lowest 1 and the run below it are cleared, everything else stays, and x = ' + fmt(nx) + '. count goes up to ' + count + '.' + (nx === 0n ? ' Every 1 is gone and x == 0, so the loop ends. Four 1s, four rounds - Kernighan pays per 1, which makes it much faster than the shift loop on sparse bitsets.' : ' Each round removes exactly one 1, never more and never fewer, so the round count is the answer.')}});
+      x = nx;
+    } else {
+      const b = Number(x & 1n), nx = x >> 1n;
+      count += b;
+      F.push({shapes:pcStage({x:x, nx:nx, nxlab:'x >> 1', hot:0, count:count, rounds:rounds,
+          big:b ? {zh:'最後一位是 1，count = ' + count, en:'the last bit is 1, count = ' + count}
+                : {zh:'最後一位是 0，這一圈白跑', en:'the last bit is 0: a wasted round'},
+          bigc:b ? COL.orangeL : COL.grey,
+          cap:{zh:'count += x & 1，然後 x >>= 1 → ' + fmt(nx), en:'count += x & 1, then x >>= 1 -> ' + fmt(nx)},
+          cap2:nx === 0n ? {zh:'x 變成 0，迴圈結束：' + rounds + ' 圈數出 ' + count + ' 個 1', en:'x is 0: ' + rounds + ' rounds found ' + count + ' ones'}
+                         : {zh:'還剩 ' + nx.toString(2).length + ' 位要看', en:nx.toString(2).length + ' bits still to look at'}}),
+        panels:pan(nx, count, rounds), line:b ? 3 : 4,
+        msg:b ? {zh:'第 ' + rounds + ' 圈：x = ' + fmt(x) + ' 的最後一位是 1，count 加 1 變 ' + count + '。然後右移一格，這一位丟掉，x = ' + fmt(nx) + '。' + (nx === 0n ? '最高的 1 也移出去了，x == 0，迴圈結束。180 有 4 個 1，這個迴圈卻跑了 8 圈。在一個大部分是 0 的大整數上，這個差距會變得很大：20 萬個整數實測，逐位移 714 ms，Kernighan 322 ms，x.bit_count() 只要 20 ms。' : ''),
+                 en:'Round ' + rounds + ': the last bit of x = ' + fmt(x) + ' is 1, so count goes to ' + count + '. Then one shift right discards that bit, leaving x = ' + fmt(nx) + '.' + (nx === 0n ? ' The top 1 has gone out too, x == 0, and the loop ends. 180 has four 1s, yet this loop ran 8 rounds. On mostly-zero numbers the gap grows: over 200,000 integers the shift loop took 714 ms, Kernighan 322 ms and x.bit_count() just 20 ms.' : '')}
+              : {zh:'第 ' + rounds + ' 圈：最後一位是 0，count 不變，還是 ' + count + '。這一圈什麼都沒數到，但還是得右移一格才能看下一位。逐位移的成本是「x 有幾位」，不是「x 有幾個 1」——這就是它比 Kernighan 慢的原因。',
+                 en:'Round ' + rounds + ': the last bit is 0, so count stays at ' + count + '. The round counted nothing, yet the loop still has to shift to reach the next bit. The shift loop pays for every bit x has, not for every 1 - which is why it loses to Kernighan.'}});
+      x = nx;
+    }
+  }
+  if (neg){
+    let y = -5n, r = 0; while (r < 40){ y &= y - 1n; r++; }
+    F.push({shapes:pcStage({x:x, count:count, rounds:rounds, neg:true,
+        big:{zh:'第 40 圈：x = ' + fmt(y), en:'round 40: x = ' + fmt(y)}, bigc:COL.red,
+        cap:{zh:'永遠停不下來：修法是先 x &= 0xFFFFFFFF，或直接用 x.bit_count()', en:'it never stops: mask with x &= 0xFFFFFFFF first, or just call x.bit_count()'}, capc:COL.red,
+        cap2:{zh:'bin(-5).count("1") 和 (-5).bit_count() 都回傳 2：它們數的是 |x|', en:'bin(-5).count("1") and (-5).bit_count() both return 2: they count |x|'}}),
+      panels:pan(y, 40, 40), line:2,
+      msg:{zh:'停在這裡是 demo 自己設的上限。繼續跑下去，第 40 圈時 x = -2,199,023,255,552（也就是 -2 的 41 次方），迴圈仍然沒結束，它永遠不會結束。想要 C 的答案 31，就先 x &= 0xFFFFFFFF 把 x 切成 32 位的正數；Python 內建的 bin(-5).count("1") 和 (-5).bit_count() 則都回傳 2，因為它們數的是絕對值 5 = 0b101 的 1。三種答案都「對」，差別只在你要的是哪一種寬度。',
+           en:'The demo stops here on its own cap. Left running, round 40 finds x = -2,199,023,255,552 - minus 2 to the 41st - and the loop is still going; it never ends. To get C\'s answer of 31, mask first with x &= 0xFFFFFFFF, which turns x into a positive 32-bit number. Python\'s own bin(-5).count("1") and (-5).bit_count() both return 2, because they count the 1s of the absolute value 5 = 0b101. All three answers are "right"; they differ only in which width you meant.'}});
+  }
+  return F.list;
+}
+
+/* ================================================================= tab 3: LC 338 */
+const CODE_338 = [
+  'class Solution:',
+  '    def countBits(self, n: int) -> list[int]:',
+  '        ans = [0] * (n + 1)',
+  '        for i in range(1, n + 1):',
+  '            ans[i] = ans[i >> 1] + (i & 1)   # i without its last bit, plus that bit',
+  '        return ans'
+];
+const CODE_338L = CODE_338.slice();
+CODE_338L[4] = '            ans[i] = ans[i & (i - 1)] + 1    # i with its lowest 1 dropped, plus 1';
+const N338 = 8;
+function cbStage(o){
+  const sh = [], n = N338, cw = .86, x0 = (VIEW[0] - (n + 1) * cw) / 2;
+  sh.push(S.t(x0 - .2, .98, 'i', {c:COL.grey, fs:.26, anchor:'end'}));
+  sh.push(S.t(x0 - .2, 1.62, 'bin', {c:COL.grey, fs:.24, anchor:'end'}));
+  sh.push(S.t(x0 - .2, 2.35, 'ans', {c:COL.tealL, fs:.28, anchor:'end'}));
+  for (let j = 0; j <= n; j++){
+    const x = x0 + j * cw, has = j < o.filled;
+    const st = j === o.cur ? 'hot' : j === o.src ? 'act' : has ? 'ok' : 'ghost';
+    sh.push(S.t(x + (cw - .06) / 2, .98, String(j), {c:j === o.cur ? COL.orangeL : COL.grey, fs:.26}));
+    sh.push(S.t(x + (cw - .06) / 2, 1.62, bin8(B(j), 4), {c:j === o.cur ? COL.orangeL : j === o.src ? COL.purpleL : COL.grey, fs:.24}));
+    sh.push(S.r(x, 1.95, cw - .06, .62, st, has || j === o.cur ? String(o.ans[j]) : '', {fs:.32}));
+  }
+  if (o.src != null && o.cur != null && o.src !== o.cur){
+    const xs = x0 + o.src * cw + (cw - .06) / 2, xc = x0 + o.cur * cw + (cw - .06) / 2;
+    const yb = 3.15;
+    sh.push(S.e(xs, 2.62, xs, yb, {s:'act', arrow:false, w:.045}));
+    sh.push(S.e(xs, yb, xc, yb, {s:'act', arrow:false, w:.045, lab:o.plus, fs:.26, ly:.34}));
+    sh.push(S.e(xc, yb, xc, 2.66, {s:'hot', w:.045}));
+  }
+  if (o.big) sh.push(fitT(4.9, 4.2, o.big, {c:o.bigc || COL.orangeL, fs:.38}));
+  if (o.sub) sh.push(fitT(4.9, 4.75, o.sub, {c:COL.purpleL, fs:.28}));
+  return caps(sh, o);
+}
+function cbFrames(v){
+  const F = new Frames(), low = v === 1, ans = new Array(N338 + 1).fill(0);
+  const pan = (i) => [{lbl:'i', chips:[chip(i == null ? '—' : String(i), 'hot')]},
+                      {lbl:'ans', chips:[chip(pyList(ans.slice(0, i == null ? 1 : i + 1)), 'ok')]}];
+  F.push({shapes:cbStage({ans:ans, filled:1,
+      cap:{zh:'LC 338：回傳 0..n 每個數的 popcount，n = 8', en:'LC 338: the popcount of every number 0..n, here n = 8'},
+      cap2:{zh:'要求 O(n)：每格只能花常數時間，不能對每個 i 再數一次', en:'O(n) required: constant work per entry, no recounting each i'}}),
+    panels:pan(0), line:2,
+    msg:{zh:'LeetCode 338 要 0 到 n 每個數各有幾個 1。對每個 i 呼叫 bit_count() 也行，但題目的進階要求是 O(n) 而且不用內建函式。關鍵是：i 的答案可以從一個比 i 小、而且已經算好的數推出來，所以這是一個 DP。ans[0] = 0 是起點。',
+         en:'LeetCode 338 wants the number of 1s in every integer from 0 to n. Calling bit_count() on each i works, but the follow-up asks for O(n) without built-ins. The key: the answer for i follows from a smaller number whose answer is already known, which makes it a DP. ans[0] = 0 is the starting point.'}});
+  for (let i = 1; i <= N338; i++){
+    const src = low ? i & (i - 1) : i >> 1, add = low ? 1 : (i & 1);
+    ans[i] = ans[src] + add;
+    const plus = '+' + add;
+    F.push({shapes:cbStage({ans:ans, filled:i, cur:i, src:src, plus:plus,
+        big:'ans[' + i + '] = ans[' + src + '] + ' + add + ' = ' + ans[i],
+        sub:low ? {zh:bin8(B(i), 4) + ' 拿掉最低的 1 → ' + bin8(B(src), 4), en:bin8(B(i), 4) + ' minus its lowest 1 -> ' + bin8(B(src), 4)}
+                : {zh:bin8(B(i), 4) + ' 去掉最後一位 → ' + bin8(B(src), 4) + '，最後一位是 ' + add,
+                   en:bin8(B(i), 4) + ' without its last bit -> ' + bin8(B(src), 4) + ', last bit ' + add},
+        cap:{zh:'來源 ' + src + ' < ' + i + '，早就算好了', en:'the source ' + src + ' < ' + i + ' was filled in earlier'}}),
+      panels:pan(i), line:4,
+      msg:low
+        ? {zh:'i = ' + i + ' = ' + bin8(B(i), 4) + '。i & (i - 1) 拿掉最低的 1，得到 ' + src + ' = ' + bin8(B(src), 4) + '，它的 1 恰好比 i 少一個，所以 ans[' + i + '] = ans[' + src + '] + 1 = ' + ans[i] + '。' + ((i & (i - 1)) === 0 ? i + ' 是 2 的冪，拿掉唯一的 1 就是 0，所以 ans 是 1。' : '來源不一定在旁邊，但一定比 i 小。'),
+           en:'i = ' + i + ' = ' + bin8(B(i), 4) + '. i & (i - 1) drops the lowest 1 and gives ' + src + ' = ' + bin8(B(src), 4) + ', which has exactly one 1 fewer, so ans[' + i + '] = ans[' + src + '] + 1 = ' + ans[i] + '.' + ((i & (i - 1)) === 0 ? ' ' + i + ' is a power of two, dropping its only 1 leaves 0, and the answer is 1.' : ' The source is not always a neighbour, but it is always smaller than i.')}
+        : {zh:'i = ' + i + ' = ' + bin8(B(i), 4) + '。i >> 1 = ' + src + ' 是 i 去掉最後一位，它的 1 除了最後一位以外和 i 完全一樣；最後一位是 i & 1 = ' + add + '。所以 ans[' + i + '] = ans[' + src + '] + ' + add + ' = ' + ans[i] + '。i >> 1 永遠小於 i，由左往右填，來源一定已經有答案。',
+           en:'i = ' + i + ' = ' + bin8(B(i), 4) + '. i >> 1 = ' + src + ' is i with its last bit removed, so it shares every 1 except possibly the last one, which is i & 1 = ' + add + '. So ans[' + i + '] = ans[' + src + '] + ' + add + ' = ' + ans[i] + '. i >> 1 is always smaller than i, and filling left to right means its answer is already there.'}});
+  }
+  F.push({shapes:cbStage({ans:ans, filled:N338 + 1,
+      big:'countBits(8) = ' + pyList(ans), bigc:COL.tealL,
+      cap:{zh:'每格一次查表加一次加法：O(n) 時間、不用任何 popcount', en:'one lookup plus one addition per entry: O(n), no popcount anywhere'}, capc:COL.tealL,
+      cap2:{zh:'兩種遞推式答案一樣，只是來源格不同', en:'both recurrences give the same table, from different source cells'}}),
+    panels:pan(N338), line:5,
+    msg:{zh:'結果是 [0, 1, 1, 2, 1, 2, 2, 3, 1]。每格都是一次查表加一次加法，總共 O(n)，完全沒有逐位去數。兩個變體的遞推式不同——一個看「去掉最後一位」，一個看「去掉最低的 1」——但因為兩個來源都比 i 小，由左往右填都成立，答案也一樣。這個「從比較小的數推出來」的想法，在位元 DP（例如用 mask 當狀態）裡會一再出現。',
+         en:'The result is [0, 1, 1, 2, 1, 2, 2, 3, 1]. Each entry costs one lookup and one addition, O(n) in total, with no bit-by-bit counting at all. The two variants use different recurrences - one drops the last bit, the other drops the lowest 1 - but both sources are smaller than i, so filling left to right works and the tables agree. Deriving a mask\'s answer from a smaller mask comes back again and again in bitmask DP.'}});
+  return F.list;
+}
+
+/* ================================================================= tab 4: LC 371 */
+const CODE_371N = [
+  'def get_sum_naive(a, b):',
+  '    while b:',
+  '        a, b = a ^ b, (a & b) << 1     # sum without carry, carry moved up',
+  '    return a'
+];
+const CODE_371 = [
+  'M32 = 0xFFFFFFFF',
+  '',
+  'class Solution:',
+  '    def getSum(self, a: int, b: int) -> int:',
+  '        a, b = a & M32, b & M32',
+  '        while b:',
+  '            a, b = (a ^ b) & M32, ((a & b) << 1) & M32   # carry falls off bit 31',
+  '        return a if a < 1 << 31 else a - (1 << 32)       # bit 31 is the sign'
+];
+const CODE_371M = [
+  'M32 = 0xFFFFFFFF',
+  '',
+  'def get_sum_masked(a, b):',
+  '    a, b = a & M32, b & M32',
+  '    while b:',
+  '        a, b = (a ^ b) & M32, ((a & b) << 1) & M32',
+  '    return a                          # still read as unsigned'
+];
+function gsStage(o){
+  const sh = [], n = 36, x0 = 1.55, w = .215, h = .46;
+  sh.push(...bitIdx(n, x0, .56, w, [35, 32, 31, 24, 16, 8, 0], .19));
+  const st = (row) => (k, b) => {
+    if (!b) return 'ghost';
+    if (k >= 32) return o.masked ? 'bad' : (row >= 2 ? 'hot' : 'act');
+    return row === 3 ? 'hot' : row === 2 ? 'ok' : 'soft';
+  };
+  const row = (v, y, lab, r) => sh.push(...bitRow(v, n, x0, y, w, h, {title:lab, prefix:true, st:st(r), tfs:.24}));
+  row(o.a, .75, 'a', 0);
+  row(o.b, 1.35, 'b', 1);
+  if (o.na != null){
+    sh.push(S.e(x0 - 1.0, 2.0, x0 + n * w, 2.0, {s:'soft', arrow:false, w:.03}));
+    row(o.na, 2.2, 'a ^ b', 2);
+    row(o.nb, 2.8, 'carry', 3);
+  }
+  sh.push(fitT(4.9, 3.62, {zh:'紅線左邊是第 32 位以上：C 的 int 根本沒有這些位', en:'left of the red line is bit 32 and up: a C int has no such bits'},
+               {c:COL.red, fs:.24}));
+  if (o.big) sh.push(fitT(4.9, 4.3, o.big, {c:o.bigc || COL.orangeL, fs:.36}));
+  if (o.sub) sh.push(fitT(4.9, 4.85, o.sub, {c:COL.purpleL, fs:.26}));
+  return caps(sh, o);
+}
+function gsFrames(v){
+  const F = new Frames(), naive = v === 1, nosign = v === 2, masked = !naive;
+  let a = -1n, b = nosign ? -1n : 1n;
+  const a0 = a, b0 = b;
+  const code = naive ? CODE_371N : nosign ? CODE_371M : CODE_371;
+  const L = naive ? {loop:2, ret:3, init:1} : nosign ? {loop:5, ret:6, init:3} : {loop:6, ret:7, init:4};
+  const pan = (a, b, r) => [{lbl:'a', chips:[chip(fmt(a), 'ok')]}, {lbl:'b (carry)', chips:[chip(fmt(b), b === 0n ? '' : 'hot')]},
+                            {lbl:{zh:'圈數', en:'rounds'}, chips:[chip(String(r), naive && r > 32 ? 'bad' : '')]}];
+  const title = '(' + fmt(a0) + ') + (' + fmt(b0) + ')';
+  F.push({shapes:gsStage({a:a, b:b, masked:false,
+      cap:{zh:'LC 371：不用 + 和 -，算 ' + title, en:'LC 371: compute ' + title + ' without + or -'},
+      cap2:naive ? {zh:'直接照抄 C 的寫法：a ^ b 是不進位的和，(a & b) << 1 是進位', en:'the C answer typed as is: a ^ b adds without carrying, (a & b) << 1 is the carry'}
+                 : {zh:'第一步：a & M32、b & M32，把兩個數切成 32 位的正數', en:'step one: a & M32 and b & M32 turn both into positive 32-bit numbers'}}),
+    panels:pan(a, b, 0), line:naive ? 0 : L.init,
+    msg:naive ? {zh:'LeetCode 371 不准用 + -，標準解是：a ^ b 是「每一欄相加但不進位」，(a & b) << 1 是「每一欄的進位，往左搬一格」。把兩者再相加，直到進位是 0。C 和 Java 裡這一定會停：進位最多往左走 32 格就從第 31 位掉出去。Python 沒有第 31 位的牆——看看 -1 + 1 會怎樣。',
+                 en:'LeetCode 371 bans + and -. The standard answer: a ^ b adds every column without carrying, and (a & b) << 1 is every column\'s carry moved one place left. Add those two the same way until the carry is 0. In C and Java this must stop: the carry can walk at most 32 places before it falls off bit 31. Python has no wall at bit 31 - watch what -1 + 1 does.'}
+               : {zh:'修法的第一步：先把 a、b 都 & 0xFFFFFFFF。-1 在 Python 左邊有無限多個 1，& M32 之後只剩低 32 位，變成 4,294,967,295 這個正數——這就是 C 的 uint32 會存的那 32 個 bit。從這裡開始，所有的值都活在 32 位裡。',
+                  en:'Step one of the fix: & both a and b with 0xFFFFFFFF. -1 has infinitely many 1s in Python; after & M32 only the low 32 remain, giving the positive number 4,294,967,295 - exactly the 32 bits a C uint32 would hold. From here on every value lives inside 32 bits.'}});
+  if (masked){ a &= M32; b &= M32; }
+  if (masked) F.push({shapes:gsStage({a:a, b:b, masked:true,
+      cap:{zh:'a = ' + fmt(a) + '，b = ' + fmt(b) + '：都在牆的右邊了', en:'a = ' + fmt(a) + ', b = ' + fmt(b) + ': both right of the wall now'},
+      cap2:{zh:'左邊那格變成 …0：沒有無限多個 1 了', en:'the left cell reads …0: no more infinite 1s'}}),
+    panels:pan(a, b, 0), line:L.init,
+    msg:{zh:'現在 a = ' + fmt(a) + '、b = ' + fmt(b) + '，左邊那格都是 …0。' + (nosign ? '-1 + -1 的正確答案是 -2，接下來看迴圈算出什麼。' : '-1 + 1 的正確答案是 0：迴圈要把 32 個 1 全部進位掉才會停。'),
+         en:'Now a = ' + fmt(a) + ' and b = ' + fmt(b) + ', and both left cells read …0.' + (nosign ? ' The right answer for -1 + -1 is -2; let us see what the loop produces.' : ' The right answer for -1 + 1 is 0: the loop has to carry away all 32 ones before it stops.')}});
+  let r = 0;
+  const show = rr => naive ? (rr <= 4 || (rr >= 31 && rr <= 34)) : (rr <= 3 || rr >= 30);
+  let skipped = false;
+  while (b !== 0n && r < 40){
+    r++;
+    const na = a ^ b, nbRaw = (a & b) << 1n;
+    const nb = masked ? nbRaw & M32 : nbRaw;
+    const naM = masked ? na & M32 : na;
+    if (show(r)){
+      if (skipped){
+        F.push({shapes:gsStage({a:a, b:b, masked:masked,
+            big:{zh:'…第 ' + (r - 1) + ' 圈都一樣：進位往左搬一格', en:'... up to round ' + (r - 1) + ' it is the same: the carry moves one place left'}, bigc:COL.grey,
+            cap:{zh:'跳到第 ' + r + ' 圈：b = ' + fmt(b), en:'jump to round ' + r + ': b = ' + fmt(b)}}),
+          panels:pan(a, b, r - 1), line:L.loop,
+          msg:{zh:'中間每一圈的模式都一樣：a 最低的 1 被進位吃掉，進位 b 往左搬一格，所以直接跳到進位接近第 32 位的地方。這裡才是 C 和 Python 分道揚鑣的地方。',
+               en:'Every round in between follows the same pattern: the carry eats the lowest 1 of a and b moves one place left. So we jump to where the carry approaches bit 32 - the place where C and Python part ways.'}});
+        skipped = false;
+      }
+      const cross = nbRaw >> 32n !== 0n;
+      F.push({shapes:gsStage({a:a, b:b, na:naM, nb:nbRaw, masked:masked,
+          big:'a = ' + fmt(naM) + '   b = ' + fmt(nb),
+          bigc:naive && r > 32 ? COL.red : COL.orangeL,
+          sub:cross ? (masked ? (nb === 0n ? {zh:'進位到了第 32 位：& M32 把它丟掉，b 變成 0', en:'the carry reached bit 32: & M32 throws it away and b becomes 0'} : {zh:'第 32 位那個進位被 & M32 丟掉，b = ' + fmt(nb), en:'the carry on bit 32 is dropped by & M32, b = ' + fmt(nb)})
+                              : {zh:'進位越過了第 32 位——Python 沒有牆，它繼續往左走', en:'the carry crossed bit 32 - Python has no wall, so it keeps going'})
+                      : {zh:'進位 b 現在在第 ' + (nb === 0n ? '-' : (nb & -nb).toString(2).length - 1) + ' 位', en:'the carry b now sits at bit ' + (nb === 0n ? '-' : (nb & -nb).toString(2).length - 1)},
+          cap:{zh:'第 ' + r + ' 圈：a ^ b 是不進位的和，(a & b) << 1 是進位', en:'round ' + r + ': a ^ b is the carry-less sum, (a & b) << 1 the carry'}, capc:naive && r > 32 ? COL.red : COL.pale}),
+        panels:pan(naM, nb, r), line:L.loop,
+        msg:naive
+          ? (r <= 4 ? {zh:'第 ' + r + ' 圈：a = ' + fmt(a) + ' 和 b = ' + fmt(b) + ' 只有一欄同時是 1，那一欄相加是 10：a ^ b 留下 0，進位 (a & b) << 1 把 1 送到左邊一格。結果 a = ' + fmt(naM) + '、b = ' + fmt(nb) + '。進位每圈往左一格，就像 999 + 1 的進位一路往左傳。',
+                       en:'Round ' + r + ': a = ' + fmt(a) + ' and b = ' + fmt(b) + ' share a 1 in exactly one column, and 1 + 1 there is 10: a ^ b leaves a 0 and the carry (a & b) << 1 sends a 1 one place left. Now a = ' + fmt(naM) + ' and b = ' + fmt(nb) + '. The carry moves one place per round, like the carry in 999 + 1 rippling leftwards.'}
+                     : {zh:'第 ' + r + ' 圈：進位來到第 ' + r + ' 位' + (r > 32 ? '，已經越過第 32 位那道牆。在 C 裡它在第 32 圈就掉出去了，b 變成 0、回傳 0；在 Python 裡 a 是負數，左邊還有無限多個 1 在等它，進位永遠碰得到下一個 1，永遠不會變成 0。' : '，快到牆了。在 C 的 32 位 int 裡，下一步就沒有位置可以放。'),
+                       en:'Round ' + r + ': the carry is at bit ' + r + (r > 32 ? ', past the wall at bit 32. In C it fell off in round 32, b became 0 and the function returned 0. In Python a is negative with infinitely many 1s waiting on the left, so the carry always meets another 1 and never becomes 0.' : ', close to the wall. In a 32-bit C int the next step has nowhere to go.')})
+          : (cross && !nosign ? {zh:'第 ' + r + ' 圈：進位 (a & b) << 1 = ' + fmt(nbRaw) + ' 落在第 32 位，也就是牆的左邊。& M32 把第 32 位以上全部丟掉——這一步就是 C 硬體自動做的事：暫存器只有 32 格，多出來的進位直接消失。b 變成 0，迴圈停下。',
+                      en:'Round ' + r + ': the carry (a & b) << 1 = ' + fmt(nbRaw) + ' lands on bit 32, left of the wall. & M32 discards bit 32 and everything above - exactly what C hardware does for free: a register has 32 slots, and the extra carry simply vanishes. b becomes 0 and the loop stops.'}
+                   : {zh:'第 ' + r + ' 圈：a = ' + fmt(naM) + '、b = ' + fmt(nb) + '。' + (nosign ? (r === 1 ? '兩個數每一欄都是 1，a ^ b 全部抵銷成 0，(a & b) << 1 則把 32 個 1 整排往左推一格，最高那個推過了牆，& M32 把它丟掉。' : 'a 已經是 0，a & b 也是 0：沒有進位了，a ^ b 就是 b，迴圈停下。') : '和不加 mask 的版本一模一樣：進位往左搬一格。差別只會在碰到牆的時候出現。'),
+                      en:'Round ' + r + ': a = ' + fmt(naM) + ', b = ' + fmt(nb) + '.' + (nosign ? (r === 1 ? ' Both numbers have a 1 in every column, so a ^ b cancels to 0 while (a & b) << 1 pushes the whole row of 32 ones left by one; the top one crosses the wall and & M32 drops it.' : ' a is 0 now, so a & b is 0 as well: no carry is left, a ^ b is simply b, and the loop stops.') : ' Identical to the unmasked version so far: the carry moves one place left. The difference shows only when it hits the wall.')})});
+    } else skipped = true;
+    a = naM; b = nb;
+  }
+  if (naive){
+    let ta = a0, tb = b0, rr = 0; while (tb !== 0n && rr < 40){ [ta, tb] = [ta ^ tb, (ta & tb) << 1n]; rr++; }
+    F.push({shapes:gsStage({a:a, b:b, masked:false,
+        big:{zh:'第 40 圈：進位 = ' + fmt(tb), en:'round 40: carry = ' + fmt(tb)}, bigc:COL.red,
+        cap:{zh:'Python 裡這個迴圈永遠不會結束', en:'in Python this loop never ends'}, capc:COL.red,
+        cap2:{zh:'修法：每圈 & M32，最後把第 31 位讀成正負號（第一個變體）', en:'the fix: & M32 every round and read bit 31 as the sign (the first variant)'}}),
+      panels:pan(ta, tb, 40), line:L.loop,
+      msg:{zh:'demo 在第 40 圈停下來，這時進位已經是 1,099,511,627,776，也就是 2 的 40 次方，而 a 還是負數。這不是很慢，是永遠不會停：a 左邊的 1 是無限多個。C 和 Java 的解法之所以正確，是因為硬體替你做了「& 0xFFFFFFFF」；在 Python 裡這一步得自己寫。',
+           en:'The demo stops at round 40. By then the carry is 1,099,511,627,776 - 2 to the 40th - and a is still negative. It is not slow; it will never finish, because a has infinitely many 1s on its left. The C and Java answer is correct only because the hardware applies & 0xFFFFFFFF for free; in Python that step has to be written out.'}});
+  } else {
+    const signed = s32(a);
+    F.push({shapes:gsStage({a:a, b:b, masked:true,
+        big:nosign ? {zh:'回傳 ' + fmt(a) + '（應該是 ' + fmt(signed) + '）', en:'returns ' + fmt(a) + ' (should be ' + fmt(signed) + ')'}
+                   : {zh:'b = 0，迴圈停下，a = ' + fmt(a), en:'b = 0, the loop stops, a = ' + fmt(a)},
+        bigc:nosign ? COL.red : COL.tealL,
+        sub:nosign ? {zh:'第 31 位是 1：在 C 裡它代表 -2³¹，在 Python 裡它只是 +2³¹', en:'bit 31 is set: worth -2^31 in C, but a plain +2^31 in Python'}
+                   : {zh:'第 31 位是 0，a < 2³¹：直接回傳 ' + fmt(signed), en:'bit 31 is 0, a < 2^31: return ' + fmt(signed) + ' as is'},
+        cap:nosign ? {zh:'修法：return a if a < 1 << 31 else a - (1 << 32)', en:'the fix: return a if a < 1 << 31 else a - (1 << 32)'}
+                   : {zh:'(-1) + 1 = 0：32 圈後進位從第 31 位掉出去', en:'(-1) + 1 = 0: after 32 rounds the carry fell off bit 31'},
+        capc:nosign ? COL.orangeL : COL.tealL,
+        cap2:nosign ? {zh:'4,294,967,294 - 4,294,967,296 = -2', en:'4,294,967,294 - 4,294,967,296 = -2'}
+                    : {zh:'(-1) + (-1) 呢？第三個變體', en:'and (-1) + (-1)? see the third variant'}}),
+      panels:pan(a, b, r).concat([{lbl:{zh:'讀成有號數', en:'read as signed'}, chips:[chip(fmt(signed), nosign ? 'hot' : 'ok')]}]),
+      line:L.ret,
+      msg:nosign
+        ? {zh:'mask 讓迴圈停下來了，但回傳的是 4,294,967,294，不是 -2。這 32 個 bit 是對的——0xFFFFFFFE 正是 C 裡 -2 的樣子——錯的是「怎麼讀」。C 的 int 把第 31 位當成 -2³¹，Python 的整數卻把它當成普通的 +2³¹。所以最後一行要自己翻譯：第 31 位是 1，就減掉 2³²，4,294,967,294 - 4,294,967,296 = -2。',
+           en:'The mask made the loop stop, but the result is 4,294,967,294, not -2. The 32 bits are right - 0xFFFFFFFE is exactly how C stores -2 - what is wrong is how they are read. A C int counts bit 31 as -2^31; a Python int counts it as an ordinary +2^31. So the last line must translate: when bit 31 is set, subtract 2^32, and 4,294,967,294 - 4,294,967,296 = -2.'}
+        : {zh:'32 圈之後 b = 0，a = 0。整個修法只有兩處：每圈 & M32 模擬 32 位的暫存器，讓進位有地方掉出去；最後一行把第 31 位讀成正負號。答案 0 的第 31 位是 0，直接回傳。' ,
+           en:'After 32 rounds b = 0 and a = 0. The whole fix is two places: & M32 in every round mimics a 32-bit register so the carry has somewhere to fall off, and the last line reads bit 31 as the sign. Bit 31 of 0 is clear, so it is returned as is.'}});
+  }
+  return F.list;
+}
+
+/* ================================================================= tab 5: LC 137 */
+const CODE_137 = [
+  'def s32(u):',
+  '    return u - (1 << 32) if u >> 31 & 1 else u',
+  '',
+  'def single_number_ii_count(nums):',
+  '    res = 0',
+  '    for k in range(32):',
+  '        if sum((x >> k) & 1 for x in nums) % 3:',
+  '            res |= 1 << k',
+  '    return s32(res)            # bit 31 is worth -2**31'
+];
+const CODE_137N = CODE_137.slice();
+CODE_137N[3] = 'def single_number_ii_count_nosign(nums):';
+CODE_137N[8] = '    return res                 # bit 31 comes back worth +2**31';
+const CODE_137S = [
+  'class Solution:',
+  '    def singleNumber(self, nums: list[int]) -> int:',
+  '        ones = twos = 0           # per column: seen once / seen twice (mod 3)',
+  '        for x in nums:',
+  '            ones = (ones ^ x) & ~twos',
+  '            twos = (twos ^ x) & ~ones',
+  '        return ones'
+];
+const NUMS137 = [-2n, -2n, -3n, -2n];
+function snStage(o){
+  const sh = [], n = 32, x0 = 1.55, w = .25, h = .40;
+  sh.push(...bitIdx(n, x0, .52, w, [31, 24, 16, 8, 4, 0], .19));
+  const col = o.col == null ? -1 : o.col;
+  (o.rows || []).forEach((rw, i) => {
+    const y = .68 + i * .5;
+    sh.push(...bitRow(rw.v, n, x0, y, w, h, {title:rw.lab, prefix:true, tfs:.24, tc:rw.tc,
+      st:(k, b) => k === col ? (b ? 'hot' : 'ghost') : (rw.done && k > rw.done) ? 'ghost' : b ? (rw.st || 'soft') : 'ghost'}));
+  });
+  if (o.counts){
+    const y = .68 + o.rows.length * .5 + .1;
+    sh.push(fitT(x0 - .66, y + .3, {zh:'計數', en:'count'}, {c:COL.purpleL, fs:.22, anchor:'end'}));
+    for (let k = n - 1; k >= 0; k--){
+      const c = o.counts[k];
+      if (c == null) continue;
+      sh.push(S.r(x0 + (n - 1 - k) * w, y, w - .05, h, k === col ? 'act' : 'soft', String(c), {fs:.22}));
+    }
+  }
+  if (o.res != null){
+    const y = .68 + (o.rows.length + (o.counts ? 1 : 0)) * .5 + .25;
+    sh.push(...bitRow(o.res, n, x0, y, w, h, {title:'res', prefix:true, tfs:.26,
+      st:(k, b) => k === col ? (b ? 'hot' : 'ghost') : b ? (k === 31 && o.sign ? 'bad' : 'ok') : 'ghost'}));
+  }
+  if (o.big) sh.push(fitT(4.9, 4.72, o.big, {c:o.bigc || COL.orangeL, fs:.34}));
+  if (o.sub) sh.push(fitT(4.9, 5.12, o.sub, {c:COL.purpleL, fs:.24}));
+  return caps(sh, o);
+}
+function snFrames(v){
+  const F = new Frames();
+  const rows = NUMS137.map(x => ({v:x, lab:fmt(x), st:x === -3n ? 'act' : 'soft', tc:x === -3n ? COL.purpleL : COL.tealL}));
+  const numsTxt = '[' + NUMS137.map(fmt).join(', ') + ']';
+  if (v === 2){
+    let ones = 0n, twos = 0n;
+    const st = (lab, val, s) => ({v:val, lab:lab, st:s});
+    const pan = () => [{lbl:'nums', chips:NUMS137.map(x => chip(fmt(x), x === -3n ? 'act' : ''))},
+                       {lbl:'ones', chips:[chip(fmt(ones), 'ok')]}, {lbl:'twos', chips:[chip(fmt(twos), 'act')]}];
+    F.push({shapes:snStage({rows:[st('ones', ones, 'ok'), st('twos', twos, 'act')],
+        cap:{zh:'nums = ' + numsTxt + '：沒有欄、沒有 32，也沒有 s32', en:'nums = ' + numsTxt + ': no columns, no 32, no s32'},
+        cap2:{zh:'ones / twos 是每一欄「看過 1 次 / 2 次」的計數器，三十二欄一起跑', en:'ones / twos count "seen once / seen twice" for every column at the same time'}}),
+      panels:pan(), line:2,
+      msg:{zh:'LeetCode 137 的經典解不去數欄位：ones 的第 k 位是 1，代表第 k 欄目前看過 1 次（mod 3）；twos 的第 k 位是 1，代表看過 2 次。第三次出現時兩邊都清成 0。它只用 ^ & ~，全部是逐欄運算，所以 Python 左邊那無限多個 1 也被當成普通的欄位一起算——不需要知道寬度。',
+           en:'The classic LeetCode 137 answer never counts columns: bit k of ones means column k has seen a 1 once so far (mod 3), bit k of twos means twice, and the third 1 clears both. It uses only ^, & and ~ - all column-wise - so Python\'s infinite 1s on the left are handled as ordinary columns too. No width is ever needed.'}});
+    NUMS137.forEach((x, i) => {
+      const o1 = (ones ^ x) & ~twos;
+      ones = o1;
+      F.push({shapes:snStage({rows:[st('x', x, 'act'), st('ones', ones, 'hot'), st('twos', twos, 'act')],
+          cap:{zh:'x = ' + fmt(x) + '：ones = (ones ^ x) & ~twos → ' + fmt(ones), en:'x = ' + fmt(x) + ': ones = (ones ^ x) & ~twos -> ' + fmt(ones)},
+          cap2:{zh:'第 ' + (i + 1) + ' 個數', en:'number ' + (i + 1)}}),
+        panels:pan(), line:4,
+        msg:{zh:'第 ' + (i + 1) + ' 個數 x = ' + fmt(x) + '。ones ^ x 把 x 有 1 的欄位翻過來（第一次看到就記下，看到第二次就移出 ones），& ~twos 則保證已經在 twos 裡的欄位不會又回到 ones。ones 現在是 ' + fmt(ones) + '。',
+             en:'Number ' + (i + 1) + ', x = ' + fmt(x) + '. ones ^ x flips every column where x has a 1 - recorded on a first sighting, moved out of ones on a second - and & ~twos keeps columns already in twos from slipping back into ones. ones is now ' + fmt(ones) + '.'}});
+      twos = (twos ^ x) & ~ones;
+      F.push({shapes:snStage({rows:[st('x', x, 'act'), st('ones', ones, 'ok'), st('twos', twos, 'hot')],
+          cap:{zh:'twos = (twos ^ x) & ~ones → ' + fmt(twos), en:'twos = (twos ^ x) & ~ones -> ' + fmt(twos)},
+          cap2:i === 2 ? {zh:'-2 已經出現 2 次：它的 1 都移到 twos 了', en:'-2 has been seen twice: its 1s have moved to twos'}
+                       : i === 3 ? {zh:'-2 第三次出現：ones 和 twos 裡它的痕跡都清掉了', en:'-2 seen a third time: its trace is gone from ones and twos'}
+                                 : {zh:'看過一次的欄在 ones，兩次的在 twos', en:'columns seen once live in ones, twice in twos'}}),
+        panels:pan(), line:5,
+        msg:{zh:'twos 的更新和 ones 對稱：x 有 1、而且這一欄已經不在 ones 裡（剛剛被移出來的），就記進 twos。現在 ones = ' + fmt(ones) + '、twos = ' + fmt(twos) + '。' + (i === 3 ? '三個 -2 在每一欄都湊滿了 3 次，全部歸零；剩在 ones 裡的，正好是只出現一次的 -3。' : ''),
+             en:'The twos update mirrors ones: a column goes into twos when x has a 1 there and it is not in ones - i.e. it was just moved out. Now ones = ' + fmt(ones) + ' and twos = ' + fmt(twos) + '.' + (i === 3 ? ' The three -2s have completed three sightings in every column and cleared out; what remains in ones is exactly the single -3.' : '')}});
+    });
+    F.push({shapes:snStage({rows:[st('ones', ones, 'ok'), st('twos', twos, 'act')],
+        big:'return ones = ' + fmt(ones), bigc:COL.tealL,
+        cap:{zh:'直接是 -3：不用 & 0xFFFFFFFF，也不用讀正負號', en:'-3 directly: no & 0xFFFFFFFF, no sign reading'}, capc:COL.tealL,
+        cap2:{zh:'逐欄運算在任何寬度都成立——Python 的無限寬度也一樣', en:'column-wise operations hold at every width - Python\'s infinite one included'}}),
+      panels:pan(), line:6,
+      msg:{zh:'回傳 ones = -3，正確。這個版本從頭到尾沒提到 32：左邊那無限多欄也照同一個規則在計數，三個 -2 的 …1 和 -3 的 …1 加起來是 4 次，mod 3 剩 1，所以 ones 左邊也是 …1，本身就是負數。只要整個演算法都是逐欄運算，Python 的整數就不會出事。',
+           en:'ones = -3, which is right. This version never mentions 32: the infinitely many columns on the left follow the same rule, the …1 of three -2s and one -3 make four sightings, 4 mod 3 leaves 1, so ones is …1 on the left as well - a negative number by itself. As long as every step is column-wise, Python ints cause no trouble.'}});
+    return F.list;
+  }
+  const nosign = v === 1;
+  const counts = new Array(32).fill(null);
+  let res = 0n;
+  const pan = () => [{lbl:'nums', chips:NUMS137.map(x => chip(fmt(x), x === -3n ? 'act' : ''))},
+                     {lbl:'res', chips:[chip(fmt(res), 'ok')]}];
+  F.push({shapes:snStage({rows:rows, res:res,
+      cap:{zh:'LC 137：nums = ' + numsTxt + '，只有 -3 出現一次', en:'LC 137: nums = ' + numsTxt + ', only -3 appears once'},
+      cap2:{zh:'每一欄數有幾個 1，mod 3 之後剩下的就是答案那一欄', en:'count the 1s in each column; whatever survives mod 3 belongs to the answer'}}),
+    panels:pan(), line:4,
+    msg:{zh:'LeetCode 137：其他數都出現三次，只有一個出現一次。逐欄計數的想法很直觀：出現三次的數在每一欄貢獻 0 或 3 個 1，mod 3 之後消失；剩下的 1 就是那個單獨的數。題目說整數是 32 位，所以 k 跑 0 到 31——在 Python 裡這個「32」要自己負責。',
+         en:'LeetCode 137: every number appears three times except one. Counting per column is the intuitive answer: a number that appears three times contributes 0 or 3 ones to each column, which vanish mod 3; the 1s that remain spell the single number. The statement says 32-bit integers, so k runs 0 to 31 - and in Python that 32 is your job.'}});
+  let skipped = false;
+  for (let k = 0; k < 32; k++){
+    const c = NUMS137.reduce((s, x) => s + bitAt(x, k), 0);
+    counts[k] = c;
+    if (c % 3) res |= 1n << B(k);
+    if (k <= 3 || k >= 30){
+      if (skipped){
+        F.push({shapes:snStage({rows:rows, counts:counts, res:res, col:-1,
+            big:{zh:'第 4 到 ' + (k - 1) + ' 欄都一樣：4 個 1，mod 3 = 1', en:'columns 4 to ' + (k - 1) + ' all match: four 1s, mod 3 = 1'}, bigc:COL.grey}),
+          panels:pan(), line:6,
+          msg:{zh:'-2 和 -3 從第 2 位以上全是 1，所以這些欄每一欄都有 4 個 1，4 mod 3 = 1，res 那一位都設成 1。直接跳到最後兩欄，第 31 位才是重點。',
+               en:'From bit 2 up, both -2 and -3 are all 1s, so every one of these columns holds four 1s, 4 mod 3 = 1, and res gets that bit set. Skip ahead to the last two columns - bit 31 is where the story is.'}});
+        skipped = false;
+      }
+      F.push({shapes:snStage({rows:rows, counts:counts, res:res, col:k,
+          big:{zh:'第 ' + k + ' 欄：' + c + ' 個 1，' + c + ' mod 3 = ' + (c % 3), en:'column ' + k + ': ' + c + ' ones, ' + c + ' mod 3 = ' + (c % 3)},
+          sub:c % 3 ? {zh:'res |= 1 << ' + k, en:'res |= 1 << ' + k} : {zh:'res 這一位保持 0', en:'res keeps a 0 here'},
+          cap:{zh:'res = ' + fmt(res), en:'res = ' + fmt(res)}}),
+        panels:pan(), line:c % 3 ? 7 : 6,
+        msg:k === 31
+          ? {zh:'第 31 欄也是 4 個 1，res 的第 31 位設成 1。在 C 裡這一位代表 -2³¹，res 立刻就是 -3；但這裡是用 res |= 1 << 31 一位一位拼起來的 Python 整數，第 31 位值 +2,147,483,648，res 是正數 ' + fmt(res) + '。注意 res 左邊那格是 …0。',
+             en:'Column 31 also holds four 1s, so bit 31 of res is set. In C that bit is worth -2^31 and res would be -3 on the spot; here res is a Python int built bit by bit with res |= 1 << 31, so bit 31 is worth +2,147,483,648 and res is the positive ' + fmt(res) + '. Note the …0 on res\'s left.'}
+          : {zh:'第 ' + k + ' 欄：四個數在這一欄共有 ' + c + ' 個 1。三個 -2 一起出現，貢獻 0 或 3 個；' + (c % 3 ? '剩下的 1 個來自 -3，所以 res 的第 ' + k + ' 位是 1。' : 'mod 3 = 0，代表 -3 這一欄是 0，res 也放 0。'),
+             en:'Column ' + k + ': the four numbers hold ' + c + ' ones here. The three -2s always contribute 0 or 3 together; ' + (c % 3 ? 'the one left over is -3\'s, so bit ' + k + ' of res is 1.' : 'mod 3 = 0 means -3 has a 0 here, so res does too.')}});
+    } else skipped = true;
+  }
+  const sres = s32(res);
+  F.push({shapes:snStage({rows:rows, counts:counts, res:res, sign:true,
+      big:nosign ? {zh:'回傳 ' + fmt(res) + '（應該是 -3）', en:'returns ' + fmt(res) + ' (should be -3)'}
+                 : 's32(' + fmt(res) + ') = ' + fmt(sres),
+      bigc:nosign ? COL.red : COL.tealL,
+      sub:{zh:fmt(res) + ' - 4,294,967,296 = ' + fmt(sres), en:fmt(res) + ' - 4,294,967,296 = ' + fmt(sres)},
+      cap:nosign ? {zh:'1,000 次隨機測試錯 502 次：剛好是答案為負數的那些', en:'wrong on 502 of 1,000 random tests: exactly the ones with a negative answer'}
+                 : {zh:'第 31 位是 1 → 減掉 2³²，得到 -3', en:'bit 31 is set -> subtract 2^32 and get -3'},
+      capc:nosign ? COL.red : COL.tealL,
+      cap2:{zh:'正數答案不受影響，所以範例測資通常抓不到這個 bug', en:'positive answers are unaffected, so the sample tests usually miss this bug'}}),
+    panels:pan().concat([{lbl:'s32(res)', chips:[chip(fmt(sres), nosign ? 'bad' : 'ok')]}]), line:8,
+    msg:nosign
+      ? {zh:'少了最後的 s32，回傳的是 4,294,967,293。32 個 bit 完全正確——0xFFFFFFFD 就是 -3 在 C 裡的樣子——錯在 Python 把第 31 位當成 +2³¹。拿 1,000 組隨機測資去跑，這個版本錯了 502 組，恰好是答案為負數的那些；LeetCode 的範例答案是 3 和 99，全都是正數，範例全過卻照樣 Wrong Answer。',
+         en:'Without the final s32 the function returns 4,294,967,293. All 32 bits are right - 0xFFFFFFFD is how C stores -3 - the mistake is that Python counts bit 31 as +2^31. Run 1,000 random tests and this version fails 502 of them, exactly the ones with a negative answer; LeetCode\'s examples answer 3 and 99, both positive, so it passes the samples and still gets Wrong Answer.'}
+      : {zh:'s32 做的翻譯只有一步：第 31 位是 1，就減掉 2³² = 4,294,967,296。4,294,967,293 - 4,294,967,296 = -3，正確。「在 Python 模擬 32 位整數」永遠是這兩件事：用 & 0xFFFFFFFF 保留低 32 位，最後把第 31 位讀成正負號。',
+         en:'s32 does a single translation step: when bit 31 is set, subtract 2^32 = 4,294,967,296. 4,294,967,293 - 4,294,967,296 = -3, the right answer. Simulating a 32-bit int in Python always comes down to these two things: keep the low 32 bits with & 0xFFFFFFFF, then read bit 31 as the sign.'}});
+  return F.list;
+}
+
+const DAY_META = {
+  title:{zh:'Day 40 — 位元運算技巧：mask、popcount', en:'Day 40 - Bit tricks: masks and popcount'},
+  sub:{zh:'逐欄的 & | ^ ~ 在任何寬度都安全；凡是需要「第 31 位是盡頭」的寫法，在沒有寬度的 Python 整數上都會壞。',
+       en:'Column-wise & | ^ ~ are safe at any width; anything that needs bit 31 to be the end breaks on Python\'s widthless integers.'},
+  tabs:[
+    {
+      id:'toolkit', label:{zh:'八個一行技巧', en:'eight one-liners'},
+      stage:{zh:'x = 180 = 0b10110100：每一招都是對一排開關做一次運算',
+             en:'x = 180 = 0b10110100: every trick is one operation on a row of switches'},
+      view:VIEW,
+      variants:[{zh:'八招（180）', en:'the eight tricks on 180'},
+                {zh:'少一對括號的 mask', en:'the mask missing its parentheses'}],
+      idea:{zh:'把整數看成一排開關，第 k 位代表集合裡有沒有 k。測試、設定、清除、翻轉某一位，分別是 >> & 1、| mask、& ~mask、^ mask；x & -x 留下最低的 1，x & (x - 1) 把它關掉，x | (x + 1) 打開最低的 0，x ^ (x >> 1) 是 Gray code。這八招有一個共同點：每一欄的輸出只看同一欄的輸入。所以即使 Python 的負數左邊有無限多個 1，它們也只會和另一邊的無限多位逐欄運算，不會出事。唯一的陷阱是優先順序：- 比 << 優先，1 << n - 1 其實是 1 << (n - 1)。',
+            en:'Treat an integer as a row of switches, bit k meaning "k is in the set". Testing, setting, clearing and toggling bit k are >> & 1, | mask, & ~mask and ^ mask; x & -x keeps the lowest 1, x & (x - 1) turns it off, x | (x + 1) turns on the lowest 0, and x ^ (x >> 1) is the Gray code. All eight share one property: each output column depends only on the same input column. So even though a negative Python int has infinitely many 1s on the left, they only ever meet the other operand column by column, and nothing breaks. The one trap is precedence: - binds tighter than <<, so 1 << n - 1 is really 1 << (n - 1).'},
+      legend:[['#9d6bff', {zh:'這一招要動的位', en:'the bits this trick targets'}],
+              ['#ff9736', {zh:'結果裡被改到的位', en:'the changed bits in the result'}],
+              ['#3fe0dd', {zh:'結果', en:'the result'}],
+              ['#ff5c5c', {zh:'…1：往左有無限多個 1', en:'…1: infinitely many 1s to the left'}]],
+      get code(){ return curV() === 1 ? CODE_PREC : CODE_TK; },
+      build:tkFrames
+    },
+    {
+      id:'popcount', label:{zh:'popcount', en:'popcount'},
+      stage:{zh:'數 1 的個數：每圈拿掉一個 1，還是每圈看一個 bit',
+             en:'counting 1s: remove one 1 per round, or look at one bit per round'},
+      view:VIEW,
+      variants:[{zh:'Kernighan（180，4 圈）', en:'Kernighan - 180, 4 rounds'},
+                {zh:'逐位移（180，8 圈）', en:'shift loop - 180, 8 rounds'},
+                {zh:'Kernighan（-5，停不下來）', en:'Kernighan - -5, never stops'}],
+      idea:{zh:'popcount 是「有幾個 1」。逐位移每圈看最後一位，圈數等於位元長度；Kernighan 每圈做 x &= x - 1 拿掉最低的 1，圈數等於 1 的個數，在稀疏的數上快很多。但兩者都輸給內建：20 萬個整數實測，x.bit_count() 20 ms、bin(x).count("1") 86 ms、Kernighan 322 ms、逐位移 714 ms——Python 的迴圈每圈都很貴，C 寫的內建函式一次做完。負數是另一個問題：Kernighan 靠「1 拿完了 x 就是 0」停下來，但 -5 左邊有無限多個 1，永遠拿不完。C 的答案 31 要先 & 0xFFFFFFFF；bin(-5).count("1") 和 (-5).bit_count() 則回傳 2，數的是絕對值。',
+            en:'popcount means "how many 1s". The shift loop looks at the last bit each round, so it runs once per bit; Kernighan does x &= x - 1 to remove the lowest 1, so it runs once per 1, which is far quicker on sparse numbers. Both lose to the built-ins: over 200,000 integers x.bit_count() took 20 ms, bin(x).count("1") 86 ms, Kernighan 322 ms and the shift loop 714 ms - every round of a Python loop is expensive, while the built-ins finish in C. Negatives are a different problem: Kernighan stops because x reaches 0 once the 1s run out, but -5 has infinitely many 1s on its left and they never run out. C\'s answer of 31 needs & 0xFFFFFFFF first; bin(-5).count("1") and (-5).bit_count() both return 2, counting the absolute value.'},
+      legend:[['#ff9736', {zh:'這一圈處理的 bit', en:'the bit handled this round'}],
+              ['#9d6bff', {zh:'x 的 1', en:'the 1s of x'}],
+              ['#3fe0dd', {zh:'處理後的 x', en:'x after the step'}],
+              ['#ff5c5c', {zh:'負數無限延伸的 1', en:'the endless 1s of a negative'}]],
+      get code(){ return curV() === 1 ? CODE_SHIFT : CODE_KER; },
+      build:pcFrames
+    },
+    {
+      id:'lc338', label:{zh:'LC 338 數位元', en:'LC 338 counting bits'},
+      stage:{zh:'n = 8：每一格的答案從一個比較小、已經算好的格子來',
+             en:'n = 8: every entry comes from a smaller entry that is already done'},
+      view:VIEW,
+      variants:[{zh:'ans[i >> 1] + (i & 1)', en:'ans[i >> 1] + (i & 1)'},
+                {zh:'ans[i & (i - 1)] + 1', en:'ans[i & (i - 1)] + 1'}],
+      idea:{zh:'LeetCode 338 要 0 到 n 每個數的 popcount，進階要求 O(n)。對每個 i 重新數一次是 O(n log n)；DP 的做法是讓 i 的答案從一個更小的數推出來。i >> 1 是 i 去掉最後一位，兩者的 1 只差 i & 1；i & (i - 1) 是 i 去掉最低的 1，兩者的 1 剛好差一個。兩個來源都比 i 小，由左往右填時早就算好了，所以每格只要一次查表加一次加法。',
+            en:'LeetCode 338 wants the popcount of every number from 0 to n, with an O(n) follow-up. Recounting each i costs O(n log n); the DP derives the answer for i from a smaller number instead. i >> 1 is i without its last bit, so their counts differ by i & 1; i & (i - 1) is i without its lowest 1, so their counts differ by exactly one. Both sources are smaller than i and already filled when going left to right, so each entry costs one lookup and one addition.'},
+      legend:[['#ff9736', {zh:'正在填的格子', en:'the entry being filled'}],
+              ['#9d6bff', {zh:'它的來源', en:'its source'}],
+              ['#3fe0dd', {zh:'已經填好', en:'already filled'}]],
+      get code(){ return curV() === 1 ? CODE_338L : CODE_338; },
+      build:cbFrames
+    },
+    {
+      id:'lc371', label:{zh:'LC 371 沒有牆的進位', en:'LC 371 the carry with no wall'},
+      stage:{zh:'不用 + 算加法：進位要從第 31 位掉出去，迴圈才會停',
+             en:'addition without +: the loop stops only when the carry falls off bit 31'},
+      view:VIEW,
+      variants:[{zh:'(-1) + 1，32 位 mask', en:'(-1) + 1, 32-bit mask'},
+                {zh:'(-1) + 1，照抄 C', en:'(-1) + 1, the C code as is'},
+                {zh:'(-1) + (-1)，沒讀正負號', en:'(-1) + (-1), sign not read'}],
+      idea:{zh:'LeetCode 371 的標準解：a ^ b 是不進位的和，(a & b) << 1 是進位，重複到進位為 0。在 C 和 Java 裡它一定會停，因為進位最多走 32 格就從第 31 位掉出去。把同一段程式搬到 Python，-1 + 1 的進位會一路往左走——第 40 圈時進位是 1,099,511,627,776，而 a 左邊還有無限多個 1 在等它，永遠停不下來。修法有兩處：每圈 & 0xFFFFFFFF，替 Python 裝上那道牆；最後把第 31 位讀成正負號，否則 -1 + -1 會回傳 4,294,967,294 而不是 -2。',
+            en:'The standard LeetCode 371 answer: a ^ b is the carry-less sum and (a & b) << 1 the carry, repeated until the carry is 0. In C and Java it must stop, because the carry walks at most 32 places before falling off bit 31. Move the same code to Python and the carry of -1 + 1 marches left forever - at round 40 it is 1,099,511,627,776 and a still has infinitely many 1s waiting for it. The fix has two parts: & 0xFFFFFFFF every round, which gives Python the wall; and reading bit 31 as the sign at the end, without which -1 + -1 returns 4,294,967,294 instead of -2.'},
+      legend:[['#ff9736', {zh:'進位 (a & b) << 1', en:'the carry (a & b) << 1'}],
+              ['#3fe0dd', {zh:'不進位的和 a ^ b', en:'the carry-less sum a ^ b'}],
+              ['#9d6bff', {zh:'牆左邊的位（Python 才有）', en:'bits left of the wall (Python only)'}],
+              ['#ff5c5c', {zh:'第 32 位的牆 / 會被 mask 丟掉的位', en:'the wall at bit 32 / bits the mask drops'}]],
+      get code(){ const v = curV(); return v === 1 ? CODE_371N : v === 2 ? CODE_371M : CODE_371; },
+      build:gsFrames
+    },
+    {
+      id:'lc137', label:{zh:'LC 137 只出現一次', en:'LC 137 single number II'},
+      stage:{zh:'nums = [-2, -2, -3, -2]：逐欄數 1 再 mod 3，最後一步決定正負',
+             en:'nums = [-2, -2, -3, -2]: count 1s per column mod 3; the last step decides the sign'},
+      view:VIEW,
+      variants:[{zh:'逐欄計數 + s32', en:'column counts + s32'},
+                {zh:'逐欄計數，沒有 s32', en:'column counts, no s32'},
+                {zh:'ones / twos（不用寬度）', en:'ones / twos - no width at all'}],
+      idea:{zh:'LeetCode 137 裡其他數都出現三次，只有一個出現一次。逐欄計數：出現三次的數在每一欄貢獻 0 或 3 個 1，mod 3 後消失，剩下的就是答案。Python 的問題出在拼答案的那一步：res |= 1 << 31 在 C 裡代表 -2³¹，在 Python 裡卻是 +2,147,483,648，所以 -3 會變成 4,294,967,293。1,000 組隨機測資這個版本錯 502 組，恰好是答案為負的那些——題目的範例答案都是正數，抓不到。s32 把第 31 位讀成正負號就修好了。ones/twos 的解法則完全不需要寬度：它只用 ^ & ~，Python 左邊那無限多位也當成普通的欄位在計數，直接回傳 -3。',
+            en:'In LeetCode 137 every number appears three times except one. Count per column: a triple contributes 0 or 3 ones to each column, which vanish mod 3, and what is left is the answer. Python goes wrong in the step that assembles the answer: res |= 1 << 31 means -2^31 in C but +2,147,483,648 in Python, so -3 comes back as 4,294,967,293. On 1,000 random tests this version fails 502, exactly those with a negative answer - and the examples in the statement are all positive, so they never catch it. s32, which reads bit 31 as the sign, fixes it. The ones/twos solution needs no width at all: it uses only ^, & and ~, treats Python\'s infinite columns as ordinary ones and returns -3 directly.'},
+      legend:[['#ff9736', {zh:'正在數的那一欄', en:'the column being counted'}],
+              ['#9d6bff', {zh:'只出現一次的 -3 / 每欄的 1', en:'the single -3 / 1s per column'}],
+              ['#3fe0dd', {zh:'res 已經拼好的位', en:'bits of res assembled so far'}],
+              ['#ff5c5c', {zh:'第 31 位：正負號', en:'bit 31: the sign'}]],
+      get code(){ const v = curV(); return v === 1 ? CODE_137N : v === 2 ? CODE_137S : CODE_137; },
+      build:snFrames
+    }
+  ]
+};
+
+/* =========================================================================
+   100 Days of Python - shared demo engine
+   palette: teal/blue-green base, purple pointers, orange "current step"
+   ========================================================================= */
+const T = {
+  title:{zh:DAY_META.title.zh, en:DAY_META.title.en},
+  sub:{zh:DAY_META.sub.zh, en:DAY_META.sub.en},
+  play:{zh:'▶ 播放', en:'▶ Play'}, pause:{zh:'❚❚ 暫停', en:'❚❚ Pause'},
+  speed:{zh:'速度', en:'Speed'}, state:{zh:'演算法狀態', en:'Algorithm state'},
+  code:{zh:'程式碼', en:'Code'}, idea:{zh:'重點', en:'The idea'}
+};
+let LANG = 'zh';
+const tr = o => (o == null ? '' : (typeof o === 'string' ? o : (o[LANG] != null ? o[LANG] : o.en)));
+const $ = id => document.getElementById(id);
+
+function setLang(l){
+  LANG = l;
+  document.documentElement.lang = l === 'zh' ? 'zh-Hant' : 'en';
+  $('btn-zh').classList.toggle('on', l === 'zh');
+  $('btn-en').classList.toggle('on', l === 'en');
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.getAttribute('data-i18n');
+    if (T[k]) el.textContent = tr(T[k]);
+  });
+  buildTabs(); render();
+}
+
+/* --------------------------------------------------------------- palette */
+const STY = {
+  idle :{fill:'#07293a', stroke:'#0a6b74', text:'#dff2f5', w:.045, glow:0},
+  soft :{fill:'#052330', stroke:'#0a6b74', text:'#a8c8d0', w:.035, glow:0},
+  hot  :{fill:'#3a2109', stroke:'#ff9736', text:'#ffbe6b', w:.075, glow:.65},
+  act  :{fill:'#241542', stroke:'#9d6bff', text:'#c7a6ff', w:.070, glow:.55},
+  ok   :{fill:'#08414a', stroke:'#3fe0dd', text:'#d9ffff', w:.070, glow:.5},
+  done :{fill:'#062430', stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0},
+  bad  :{fill:'#3a0d0d', stroke:'#ff5c5c', text:'#ff9a9a', w:.070, glow:.4},
+  ghost:{fill:'none',    stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0, dash:'.12 .10'}
+};
+const COL = {teal:'#12b3b8', tealL:'#3fe0dd', purple:'#9d6bff', purpleL:'#c7a6ff',
+             orange:'#ff9736', orangeL:'#ffbe6b', red:'#ff5c5c', grey:'#8fa3ac',
+             pale:'#dff2f5', white:'#ffffff'};
+const LEGEND = {
+  hot:[COL.orange, {zh:'目前這一步', en:'current step'}],
+  act:[COL.purple, {zh:'指標 / 走訪位置', en:'pointer / cursor'}],
+  ok:[COL.tealL,  {zh:'完成 / 結果', en:'done / result'}],
+  bad:[COL.red,   {zh:'失敗 / 要避開的寫法', en:'failure / the wrong way'}],
+  done:['#2f5661', {zh:'已處理完', en:'already done'}],
+  soft:['#0a6b74', {zh:'其他元素', en:'other items'}],
+  idle:['#0a6b74', {zh:'尚未處理', en:'untouched'}],
+  ghost:['#123f4d', {zh:'尚未處理', en:'not yet reached'}]
+};
+const leg = (...keys) => keys.map(k => LEGEND[k]);
+
+/* ---------------------------------------------------------- frame buffer */
+function Frames(){
+  this.list = [];
+  this.push = (o) => this.list.push({
+    shapes:JSON.parse(JSON.stringify(o.shapes || [])),
+    panels:JSON.parse(JSON.stringify(o.panels || [])),
+    view:(o.view || null), line:(o.line == null ? 0 : o.line), msg:o.msg
+  });
+}
+/* shape helpers - engines call these, the renderer just draws */
+const S = {
+  r:(x, y, w, h, s, lab, o) => Object.assign({t:'r', x:x, y:y, w:w, h:h, s:s || 'idle', lab:lab}, o || {}),
+  c:(x, y, r, s, lab, o) => Object.assign({t:'c', x:x, y:y, r:r, s:s || 'idle', lab:lab}, o || {}),
+  e:(x1, y1, x2, y2, o) => Object.assign({t:'e', x1:x1, y1:y1, x2:x2, y2:y2}, o || {}),
+  t:(x, y, s, o) => Object.assign({t:'t', x:x, y:y, s:s}, o || {})
+};
+/* a labelled row of array cells; returns shapes */
+function cellRow(vals, x0, y, w, h, opt){
+  opt = opt || {};
+  const out = [], st = opt.states || {};
+  vals.forEach((v, i) => {
+    out.push(S.r(x0 + i * w, y, w - (opt.gap == null ? .06 : opt.gap), h, st[i] || 'idle',
+                 v == null ? '' : String(v), {fs:opt.fs || h * .52}));
+    if (opt.index !== false)
+      out.push(S.t(x0 + i * w + (w - .06) / 2, y + h + (opt.ilift || .34),
+                   opt.labels ? opt.labels[i] : String(i),
+                   {c:st[i] && st[i] !== 'idle' ? COL.orangeL : COL.grey, fs:opt.ifs || .30}));
+  });
+  if (opt.title) out.push(S.t(x0 - .22, y + h * .62, opt.title, {c:COL.tealL, fs:.32, anchor:'end'}));
+  return out;
+}
+/* binary-tree layout from a heap-style array (index 0 = root, 2i+1 / 2i+2) */
+function heapTreeShapes(arr, x0, y0, w, rowH, states, opt){
+  opt = opt || {};
+  const n = arr.length, out = [], R = opt.r || .34;
+  const depth = i => Math.floor(Math.log2(i + 1));
+  const maxD = n ? depth(n - 1) : 0;
+  const px = i => {
+    const d = depth(i), first = Math.pow(2, d) - 1, k = i - first;
+    const slots = Math.pow(2, d), span = w;
+    return x0 + span * (k + .5) / slots;
+  };
+  const py = i => y0 + depth(i) * rowH;
+  for (let i = 1; i < n; i++){
+    if (arr[i] == null) continue;
+    const p = Math.floor((i - 1) / 2);
+    out.push(S.e(px(p), py(p), px(i), py(i), {pad:R + .04,
+      s:(states && (states[i] === 'hot' || states[i] === 'act')) ? states[i] : 'idle'}));
+  }
+  for (let i = 0; i < n; i++){
+    if (arr[i] == null) continue;
+    out.push(S.c(px(i), py(i), R, (states && states[i]) || 'idle', String(arr[i]), {fs:R * .95}));
+    if (opt.showIndex)
+      out.push(S.t(px(i), py(i) + R + .34, String(i), {c:COL.grey, fs:.26}));
+  }
+  return out;
+}
+
+/* -------------------------------------------------------------- renderer */
+const svgNS = 'http://www.w3.org/2000/svg';
+const mk = (tag, a) => { const e = document.createElementNS(svgNS, tag);
+  for (const k in a) e.setAttribute(k, a[k]); return e; };
+const clear = svg => { while (svg.firstChild) svg.removeChild(svg.firstChild); };
+
+function defs(svg){
+  const d = mk('defs', {});
+  const f = mk('filter', {id:'glow', x:'-70%', y:'-70%', width:'240%', height:'240%'});
+  f.appendChild(mk('feGaussianBlur', {stdDeviation:'.055', result:'b'}));
+  const m = mk('feMerge', {});
+  m.appendChild(mk('feMergeNode', {in:'b'}));
+  m.appendChild(mk('feMergeNode', {in:'SourceGraphic'}));
+  f.appendChild(m); d.appendChild(f);
+  Object.keys(STY).forEach(k => {
+    const mk2 = mk('marker', {id:'ar-' + k, viewBox:'0 0 10 10', refX:'8.5', refY:'5',
+      markerWidth:'5.2', markerHeight:'5.2', orient:'auto-start-reverse'});
+    mk2.appendChild(mk('path', {d:'M 0 1 L 9 5 L 0 9 z', fill:STY[k].stroke}));
+    d.appendChild(mk2);
+  });
+  svg.appendChild(d);
+}
+
+function drawShape(svg, sh){
+  const st = STY[sh.s || 'idle'];
+  if (sh.t === 'e'){
+    let {x1, y1, x2, y2} = sh;
+    if (sh.pad){
+      const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+      x1 += dx / L * sh.pad; y1 += dy / L * sh.pad;
+      x2 -= dx / L * sh.pad; y2 -= dy / L * sh.pad;
+    }
+    const a = {x1:x1.toFixed(3), y1:y1.toFixed(3), x2:x2.toFixed(3), y2:y2.toFixed(3),
+      stroke:st.stroke, 'stroke-width':(sh.w || st.w || .05), 'stroke-linecap':'round',
+      opacity:(sh.o == null ? (sh.s && sh.s !== 'idle' ? 1 : .75) : sh.o)};
+    if (sh.dash || st.dash) a['stroke-dasharray'] = sh.dash || st.dash;
+    if (sh.arrow !== false) a['marker-end'] = 'url(#ar-' + (sh.s || 'idle') + ')';
+    svg.appendChild(mk('line', a));
+    if (sh.lab != null)
+      svg.appendChild(txt((x1 + x2) / 2 + (sh.lx || 0), (y1 + y2) / 2 + (sh.ly || -.16),
+        tr(sh.lab), st.stroke, sh.fs || .30, 'middle'));
+    return;
+  }
+  if (sh.t === 't'){
+    svg.appendChild(txt(sh.x, sh.y, tr(sh.s), sh.c || COL.pale, sh.fs || .32,
+      sh.anchor || 'middle', sh.o));
+    return;
+  }
+  let node;
+  if (sh.t === 'c'){
+    node = mk('circle', {cx:sh.x.toFixed(3), cy:sh.y.toFixed(3), r:sh.r.toFixed(3),
+      fill:st.fill, stroke:st.stroke, 'stroke-width':st.w});
+  } else {
+    node = mk('rect', {x:sh.x.toFixed(3), y:sh.y.toFixed(3), width:sh.w.toFixed(3),
+      height:sh.h.toFixed(3), rx:(sh.rx == null ? .09 : sh.rx), fill:st.fill,
+      stroke:st.stroke, 'stroke-width':st.w});
+  }
+  if (st.dash || sh.dash) node.setAttribute('stroke-dasharray', sh.dash || st.dash);
+  if (st.glow) node.setAttribute('filter', 'url(#glow)');
+  if (sh.o != null) node.setAttribute('opacity', sh.o);
+  svg.appendChild(node);
+  const cx = sh.t === 'c' ? sh.x : sh.x + sh.w / 2;
+  const cy = sh.t === 'c' ? sh.y : sh.y + sh.h / 2;
+  if (sh.lab != null && sh.lab !== '')
+    svg.appendChild(txt(cx + (sh.dx || 0), cy + (sh.fs || .40) * .35, tr(sh.lab), st.text,
+      sh.fs || .40, 'middle'));
+  if (sh.sub != null)
+    svg.appendChild(txt(cx, cy + (sh.t === 'c' ? sh.r : sh.h) + .34, tr(sh.sub),
+      sh.subc || COL.grey, sh.subfs || .28, 'middle'));
+  if (sh.top != null)
+    svg.appendChild(txt(cx, cy - (sh.t === 'c' ? sh.r : sh.h / 2) - .22, tr(sh.top),
+      sh.topc || COL.purpleL, sh.topfs || .28, 'middle'));
+}
+function txt(x, y, s, c, fs, anchor, o){
+  const t = mk('text', {x:(+x).toFixed(3), y:(+y).toFixed(3), 'text-anchor':anchor || 'middle',
+    fill:c, 'font-size':(+fs).toFixed(3)});
+  if (o != null) t.setAttribute('opacity', o);
+  t.textContent = s;
+  return t;
+}
+
+function renderStage(frame){
+  const svg = $('stage');
+  clear(svg); defs(svg);
+  const v = frame.view || curTab().view || [10, 6.4];
+  svg.setAttribute('viewBox', '0 0 ' + v[0] + ' ' + v[1]);
+  (frame.shapes || []).forEach(sh => drawShape(svg, sh));
+}
+
+function drawPanels(frame){
+  const box = $('panels'); box.innerHTML = '';
+  (frame.panels || []).forEach(p => {
+    const d = document.createElement('div'); d.className = 'panel';
+    const l = document.createElement('div'); l.className = 'lbl'; l.textContent = tr(p.lbl);
+    const c = document.createElement('div'); c.className = 'chips';
+    (p.chips.length ? p.chips : [{t:'—', cls:'empty'}]).forEach(ch => {
+      const s = document.createElement('span');
+      s.className = 'chip ' + (ch.cls || ''); s.textContent = ch.t; c.appendChild(s);
+    });
+    d.appendChild(l); d.appendChild(c); box.appendChild(d);
+  });
+}
+function drawCode(frame){
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  $('code').innerHTML = curTab().code.map((ln, i) => {
+    const h = esc(ln).replace(/(#.*)$/, '<span class="cm">$1</span>');
+    return '<span class="ln' + (i === frame.line ? ' on' : '') + '">' + (h || ' ') + '</span>';
+  }).join('');
+}
+function drawLegend(){
+  const keys = curTab().legend || ['hot', 'act', 'ok', 'idle'];
+  $('legend').innerHTML = keys.map(k => {
+    const [c, txt] = Array.isArray(k) ? k : LEGEND[k];
+    return '<span><i style="background:' + c + '"></i>' + tr(txt) + '</span>';
+  }).join('');
+}
+
+let tabIx = 0, varIx = 0, frames = [], cur = 0, timer = null;
+const TABS = DAY_META.tabs;
+const curTab = () => TABS[tabIx];
+
+function render(){
+  if (!frames.length) return;
+  cur = Math.max(0, Math.min(cur, frames.length - 1));
+  const f = frames[cur];
+  $('stage-title').textContent = tr(curTab().stage);
+  renderStage(f); drawPanels(f); drawCode(f); drawLegend();
+  $('narr').innerHTML = tr(f.msg);
+  $('idea').innerHTML = tr(curTab().idea);
+  $('stepno').textContent = (cur + 1) + ' / ' + frames.length;
+  $('prev').disabled = cur === 0;
+  $('next').disabled = cur === frames.length - 1;
+}
+function buildTabs(){
+  $('tabs').innerHTML = '';
+  TABS.forEach((t, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(t.label);
+    if (i === tabIx) b.classList.add('on');
+    b.onclick = () => { tabIx = i; varIx = 0; load(); };
+    $('tabs').appendChild(b);
+  });
+  const ex = $('extra'); ex.innerHTML = '';
+  const vs = curTab().variants;
+  if (vs) vs.forEach((v, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(v);
+    if (i === varIx) b.classList.add('on');
+    b.onclick = () => { varIx = i; load(); };
+    ex.appendChild(b);
+  });
+}
+function load(){
+  stop();
+  frames = curTab().build(varIx) || [];
+  cur = 0; buildTabs(); render();
+}
+function step(d){ stop(); cur += d; render(); }
+function reset(){ stop(); cur = 0; render(); }
+function stop(){ if (timer){ clearInterval(timer); timer = null; $('play').textContent = tr(T.play); } }
+function togglePlay(){
+  if (timer){ stop(); return; }
+  if (cur >= frames.length - 1) cur = 0;
+  $('play').textContent = tr(T.pause);
+  timer = setInterval(() => {
+    if (cur >= frames.length - 1){ stop(); return; }
+    cur++; render();
+  }, Number($('speed').value));
+}
+$('speed').addEventListener('input', () => { if (timer){ stop(); togglePlay(); } });
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight'){ step(1); e.preventDefault(); }
+  else if (e.key === 'ArrowLeft'){ step(-1); e.preventDefault(); }
+  else if (e.key === ' '){ togglePlay(); e.preventDefault(); }
+});
+setLang('zh');
+load();

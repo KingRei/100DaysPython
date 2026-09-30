@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 40 — 位元運算技巧：mask、popcount，以及 Python 整數沒有寬度的陷阱</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 40 — 位元運算技巧：mask、popcount，以及 Python 整數沒有寬度的陷阱</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2040%20-%20bit%20manipulation%20tricks">day 40 on GitHub</a></p>
+<p><em>100 Days of Python - day 40</em></p>
+<p>把一個數字集合存成一個 Python 整數的各個位元，「這兩個集合有幾個共同成員？」就會比問兩個 <code>set</code> 物件快大約六十倍，記憶體只剩三十一分之一。再用 <code>int.bit_count()</code> 數這個整數裡有幾個 1，它會把 C 世界流傳下來的各種聰明 popcount 公式全部甩開，快四到三十五倍。</p>
+<p>這是今天好的那一半。另一半是：從 C 或 Java 抄過來的位元技巧，碰上 Python 整數會怎樣。<code>bin(-5).count(&#x27;1&#x27;)</code> 回傳 2，C 說是 31。「不用 <code>+</code> 做加法」的教科書解法，遇到 <code>-1 + 1</code> 永遠不會結束。LeetCode 137 的一個標準解法兩個範例都過，然後在每一筆答案是負數的測資上答錯。這些全部不會報錯。</p>
+<p>昨天用 bitmask 解 N-Queens 時，靠 <code>free &amp; -free</code> 挑下一欄，沒解釋為什麼行得通。今天就來講為什麼，以及 Python 整數的哪一個性質決定了哪些位元技巧可以信。</p>
+<h2>Python 的整數沒有寬度</h2>
+<p>在 C 裡，<code>int</code> 是 32 bits。-5 存成 32 個 bit：前面一串 1，最底下是 <code>011</code>。Python 的 <code>int</code> 沒有「32」這件事。它表現得像是有無限多個 bit，所以 -5 是從第 3 位開始往上每一位都是 1，一直到無窮遠。</p>
+<img alt="day40_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2040%20-%20bit%20manipulation%20tricks/imgs/day40_1.png">
+<p>這一個事實把所有位元技巧分成兩群。</p>
+<p><strong>一欄一欄各自算的技巧是安全的。</strong><code>&amp;</code>、<code>|</code>、<code>^</code>、<code>~</code> 算答案的第 k 位時，只看輸入的第 k 位，其他都不管。所以不論寬度多少答案都一樣，拿來處理負的 Python 整數，跟在 C 裡完全相同。</p>
+<p><strong>會問「總共幾個 bit？」的技巧需要一個寬度，而 Python 從來不記寬度。</strong>負數的 popcount、「最高位是哪一位」、還有任何等著進位從第 31 位掉出去的迴圈，都屬於這一群。在 Python 整數上，根本沒有第 31 位可以掉出去。</p>
+<p>兩個小函式把寬度裝回去，今天每一個陷阱都靠它們修：</p>
+<pre><code>M32 = (1 &lt;&lt; 32) - 1
+
+def u32(x):           # keep the low 32 bits - what a C uint32_t would hold
+    return x &amp; M32
+
+def s32(u):           # read 32 bits as signed: bit 31 is worth -2**31, not +2**31
+    u &amp;= M32
+    return u - (1 &lt;&lt; 32) if u &gt;&gt; 31 else u</code></pre>
+<p><code>u32(-5)</code> 是 4,294,967,291，<code>s32</code> 再把它讀回 -5。</p>
+<h2>工具箱：以 x = 180 為例</h2>
+<p>測試、設定、清除、翻轉第 <code>k</code> 位，都是一次位移加一個運算子：<code>x &gt;&gt; k &amp; 1</code>、<code>x | 1 &lt;&lt; k</code>、<code>x &amp; ~(1 &lt;&lt; k)</code>、<code>x ^ 1 &lt;&lt; k</code>。真正值得背起來的是三個處理「最低位」的：</p>
+<img alt="day40_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2040%20-%20bit%20manipulation%20tricks/imgs/day40_2.png">
+<p>它們都來自同一件事：減 1 會把最低的那個 1 變成 0，把它底下所有的 0 變成 1，上面的完全不動。所以 <code>x &amp; (x - 1)</code> 剛好抹掉最低的 1：180 變 176。<code>-x</code> 等於 <code>~x + 1</code>，會把最低那個 1 以上的每一位翻轉、那個 1 本身不動，所以 <code>x &amp; -x</code> 只留下那一位：4。<code>x | (x + 1)</code> 則是把最低的 0 打開：181。</p>
+<p><code>x &amp; -x</code> 就是 Fenwick tree 在各段區間之間跳躍的那一步（Day 29），也是昨天 N-Queens 從 mask 裡拿出一個空欄的方法。<code>(x &amp; -x).bit_length() - 1</code> 是尾端 0 的個數，180 是 2。</p>
+<p>往下之前先講一個運算子優先順序的陷阱。算術運算綁得比位移緊，所以 <code>1 &lt;&lt; n - 1</code> 的意思是 <code>1 &lt;&lt; (n - 1)</code>。<code>n = 4</code> 時得到 8（<code>1000</code>），不是你要的四個 1（15）。要寫 <code>(1 &lt;&lt; n) - 1</code>。反過來 C 那個經典陷阱 <code>x &amp; 1 == 0</code> 在 Python 不存在，因為這裡 <code>&amp;</code> 綁得比 <code>==</code> 緊。</p>
+<h2>popcount 的五種寫法</h2>
+<p>數一個數字裡有幾個 1（popcount）有一整套民間流傳的寫法：</p>
+<pre><code>def popcount_shift(x):          # one round per bit, up to the top 1
+    count = 0
+    while x:
+        count += x &amp; 1
+        x &gt;&gt;= 1
+    return count
+
+def popcount_kernighan(x):      # one round per 1
+    count = 0
+    while x:
+        x &amp;= x - 1              # drop the lowest 1
+        count += 1
+    return count</code></pre>
+<p>位移迴圈每一位都看一次。Kernighan 的迴圈用 <code>x &amp; (x - 1)</code> 從一個 1 直接跳到下一個 1，所以有幾個 1 就跑幾圈：</p>
+<img alt="day40_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2040%20-%20bit%20manipulation%20tricks/imgs/day40_3.png">
+<p>在 200,000 個隨機 32-bit 數字上，Kernighan 跑 3,199,046 圈，位移迴圈跑 6,200,129 圈，剛好一半：隨機的 32-bit 數字平均有 16 個 1，但到最高位的 1 為止平均有 31 位。</p>
+<p>傳統寫法裡最聰明的一個完全不用迴圈，一次把 32 位加起來，叫做 SWAR（「在一個暫存器裡做 SIMD」）：</p>
+<pre><code>def popcount_swar32(x):
+    x = x - ((x &gt;&gt; 1) &amp; 0x55555555)                   # 16 two-bit counts
+    x = (x &amp; 0x33333333) + ((x &gt;&gt; 2) &amp; 0x33333333)    # 8 four-bit counts
+    x = (x + (x &gt;&gt; 4)) &amp; 0x0F0F0F0F                   # 4 byte counts
+    return ((x * 0x01010101) &amp; 0xFFFFFFFF) &gt;&gt; 24      # add the 4 bytes</code></pre>
+<p>第一行把每兩個 bit 換成「這兩位裡有幾個 1」。第二行把相鄰兩組加成 4-bit 的計數，第三行再加成每個 byte 一個計數，最後那個乘法把四個 byte 加總到最高的 byte。在 C 裡這是最快的。在 Python 裡：</p>
+<img alt="day40_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2040%20-%20bit%20manipulation%20tricks/imgs/day40_4.png">
+<p>內建的 <code>int.bit_count()</code>（Python 3.10 以後）比 SWAR 快五倍。Python 的每一個 <code>&amp;</code>、<code>&gt;&gt;</code>、<code>+</code> 都要單獨經過一次直譯器，所以最快的寫法是 Python 層級運算最少的那個，而 <code>bit_count()</code> 把整個迴圈放在 C 裡跑完。它也能處理任意大小的整數：一個一百萬位的整數，它大約 70 微秒，<code>bin(x).count(&#x27;1&#x27;)</code> 則要大約 6 毫秒，因為它得先組出一個一百萬字元的字串。</p>
+<h2>無聲的錯誤：負數的 popcount</h2>
+<p>現在拿 -5 問它們。C 的 <code>__builtin_popcount</code> 和 Java 的 <code>Integer.bitCount</code> 都說 31。Python 說：</p>
+<pre><code>bin(-5).count(&#x27;1&#x27;)     -&gt; 2          bin(-5) is &#x27;-0b101&#x27;: it counts the digits of 5
+(-5).bit_count()       -&gt; 2          documented as the popcount of abs(x)
+Kernighan / shift loop -&gt; never returns
+(-5 &amp; M32).bit_count() -&gt; 31</code></pre>
+<p>Kernighan 不會結束，因為負數做 <code>x &amp; (x - 1)</code> 之後還是負數。數值一路是 -5、-6、-8、-16、-32……跑了 40 圈之後 x 大約是負兩兆兩千億，上面永遠還有下一個 1。修法就是數之前先把寬度釘住。</p>
+<h2>LeetCode 338 - Counting Bits（比特位計數）</h2>
+<p><strong>題目。</strong>從 0 到 <code>n</code> 的每一個整數，回報它的二進位表示裡有幾個 1。</p>
+<p><strong>輸入／輸出。</strong>一個整數 <code>n</code>；回傳長度 <code>n + 1</code> 的 list，第 <code>i</code> 個元素是 <code>i</code> 的 1 的個數。</p>
+<p><strong>範例。</strong><code>n = 5</code> 得到 <code>[0, 1, 1, 2, 1, 2]</code>：0 是 <code>0</code>、1 是 <code>1</code>、2 是 <code>10</code>、3 是 <code>11</code>、4 是 <code>100</code>、5 是 <code>101</code>。</p>
+<p><strong>限制。</strong><code>0 &lt;= n &lt;= 100,000</code>。每個數字各自呼叫 popcount 其實已經夠快；進階要求是只掃一遍、不准用內建 popcount，這才讓它變成一題 DP。</p>
+<p><a href="https://leetcode.com/problems/counting-bits/">leetcode.com/problems/counting-bits</a></p>
+<pre><code>class Solution:
+    def countBits(self, n: int) -&gt; list[int]:
+        ans = [0] * (n + 1)
+        for i in range(1, n + 1):
+            ans[i] = ans[i &gt;&gt; 1] + (i &amp; 1)   # i without its last bit, plus that bit
+        return ans</code></pre>
+<p><code>i &gt;&gt; 1</code> 把最後一位丟掉，得到一個比較小、表格裡早就填好的數字；<code>i &amp; 1</code> 是被丟掉的那一位。同一張表也可以從最低位技巧推出來：<code>ans[i] = ans[i &amp; (i - 1)] + 1</code>，因為 <code>i</code> 剛好比「拿掉最低那個 1 的 <code>i</code>」多一個 1。</p>
+<h2>一個 Python 整數當作一百萬個成員的集合</h2>
+<p>第 <code>v</code> 位是 1 就代表「v 在集合裡」。交集是 <code>&amp;</code>、聯集是 <code>|</code>、大小是 <code>bit_count()</code>，每一個都是 C 裡對機器字組跑一次迴圈。從 0 到 999,999 隨機抽兩組各 100,000 個成員，共同成員有 9,955 個。問兩個 <code>set</code> 物件大約 5 ms，<code>(a &amp; b).bit_count()</code> 大約 0.08 ms。<code>set</code> 佔 4,194,520 bytes，整數佔 133,360。</p>
+<p>這跟 Day 34 subset sum 的 <code>bits |= bits &lt;&lt; x</code>（一次更新 DP 表的一整列）、Day 32 的 Bloom filter、Day 27 的 Jaccard 相似度是同一招。</p>
+<p>有一個變慢的問題，小測資裡永遠看不到。<code>x |= 1 &lt;&lt; v</code> 看起來像是「加一個成員」的常數時間操作，但 Python 整數不能原地修改，每一次 <code>|=</code> 都會做出一個跟整個集合一樣長的新整數。這樣往一百萬位的集合加 20,000 個成員，大約要 220 ms。先填一個 <code>bytearray</code> 再一次轉換，大約 3 ms：</p>
+<pre><code>def to_bitset(values, universe):
+    buf = bytearray((universe + 7) // 8)
+    for v in values:
+        buf[v &gt;&gt; 3] |= 1 &lt;&lt; (v &amp; 7)       # byte v // 8, bit v % 8
+    return int.from_bytes(buf, &#x27;little&#x27;)</code></pre>
+<h2>LeetCode 136 / 137 - XOR 能抵銷什麼、不能抵銷什麼</h2>
+<h3>LeetCode 136 - Single Number（只出現一次的數字）</h3>
+<p><strong>題目。</strong>一個 list 裡，除了一個值之外，每個值都剛好出現兩次，找出只出現一次的那個。</p>
+<p><strong>輸入／輸出。</strong>一個非空的整數 list <code>nums</code>；回傳落單的那個值。</p>
+<p><strong>範例。</strong><code>[4, 1, 2, 1, 2]</code> 得到 4：兩個 1 配成一對、兩個 2 配成一對，剩下 4。</p>
+<p><strong>限制。</strong>最多 30,000 個值，介於 -30,000 到 30,000，要求線性時間「而且」常數額外空間。空間限制就是不准用 <code>Counter</code> 或 <code>set</code>、逼你用位元技巧的那一條。</p>
+<p><a href="https://leetcode.com/problems/single-number/">leetcode.com/problems/single-number</a></p>
+<h3>LeetCode 137 - Single Number II（只出現一次的數字 II）</h3>
+<p><strong>題目。</strong>同上，只是其他每個值都剛好出現三次。</p>
+<p><strong>輸入／輸出。</strong>一個非空的整數 list <code>nums</code>；回傳只出現一次的那個值。</p>
+<p><strong>範例。</strong><code>[0, 1, 0, 1, 0, 1, 99]</code> 得到 99，0 和 1 各出現三次。</p>
+<p><strong>限制。</strong>最多 30,000 個值，範圍是整個 signed 32-bit，一樣要線性時間、常數額外空間。有號範圍就是陷阱所在：答案可以是負數，而在 Python 裡，這決定了逐欄計數的解法對不對。</p>
+<p><a href="https://leetcode.com/problems/single-number-ii/">leetcode.com/problems/single-number-ii</a></p>
+<pre><code>class Solution136:
+    def singleNumber(self, nums):
+        return reduce(xor, nums, 0)       # every pair cancels, column by column
+
+class Solution137:
+    def singleNumber(self, nums):
+        ones = twos = 0                   # per column: seen once / seen twice
+        for x in nums:
+            ones = (ones ^ x) &amp; ~twos
+            twos = (twos ^ x) &amp; ~ones
+        return ones</code></pre>
+<p>XOR 能抵銷成對的，所以 136 一行解決。它抵銷不了三個一組的，所以 137 在每一欄維持一個 0、1、2、0 循環的計數器，存在 <code>ones</code> 和 <code>twos</code> 兩個整數裡。兩個解都只用 <code>^</code>、<code>&amp;</code>、<code>~</code>，所以完全不需要寬度就能處理負數：<code>[-7, 3, 3]</code> 得到 -7。</p>
+<p>137 另一個有名的解法，是對 32 欄的每一欄數「有幾個數字這一位是 1」，保留次數不是 3 的倍數的那些欄。少了最後那個 <code>s32</code>，就會變成這樣：</p>
+<img alt="day40_6" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2040%20-%20bit%20manipulation%20tricks/imgs/day40_6.png">
+<pre><code>nums                      ones/twos   count + s32   count, no s32
+[2, 2, 3, 2]                      3             3               3
+[0, 1, 0, 1, 0, 1, 99]           99            99              99
+[-2, -2, -3, -2]                 -3            -3   4,294,967,293</code></pre>
+<p>重建出來的數字第 31 位是 1。沒有 <code>s32</code> 的話，Python 會把那一位算成正二十一億而不是負二十一億，-3 就變成 4,294,967,293。兩個範例都過。在整個範圍上隨機測 1,000 筆，它錯了 502 筆，剛好就是答案為負數的那些。</p>
+<h2>LeetCode 371 - Sum of Two Integers（兩整數之和）</h2>
+<p><strong>題目。</strong>不用 <code>+</code> 或 <code>-</code> 運算子，把兩個整數加起來。</p>
+<p><strong>輸入／輸出。</strong>兩個整數 <code>a</code> 和 <code>b</code>；回傳它們的和。</p>
+<p><strong>範例。</strong><code>a = 2, b = 3</code> 得到 5。<code>2 ^ 3 = 1</code> 是不管進位的和，<code>(2 &amp; 3) &lt;&lt; 1 = 4</code> 是進位，<code>1 ^ 4 = 5</code> 之後就沒有進位了。</p>
+<p><strong>限制。</strong><code>-1000 &lt;= a, b &lt;= 1000</code>。範圍很小，但允許負數，而在 Python 裡問題全出在這裡。</p>
+<p><a href="https://leetcode.com/problems/sum-of-two-integers/">leetcode.com/problems/sum-of-two-integers</a></p>
+<p>把 C 的解法原封不動打進 Python：</p>
+<pre><code>while b:
+    a, b = a ^ b, (a &amp; b) &lt;&lt; 1
+return a</code></pre>
+<p>兩個範例都過。然後試 <code>-1 + 1</code>。這一對數字會變成 <code>(-2, 2)</code>、<code>(-4, 4)</code>、<code>(-8, 8)</code>……進位每一圈往左移一格。在 C 裡，它移到第 31 位之後就被擠出 32-bit 字組，32 圈後消失。在 Python 裡它無處可去：跑 40 圈之後進位是 1,099,511,627,776，還在長，迴圈永遠不會停。</p>
+<img alt="day40_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2040%20-%20bit%20manipulation%20tricks/imgs/day40_5.png">
+<p>每一圈把兩個值都 mask 到 32 bits，進位就會掉出去，<code>-1 + 1</code> 在 32 圈後停在 0。但只有 mask 的話，<code>-1 + -1</code> 會得到 4,294,967,294，因為答案是以無號 32-bit 的形式回來的。最後一行把第 31 位當成正負號讀回來：</p>
+<pre><code>class Solution:
+    def getSum(self, a: int, b: int) -&gt; int:
+        a, b = a &amp; M32, b &amp; M32
+        while b:
+            a, b = (a ^ b) &amp; M32, ((a &amp; b) &lt;&lt; 1) &amp; M32   # carry falls off bit 31
+        return a if a &lt; 1 &lt;&lt; 31 else a - (1 &lt;&lt; 32)       # bit 31 is the sign</code></pre>
+<p>這就是 371 在 Python 面試時要講的重點：演算法本身三行，難處全在把 C 免費給你的寬度自己補回去。</p>
+<h2>複雜度</h2>
+<pre><code>operation                                   time               space
+test / set / clear / lowbit (fixed width)   O(1)               O(1)
+popcount, shift loop                        O(bit length)      O(1)
+popcount, Kernighan                         O(number of 1s)    O(1)
+int.bit_count() on an n-bit int             O(n / 64)          O(1)
+Counting Bits (LeetCode 338)                O(n)               O(n)
+bitset &amp;, |, bit_count over a universe U    O(U / 64)          O(U / 8) bytes
+bitset built by x |= 1 &lt;&lt; v, m members      O(m * U / 64)      O(U / 8) bytes
+Single Number I / II (136 / 137)            O(n)               O(1)
+Sum of Two Integers (371), 32-bit           32 rounds at most  O(1)</code></pre>
+<p>第一列的每個 O(1) 都假設寬度固定。在一個一百萬位的 Python 整數上，這些操作每一個都要花跟長度成正比的時間，這也是為什麼一位一位建 bitset 會變成平方時間。</p>
+<h2>之後會在哪裡用到</h2>
+<p>凡是大集合需要快速取交集的地方，bitset 都會回來：一張圖若每個節點存成一個整數，「共同鄰居」就是一次 <code>&amp;</code>；HyperLogLog 靠雜湊值前面有幾個 0 來估計看過多少不同的東西，在 Python 裡那就是 <code>bit_length()</code>。AI 那一側，int4 量化把兩個 4-bit 權重塞進一個 byte，讀回來全靠位移和 mask，而且一樣要回答「第 3 位是不是正負號」這個問題。雜湊函式和亂數產生器也是用 XOR 和位移組出來的，而且一律在固定寬度下運作，所以移植到 Python 時每一步後面都要補 <code>&amp; M32</code> 或 <code>&amp; M64</code>。</p>
+<p>這個習慣到哪都用得上：從別的語言搬過來的位元技巧在 Python 給出奇怪的數字時，先檢查它是不是問了「總共幾個 bit」。</p>
+<p>明天：質數篩、快速冪、GCD 與模運算。</p>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2040%20-%20bit%20manipulation%20tricks">day 40 on GitHub</a></p>
+</body>
+</html>
