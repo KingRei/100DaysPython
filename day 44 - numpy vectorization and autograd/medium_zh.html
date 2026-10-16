@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 44 — NumPy 向量化與自動微分：讓陣列運算變快，以及算出可以信任的梯度</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 44 — NumPy 向量化與自動微分：讓陣列運算變快，以及算出可以信任的梯度</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2044%20-%20numpy%20vectorization%20and%20autograd">day 44 on GitHub</a></p>
+<p><em>100 Days of Python - day 44</em></p>
+<p>把一百萬個浮點數的平方加起來，在我的機器上用 Python <code>for</code> 迴圈要 41 毫秒，用 <code>np.dot</code> 只要 0.1 毫秒——快了大約三百倍，答案到印出來的最後一位都一樣。今天後半段，一個手寫 autograd 算出的梯度花了約 16 毫秒；同一個梯度寫成一條矩陣公式，只要約 0.005 毫秒（都是在我機器上的單次量測）。兩半其實是同一課：把迴圈從 Python 直譯器裡搬出來，變成一次處理整個陣列的呼叫。</p>
+<img alt="day44_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2044%20-%20numpy%20vectorization%20and%20autograd/imgs/day44_1.png">
+<p>這是系列進入機器學習段落的第一天，而前幾天「無聲的失敗」這條主線直接延續下來。下面這些都不會丟出任何錯誤：</p>
+<ul><li>形狀 <code>(5, 1)</code> 的預測值對上形狀 <code>(5,)</code> 的目標值，均方誤差算出 4.01 而不是 0.01，因為 NumPy 默默建了一張「每個預測對每個目標」的 5 × 5 表格。</li><li>把兩張 <code>uint8</code> 圖片逐像素平均，200 和 100 變成 22，而不是 150。</li><li><code>v[[0, 2]][0] = 99</code> 什麼都沒改到。</li><li>把 <code>grad += g</code> 寫成 <code>grad = g</code> 的 autograd，會說 <code>x * x</code> 在 3 的導數是 3，不是 6。</li><li>不照拓樸順序走圖的 autograd，會說 <code>(2x)²</code> 在 3 的導數是 48，不是 24。</li><li>忘記把梯度歸零的訓練迴圈，最後 loss 停在 3.09，而不是 0.0083。</li></ul>
+<p>昨天（Day 43）講的是把工作拆給多個 thread 和 process。向量化是另一種平行：一次呼叫、一個 C 裡的緊湊迴圈，常常還用上一次處理好幾個數字的 SIMD 指令——而且 NumPy 在跑數值迴圈時會放掉 GIL。</p>
+<p>執行 <code>python vectorize_autograd.py</code> 就會印出本文的每一個數字（計時在你的機器上會不同）。</p>
+<h2>為什麼迴圈慢、陣列快</h2>
+<p>Python 的浮點數 list 其實是一串指標。每個指標指向一個獨立的 float 物件，各自帶著型別標記和參考計數；<code>s += x * x</code> 讓直譯器查 <code>x</code> 的型別、找到它的乘法、為結果建立一個新的 float 物件，加法再來一次——重複一百萬次。NumPy 陣列則是一整塊原始的 8 位元組 double，所有元素共用一個型別，所以 <code>np.dot(a, a)</code> 就是一次呼叫，在 C 裡對連續記憶體跑一個迴圈。</p>
+<pre><code>for loop              41.4 ms
+sum(generator)        61.9 ms
+(a * a).sum()          1.2 ms      36x faster than the loop
+np.dot(a, a)           0.1 ms     284x</code></pre>
+<p>（一次量測；確切倍數會飄，數量級不會。）<code>(a * a).sum()</code> 比 <code>np.dot</code> 慢，是因為它先寫出一整個裝了一百萬個平方的新陣列，再把它讀回來加總；<code>np.dot</code> 一趟就把乘和加做完。</p>
+<h2>shape 與 strides：陣列到底是什麼</h2>
+<p>一個陣列 = 一塊緩衝區 + 一個 shape + <em>strides</em>：沿著每個軸走一步要跳幾個位元組。<code>np.arange(12).reshape(3, 4)</code> 是十二個整數，shape <code>(3, 4)</code>、strides <code>(32, 8)</code>——往下一列跳 4 × 8 位元組，往右一欄跳 8 位元組。</p>
+<img alt="day44_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2044%20-%20numpy%20vectorization%20and%20autograd/imgs/day44_2.png">
+<pre><code>m                {&#x27;shape&#x27;: (3, 4), &#x27;strides&#x27;: (32, 8), &#x27;shares memory&#x27;: True, &#x27;C-contiguous&#x27;: True}
+m.T              {&#x27;shape&#x27;: (4, 3), &#x27;strides&#x27;: (8, 32), &#x27;shares memory&#x27;: True, &#x27;C-contiguous&#x27;: False}
+m[:, ::2]        {&#x27;shape&#x27;: (3, 2), &#x27;strides&#x27;: (32, 16), &#x27;shares memory&#x27;: True, &#x27;C-contiguous&#x27;: False}
+m.T.reshape(12)  {&#x27;shape&#x27;: (12,), &#x27;strides&#x27;: (8,), &#x27;shares memory&#x27;: False, &#x27;C-contiguous&#x27;: True}</code></pre>
+<p>轉置就是把 strides 對調；每隔一欄取一個就是把其中一個 stride 加倍。沒有任何數字被搬動，所以兩者都不花成本，也都是 <em>view</em>：寫進去就是寫進 <code>m</code>。最後一行是例外：一列一列讀 <code>m.T</code>，在緩衝區裡跳的方式沒辦法用單一組 strides 描述，所以 <code>reshape</code> 只好複製一份。</p>
+<p>第一個無聲的失敗就在這裡。<code>s = v[::2]; s[:] = 0</code> 會把 <code>v</code> 每隔一個元素歸零，因為 slice 是 view。但用 list 當索引的 <code>v[[0, 2]]</code> 一定會複製，所以 <code>v[[0, 2]][0] = 99</code> 是把 99 寫進一份臨時副本然後丟掉——<code>v</code> 沒變，也沒有人抱怨。（單一指派 <code>v[[0, 2]] = 99</code> 才會真的寫進 <code>v</code>。）</p>
+<h3>LeetCode 566 - Reshape the Matrix（重塑矩陣）</h3>
+<p><strong>題目。</strong> 給一個矩陣和新的列數、欄數，把裡面的數字重新排成新的形狀：從舊矩陣一列一列讀出來，再一列一列填進新矩陣。如果新形狀裝不下剛好同樣多的數字，就原封不動回傳舊矩陣。</p>
+<p><strong>輸入／輸出。</strong> <code>mat</code> 是 <code>m × n</code> 的二維 list，另外給兩個整數 <code>r</code>、<code>c</code>。回傳 <code>r × c</code> 的二維 list；當 <code>m * n != r * c</code> 時回傳 <code>mat</code> 本身。</p>
+<p><strong>範例。</strong> <code>mat = [[1, 2], [3, 4]]</code>、<code>r = 1, c = 4</code>：依序讀出 1、2、3、4，寫成一列 <code>[[1, 2, 3, 4]]</code>。如果 <code>r = 2, c = 4</code>，會有 8 個位置卻只有 4 個數字，所以答案是原本的 <code>[[1, 2], [3, 4]]</code>。</p>
+<p><strong>限制。</strong> <code>m</code>、<code>n</code> 介於 1 到 100，數值介於 -1000 到 1000，<code>r</code>、<code>c</code> 介於 1 到 300。規模小到任何線性解都會過；唯一要做對的是順序和大小檢查。</p>
+<p>依讀取順序第 <code>k</code> 個元素，在舊矩陣的第 <code>k // n</code> 列、第 <code>k % n</code> 欄，在新矩陣的第 <code>k // c</code> 列、第 <code>k % c</code> 欄——這正是 strides 在做的算術：</p>
+<pre><code>class Solution:
+    def matrixReshape(self, mat: list[list[int]], r: int, c: int) -&gt; list[list[int]]:
+        m, n = len(mat), len(mat[0])
+        if m * n != r * c:
+            return mat
+        out = [[0] * c for _ in range(r)]
+        for k in range(m * n):
+            out[k // c][k % c] = mat[k // n][k % n]
+        return out</code></pre>
+<p>在 NumPy 裡就是 <code>np.array(mat).reshape(r, c)</code>，輸入是連續記憶體時它只是一個 view。陷阱是順序：<code>reshape(3, 2, order=&#x27;F&#x27;)</code> 是一欄一欄讀，會把 <code>[[1, 2, 3], [4, 5, 6]]</code> 變成 <code>[[1, 5], [4, 3], [2, 6]]</code>，而不是 <code>[[1, 2], [3, 4], [5, 6]]</code>——看起來是個正常的矩陣，只是錯的那一個。</p>
+<p><a href="https://leetcode.com/problems/reshape-the-matrix/">leetcode.com/problems/reshape-the-matrix</a></p>
+<h2>Broadcasting，以及它藏起來的 bug</h2>
+<p>broadcasting 讓不同形狀的陣列可以放在同一個運算裡。規則是：把兩個 shape 靠右對齊；每一對大小要嘛相等、要嘛其中一個是 1，而 1 會被拉伸成另一邊的大小。</p>
+<pre><code>def broadcast_shape(s1, s2):
+    out = []
+    for i in range(1, max(len(s1), len(s2)) + 1):
+        a = s1[-i] if i &lt;= len(s1) else 1
+        b = s2[-i] if i &lt;= len(s2) else 1
+        if a != b and 1 not in (a, b):
+            raise ValueError(f&#x27;shapes {s1} and {s2} do not broadcast&#x27;)
+        out.append(max(a, b))
+    return tuple(reversed(out))</code></pre>
+<p><code>(200, 5)</code> 配 <code>(5,)</code> 得到 <code>(200, 5)</code>：每一列都加上同一個 bias。<code>(3,)</code> 配 <code>(3, 1)</code> 得到 <code>(3, 3)</code>——bug 就住在這第二種。很多模型輸出的預測是一欄，shape <code>(n, 1)</code>，目標值卻是攤平的 <code>(n,)</code>：</p>
+<img alt="day44_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2044%20-%20numpy%20vectorization%20and%20autograd/imgs/day44_3.png">
+<pre><code>y (5,), pred (5, 1): pred - y has shape (5, 5)
+MSE with pred.ravel(): 0.0100   MSE with pred as (5, 1): 4.0100  (no error, no warning)</code></pre>
+<p>每個預測都和每個目標比了一次，<code>.mean()</code> 開開心心把 25 格全部平均。用這個 loss 去訓練，會把每個預測都推向所有目標的平均值。修法是一個 <code>.ravel()</code>（或 <code>reshape(-1)</code>），習慣則是每個 loss 之前都 <code>assert pred.shape == y.shape</code>。</p>
+<p>這一節另一個無聲的失敗是整數溢位繞回。<code>uint8</code> 只裝得下 0 到 255，而 NumPy 不會自動幫你加寬：<code>200 + 100</code> 是 44，所以用 <code>(a + b) // 2</code> 平均兩張圖片會得到 22，而不是 150。先轉型：<code>(a.astype(np.int16) + b) // 2</code> 得到 <code>[150, 100, 130]</code>。</p>
+<h2>把雙層迴圈向量化：兩兩距離</h2>
+<p>300 個三維點兩兩之間的距離，用 Python 迴圈算花了約 205 毫秒（一次量測，這一節的計時都是）。broadcasting 用一行 <code>x[:, None, :] - x[None, :, :]</code> 寫出同樣的東西，約 4.7 毫秒。但它會建出一個 <code>(n, n, 3)</code> 的陣列，裝著每一對的差：300 個點是 2.2 MB，20,000 個點是 9,600 MB。向量化是用記憶體換時間。</p>
+<p>恆等式 <code>|a - b|² = |a|² + |b|² - 2 a·b</code> 可以避開那個大陣列：一個矩陣乘法 <code>x @ x.T</code> 加兩個向量，約 0.63 毫秒。它也有自己的陷阱。一個點到自己的距離應該是 0，但 <code>|a|² + |a|² - 2 a·a</code> 是用浮點數算的，可能算出一點點負數——這次最小到 -8.9e-16。在 500 個隨機點上，有 63 個距離平方小於零，<code>np.sqrt</code> 把這 63 個全變成 NaN，只留下一個 runtime warning。開根號前先夾到 0——所有正式的實作都這樣做。</p>
+<h2>導數的三種算法</h2>
+<p>訓練模型就是沿著 loss 的斜率往下走，所以我們需要導數。第一種方法不需要任何理論：把輸入推一點點，看輸出變多少。</p>
+<pre><code>def central_diff(f, x, h):
+    return (f(x + h) - f(x - h)) / (2 * h)</code></pre>
+<p>對 <code>sin</code> 在 1 這一點，導數是 <code>cos 1</code>：</p>
+<img alt="day44_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2044%20-%20numpy%20vectorization%20and%20autograd/imgs/day44_4.png">
+<pre><code>h = 1e-2   forward 4.2e-03   central 9.0e-06
+h = 1e-5   forward 4.2e-06   central 1.1e-11
+h = 1e-8   forward 3.0e-09   central 2.6e-09
+h = 1e-12  forward 4.3e-05   central 1.2e-05</code></pre>
+<p><code>h</code> 變小一開始會變準，到大約 <code>1e-5</code> 之後反而變差：<code>f(x+h)</code> 和 <code>f(x-h)</code> 幾乎每一位都一樣，相減之後剩下的大多是捨入誤差。差分很適合拿來*檢查*梯度，但拿來訓練一個有一百萬個權重的模型完全不行，因為每個權重都要把整個函式算兩次。</p>
+<p>第二種方法是 <strong>forward mode</strong>：把導數跟著數值一起帶著走。dual number 是一對 <code>(值, 導數)</code>，乘法裡內建了乘積法則：</p>
+<pre><code>class Dual:
+    def __init__(self, val, der=0.0):
+        self.val, self.der = val, der
+
+    def __mul__(self, o):
+        o = o if isinstance(o, Dual) else Dual(o)
+        return Dual(self.val * o.val, self.der * o.val + self.val * o.der)</code></pre>
+<p><code>f(x) = x sin x + 3x</code> 在 2 得到 <code>f&#x27; = 3.077003753731</code>，每一位都精確。但一趟只能得到對*一個*輸入的導數。一個有 200 個輸入的函式，就要跑 200 趟。</p>
+<p>第三種方法 <strong>reverse mode</strong> 是 PyTorch 和 JAX 訓練時用的：一趟 forward 把計算過程記下來，一趟 backward 一次得到對*所有*輸入的導數。同樣那個 200 個輸入的函式：1 趟 forward 加 1 趟 backward，數字完全相同。</p>
+<h2>一個迷你 autograd</h2>
+<p>每個 <code>Value</code> 都記得自己是由哪些值算出來的，並帶著一個小函式，負責依照局部規則把梯度送回去——對 <code>out = a * b</code>，送到 <code>a</code> 的梯度是 <code>b * out.grad</code>：</p>
+<pre><code>def __mul__(self, o):
+    o = self._wrap(o)
+    out = Value(self.data * o.data, (self, o), &#x27;*&#x27;)
+
+    def _backward():
+        self.grad += o.data * out.grad
+        o.grad += self.data * out.grad
+    out._backward = _backward
+    return out</code></pre>
+<p><code>backward()</code> 先把圖排成拓樸順序——就是 Day 13 的演算法，這裡寫成迭代式的 DFS——再從輸出往輸入，依序呼叫每個 <code>_backward</code>：</p>
+<pre><code>def backward(self):
+    order = self.topo()            # every node after all of its inputs
+    for v in order:
+        v.grad = 0.0
+    self.grad = 1.0
+    for v in reversed(order):      # every node after all of its users
+        v._backward()
+    return order</code></pre>
+<img alt="day44_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2044%20-%20numpy%20vectorization%20and%20autograd/imgs/day44_5.png">
+<p><code>L = (a*b + c) * f</code>，<code>a=2, b=-3, c=10, f=-2</code>：<code>L = -8</code>，梯度是 <code>dL/da = 6</code>、<code>dL/db = -4</code>、<code>dL/dc = -2</code>、<code>dL/df = 4</code>。拿一個更複雜的函式 <code>tanh(p*q + r) * p + exp(q/r) - p²</code> 跟 central difference 做梯度檢查，相對誤差 1.3e-10。</p>
+<p>這段程式碼裡有兩行決定了正確性，而任何一行寫錯都還是會回傳一個數字：</p>
+<img alt="day44_6" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2044%20-%20numpy%20vectorization%20and%20autograd/imgs/day44_6.png">
+<p><strong>是 <code>+=</code>，不是 <code>=</code>。</strong> 在 <code>x * x</code> 裡，兩個輸入是同一個節點，所以 <code>_backward</code> 會送兩份 3 給 <code>x</code>。累加得到 6，是 <code>x²</code> 正確的導數。直接指派只留下第二次寫入：3。</p>
+<p><strong>拓樸順序。</strong> 最直覺的 backward 寫法是「先跑自己的 <code>_backward</code>，再對每個輸入遞迴」。對 <code>q = 2x; y = q * q</code>，遞迴會走到 <code>q</code> 兩次，每次都把 <code>q</code> 完整的梯度再推給 <code>x</code> 一次：得到 48 而不是 24，而且走了 7 次節點，拓樸順序只要 4 次。「每個節點都要等它所有的使用者回報完才往下傳」，正是拓樸順序保證的事。</p>
+<p>第三個 bug 不在 autograd 裡，在訓練迴圈裡。梯度天生就會累加，所以每一步之間必須歸零。用 20 個點擬合 <code>y = 3x - 0.5</code>，跑 60 步：</p>
+<pre><code>zeroing gradients:     w = 3.020, b = -0.534, final loss 0.0083
+never zeroing them:    w = 6.089, b = -1.029, final loss 3.0924</code></pre>
+<p>沒有歸零時，每一步用的是之前所有梯度的總和，權重衝過頭，loss 每十步看一次是 4.40、2.18、2.59、0.015、2.78、2.40，一直彈跳而不是收斂。這就是 PyTorch 的訓練迴圈每一輪都要呼叫 <code>optimizer.zero_grad()</code> 的原因。</p>
+<h2>回到向量化：把梯度寫成一條公式</h2>
+<p>純量的 autograd 是對的，但很慢。一個線性模型在 200 列、5 個特徵上的均方誤差，是一張 4,408 個節點的 Value 圖，算梯度一次量測約 16 毫秒。用整個陣列手算同一個導數得到 <code>2/n · Xᵀ(Xw - y)</code>：約 0.005 毫秒，兩個梯度相差 5.3e-15。真正的 autograd 函式庫就是這樣做的：它們的節點是整個陣列，每個節點的 backward 規則都是一條向量化的公式，所以圖上只有少少幾個節點，而不是幾千個。</p>
+<h2>LeetCode 150 - Evaluate Reverse Polish Notation（逆波蘭表示法求值）</h2>
+<p><strong>題目。</strong> 計算一個用逆波蘭表示法（Reverse Polish Notation）寫的算式：每個運算子都寫在它的兩個運算元後面，所以不需要括號。</p>
+<p><strong>輸入／輸出。</strong> <code>tokens</code> 是一個字串 list，每個元素是整數，或 <code>+</code>、<code>-</code>、<code>*</code>、<code>/</code> 其中之一。回傳算式的整數值。兩個整數相除只留整數部分，往零的方向捨去。</p>
+<p><strong>範例。</strong> <code>[&quot;2&quot;, &quot;1&quot;, &quot;+&quot;, &quot;3&quot;, &quot;*&quot;]</code> 代表 <code>(2 + 1) * 3 = 9</code>：推入 2、推入 1，<code>+</code> 把兩個彈出、推入 3，再推入 3，<code>*</code> 把兩個彈出、推入 9。<code>[&quot;4&quot;, &quot;13&quot;, &quot;5&quot;, &quot;/&quot;, &quot;+&quot;]</code> 是 <code>4 + 13 / 5 = 4 + 2 = 6</code>。</p>
+<p><strong>限制。</strong> 最多一萬個 token；每個數字介於 -200 到 200；算式一定合法、不會除以零，所有中間結果都放得進 32 位元整數。會咬人的限制是負數商的「往零捨去」。</p>
+<p>Day 02 的 stack 包辦了一切：</p>
+<pre><code>class Solution:
+    def evalRPN(self, tokens: list[str]) -&gt; int:
+        st = []
+        for t in tokens:
+            if t in (&#x27;+&#x27;, &#x27;-&#x27;, &#x27;*&#x27;, &#x27;/&#x27;):
+                b, a = st.pop(), st.pop()
+                if t == &#x27;+&#x27;:
+                    st.append(a + b)
+                elif t == &#x27;-&#x27;:
+                    st.append(a - b)
+                elif t == &#x27;*&#x27;:
+                    st.append(a * b)
+                else:
+                    st.append(int(a / b))      # truncate, NOT a // b (which floors)
+            else:
+                st.append(int(t))
+        return st[0]</code></pre>
+<p>陷阱是 Python 的 <code>//</code> 是*往下*取整：<code>6 // -132</code> 是 -1，往零捨去則是 0。只有正數的範例怎麼寫都會過。LeetCode 那個比較長的範例 <code>10 6 9 3 + -11 * / * 17 + 5 +</code>，用 <code>int(a / b)</code> 得到 22，用 <code>//</code> 得到 12。</p>
+<p>把同一台 stack 機器裡的整數換成 <code>Value</code> 物件，求值的過程就會*建出計算圖*。<code>x y * x + y /</code> 在 <code>x = 2, y = -3</code> 得到 1.3333，再呼叫一次 <code>backward()</code>，得到 <code>d/dx = 0.6667</code>、<code>d/dy = -0.2222</code>——剛好就是 <code>(y + 1)/y</code> 和 <code>-x/y²</code>。autograd 的 tape 就只是這樣：一邊求值一邊記下運算，然後倒著重播。</p>
+<p><a href="https://leetcode.com/problems/evaluate-reverse-polish-notation/">leetcode.com/problems/evaluate-reverse-polish-notation</a></p>
+<h2>複雜度</h2>
+<pre><code>操作                                   時間                                     空間
+-------------------------------------  ---------------------------------------  ------------------
+n 個值的逐元素 NumPy 運算              O(n)，一個 C 迴圈                        O(n) 存結果
+轉置、slice、連續的 reshape            O(1)，只換 strides                       O(1)（view）
+兩兩距離，broadcasting                 O(n² d)                                  O(n² d) 暫存
+兩兩距離，Gram 恆等式                  O(n² d)，一個矩陣乘法                    O(n²)
+central difference 梯度，n 個輸入      2n 次函式求值                            O(1) 額外
+forward mode（dual number），n 個輸入  n 趟                                     每個值 O(1)
+reverse mode（Value.backward）         1 趟 forward + 1 趟 backward，O(節點數)  O(節點數) 存圖
+LeetCode 566 / LeetCode 150            O(m n) / O(tokens)                       O(m n) / O(tokens)</code></pre>
+<h2>這些之後會用在哪</h2>
+<p>這個系列的機器學習段落，全都建立在今天這兩個概念上。梯度下降和它的變形（momentum、Adam）就是一個呼叫 <code>backward()</code>、再更新權重的迴圈——前提是先把梯度歸零。線性迴歸和邏輯迴歸，就是今天的 <code>2/n Xᵀ(Xw - y)</code> 換個 loss。多層神經網路的反向傳播，就是在一張節點都是矩陣乘法的圖上跑 reverse mode，今天的三個 bug 在那裡一個不少，每個 loss 函式裡還多一個 broadcasting 的。PyTorch 的 autograd 是一條照拓樸順序倒著重播的運算 tape；JAX 把同一個想法寫成函式轉換。而 broadcasting 的規則，就是 GPU 把同一個 bias 加到整個 batch 的 activation 上時用的那一條。</p>
+<p>值得留下的習慣：每個 loss 之前先 assert shape；每個手寫的梯度都至少用 central difference 檢查一次；當一個對數字跑的 Python 迴圈很慢時，去找能說出同一件事的陣列運算式。</p>
+<p>明天：梯度下降家族——SGD、momentum 與 Adam。</p>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2044%20-%20numpy%20vectorization%20and%20autograd">day 44 on GitHub</a></p>
+</body>
+</html>

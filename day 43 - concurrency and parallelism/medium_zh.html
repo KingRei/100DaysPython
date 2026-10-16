@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 43 — Python 的並行與平行：thread、process、asyncio 怎麼選，怎麼抓 race 與 deadlock，以及用 work 與 depth 量出一個演算法能平行多少</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 43 — Python 的並行與平行：thread、process、asyncio 怎麼選，怎麼抓 race 與 deadlock，以及用 work 與 depth 量出一個演算法能平行多少</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2043%20-%20concurrency%20and%20parallelism">day 43 on GitHub</a></p>
+<p><em>100 Days of Python - day 43</em></p>
+<p>兩個吃 CPU 的 Python 函式丟給兩個 thread 跑，在我的雙核心機器上花了 0.244 秒——比一個接一個跑（0.207 秒）還慢。同樣兩個函式丟給兩個 <em>process</em>，0.156 秒。二十次各 50 毫秒的等待（就像等網路回應），用迴圈跑要一秒，丟給二十個 thread 只要 0.058 秒。同一台機器、同一個 <code>threading</code> 模組：一次快了 17 倍，一次反而變慢。</p>
+<img alt="day43_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2043%20-%20concurrency%20and%20parallelism/imgs/day43_1.png">
+<p>這些數字背後的規則只有一句話：<strong>在 CPython 裡，thread 能重疊的是「等待」，不是「計算」。</strong> 該用 thread、process 還是 <code>asyncio</code>，只看工作的時間是花在算東西還是在等東西。至於值不值得拆開來平行跑，則取決於另一個有精確答案的問題：這個計算有多少部分「能同時進行」？這可以用兩個數字量出來：<em>work</em> 和 <em>depth</em>。</p>
+<p>今天的另一半是 bug。並行的 bug 跟昨天亂數的 bug 一樣：不會當掉、看運氣、測試照樣過。</p>
+<ul><li>四個 thread 各對共用的計數器加 1 二十萬次，每次結果都剛好是 800,000——直到我在「讀出計數器」和「寫回去」之間加了一個函式呼叫。接著有四分之一到三分之二的更新就這樣不見了，看那一次怎麼跑。</li><li>五位用餐的哲學家如果都先拿左手邊的叉子，可能會永遠卡住——在 2,430,842,120 種可能的交錯順序裡，有 120 種會這樣。兩千萬分之一：任何一次測試都不會碰到。</li><li>一個 map-reduce 字數統計，如果兩個 mapper 對「某個字該交給哪個 reducer」意見不一致，67 個字裡有 51 個只會回報一部分（大約一半）的真實次數。用 Python 內建的 <code>hash()</code> 就會發生這件事——在 Windows 和 macOS 上幾乎每次都會發生，在 Linux 傳統的 <code>fork</code> worker 上永遠不會。</li></ul>
+<p>Day 42 測試亂數程式的方法，是把「每一種可能的亂數序列」都重播一次。今天對 thread 做同一件事：寫一個小檢查器，跑過「每一種可能的交錯順序」，於是兩千萬分之一的 deadlock 只不過是它走訪到的其中一個狀態。</p>
+<p>執行 <code>python concurrency.py</code> 就會印出本文的每一個數字（計時的數字在你的機器上會不同，其餘都是精確值）。</p>
+<h2>GIL：在算，還是在等</h2>
+<p>CPython 同一時間只在一個 thread 上執行 bytecode。一把全域直譯器鎖（GIL）在 thread 之間傳來傳去，預設每 5 毫秒交接一次。所以兩個在做純 Python 運算的 thread 是輪流用同一顆核心，另一顆核心閒著。一個正在「等」的 thread——<code>time.sleep</code>、讀 socket、讀硬碟——會先把 GIL 放掉，所以等待可以自由重疊。</p>
+<pre><code>def burn(n):
+    s = 0
+    for i in range(n):
+        s += i * i
+    return s</code></pre>
+<p>在我的雙核心 VM 上跑一次：</p>
+<pre><code>2 CPU jobs, serial   : 0.207 s   speed-up 1.00x
+2 CPU jobs, threads  : 0.244 s   speed-up 0.85x
+2 CPU jobs, processes: 0.156 s   speed-up 1.33x
+20 waits of 50 ms, serial : 1.004 s   speed-up 1.0x
+20 waits of 50 ms, threads: 0.058 s   speed-up 17.5x</code></pre>
+<p>多跑幾次，process 版比迴圈快 1.3 到 2 倍不等——每個 process 有自己的直譯器和自己的 GIL，所以兩顆核心都在做事，扣掉啟動 worker 和把參數送過去的成本。thread 在 CPU 工作上從來沒有明顯贏過迴圈，交接 GIL 通常還讓它稍微輸一點。</p>
+<p>實用的對照表：</p>
+<pre><code>工作大部分時間在…              用
+-----------------------------  -----------------------------------------------
+等（網路、硬碟、子行程）       thread；要等上千件事就用 asyncio
+用純 Python 計算               process（multiprocessing、ProcessPoolExecutor）
+在 NumPy / C extension 裡計算  thread 常常就行：很多 C 程式碼會放掉 GIL</code></pre>
+<p>（Python 3.13 多了一個可選的、沒有 GIL 的版本。在那個版本裡，thread 真的會平行執行 Python 程式碼——下一節的每一種 race 都會從「很少見」變成「天天見」。）</p>
+<p>process 也不是免費的。把 50,000 個數字平方，迴圈大約 4 毫秒；<code>pool.map(square, nums, chunksize=1)</code> 把每個數字當成一則訊息送給 worker，花了好幾秒——慢了一千倍以上。用預設的 chunk 大小（一則訊息裝一大批），幾次下來在 7 到 17 毫秒之間：還是比迴圈慢，因為平方一個數字比把它送到另一個 process 便宜。process pool 只有在「每個工作的計算量遠大於傳送它的成本」時才划算。</p>
+<h2>一個跑得出來的 race</h2>
+<p><code>x = x + 1</code> 其實是三步：讀 <code>x</code>、加一、寫回 <code>x</code>。如果另一個 thread 在我讀和寫之間寫了一次，它的更新就被我蓋掉、不見了。</p>
+<pre><code>def bump_inline(box):
+    box.v += 1                      # read, add, write - one line
+
+def bump_with_call(box):
+    v = box.v                       # read
+    _noop()                         # any function call: logging, validation, ...
+    box.v = v + 1                   # write the value read *before* the call</code></pre>
+<p>四個 thread、每個呼叫 200,000 次，所以答案一定要是 800,000：</p>
+<pre><code>box.v += 1                      -&gt; 800,000
+read, call a function, write    -&gt; 566,862  (29% of the updates lost)
+same, inside `with lock:`       -&gt; 800,000</code></pre>
+<p>陷阱在第一行。我跑的 CPython（3.10）只會在少數幾個地方切換 thread，例如跳回迴圈開頭、呼叫函式的時候，所以 <code>box.v += 1</code> 這三步剛好從來不會被切開。測試通過。但這是這個版本的巧合，不是保證：舊版會切開它、沒有 GIL 的版本也會；而只要有人在讀和寫之間加一行 log，我跑的幾次裡就有 29% 到 64% 的更新消失。真正的修法是第三行：<code>threading.Lock</code> 讓「讀加寫」變成一個沒人能插隊的步驟。</p>
+<h2>把每一種交錯順序都數一遍</h2>
+<p>跑一次真正的 thread，只會看到作業系統挑的那一種交錯順序。要看到全部，我把每個 thread 寫成一串不可分割的步驟，讓檢查器跑過所有可能的交錯——每個 thread 自己的步驟維持原本順序，其餘隨便穿插。兩個 thread 各做一次 <code>r = x; x = r + 1</code>：</p>
+<img alt="day43_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2043%20-%20concurrency%20and%20parallelism/imgs/day43_2.png">
+<p>六種交錯裡有四種會掉一次更新：只要兩次「讀」都發生在兩次「寫」之前。thread 一多，情況惡化得很快：</p>
+<pre><code>2 threads, one x += 1 each:     6 interleavings, correct (2) in   2 = 33.3%
+3 threads, one x += 1 each:    90 interleavings, correct (3) in   6 = 6.7%
+4 threads, one x += 1 each:  2520 interleavings, correct (4) in  24 = 1.0%
+3 threads with a lock: 6 interleavings possible, all give [3]</code></pre>
+<p>正確的交錯剛好就是「thread 碰巧一個接一個跑完」的那些——2、6、24 種，也就是把 thread 排順序的方法數。lock 不是讓壞的交錯變少，而是讓它們不可能發生：只剩下 6 種一個接一個的順序。</p>
+<p>檢查器懂六種步驟——讀、寫、拿 lock、放 lock、等 event、設定 event——而一個「狀態」就是「每個 thread 走到哪、記憶體裡是什麼、誰拿著哪把 lock」。一種一種交錯去數會數到天荒地老，所以它按狀態來數：兩段不同的歷史只要走到同一個狀態，後面的數量就直接重用：</p>
+<pre><code>def count_schedules(threads, shared):
+    @lru_cache(maxsize=None)
+    def go(state):
+        nxt = [i for i in range(len(threads)) if _enabled(threads, state, i)]
+        if not nxt:                                   # finished, or nobody can move
+            return ((_outcome(threads, state), 1),)
+        total = Counter()
+        for i in nxt:
+            for k, v in go(_step(threads, state, i)):
+                total[k] += v
+        return tuple(total.items())
+    return Counter(dict(go(_start(threads, shared))))</code></pre>
+<p>如果沒有人能動、卻又不是每個 thread 都跑完，那就是 deadlock——也就是下一節。</p>
+<h2>Deadlock 與 LeetCode 1226</h2>
+<p>兩個 thread、兩把 lock。thread 1 先拿 A 再拿 B；thread 2 先拿 B 再拿 A。六種交錯裡有兩種結束在「各拿一把、永遠等另一把」。如果兩個都先拿 A，總共只剩兩種交錯，沒有一種會卡死。整個解藥就這一句：<strong>所有 lock 都照同一個順序拿。</strong></p>
+<h3>LeetCode 1226 - The Dining Philosophers（哲學家用餐問題）</h3>
+<p><strong>題目。</strong> 五位哲學家圍著圓桌坐，每兩位相鄰的人中間放一支叉子，總共五支。要吃飯，一位哲學家必須同時拿到左手邊和右手邊的叉子。請寫出每位哲學家想吃飯時呼叫的方法，保證沒有人會永遠卡住。</p>
+<p><strong>輸入／輸出。</strong> 實作 <code>wantsToEat(philosopher, pickLeftFork, pickRightFork, eat, putLeftFork, putRightFork)</code>。<code>philosopher</code> 是 0 到 4、沿著桌子編號；其餘五個參數是要依合理順序呼叫的函式：拿起兩支叉子、吃、放下兩支叉子。每位哲學家是一個獨立的 thread，會呼叫 <code>wantsToEat</code> <code>n</code> 次。評測會記錄呼叫順序，檢查同一支叉子從來沒有同時在兩個人手上，而且每個人都吃完。</p>
+<p><strong>範例。</strong> <code>n = 1</code> 時每個人吃一次。一種合法的紀錄是：哲學家 4 拿起兩支叉子、吃、放下；接著哲學家 2 照做；然後 1、0、3。順序怎樣都可以，只要相鄰的人不會同時拿著同一支叉子、程式會結束。</p>
+<p><strong>限制。</strong> <code>n</code> 介於 1 到 60。真正重要的限制不是數字，而是設定本身：五個 thread 同時開始，決定誰先跑的是排程器而不是你。「幾乎每次都對」的解法，就是會在評測機上卡住的解法。</p>
+<p>在我的編號裡，哲學家 <code>i</code> 左手邊是叉子 <code>i</code>、右手邊是叉子 <code>(i + 1) % 5</code>。如果每個人都先拿左邊，檢查器找到的是：</p>
+<img alt="day43_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2043%20-%20concurrency%20and%20parallelism/imgs/day43_3.png">
+<pre><code>n = 2:    24 states, 1 deadlocked; 2 of 6 interleavings deadlock (1 in 3)
+n = 3:   140 states, 1 deadlocked; 6 of 234 interleavings deadlock (1 in 39)
+n = 4: 1,050 states, 1 deadlocked; 24 of 1,167,000 interleavings deadlock (1 in 48,625)
+n = 5: 9,302 states, 1 deadlocked; 120 of 2,430,842,120 interleavings deadlock (1 in 20,257,017)
+n = 5, lower-numbered fork first: 8,447 states, 0 deadlocked</code></pre>
+<p>壞狀態剛好只有一個——每個人都拿著自己左邊的叉子——而五位哲學家時，大約兩千萬種交錯裡只有一種會走到那裡。測試時你看不到它。你會在正式環境、最忙的那一天、時機剛好對上的時候看到它。真的 thread 在時機被逼出來時也證實了這一點：讓五位哲學家都抓起左邊叉子、在一個 <code>threading.Barrier</code> 前等齊，五個人（[0, 1, 2, 3, 4]）接著都會發現右邊的叉子已經被拿走了。</p>
+<p>修法就是上面那條 lock 順序規則。deadlock 需要一個環——每個人都在等桌邊的下一個人——而要形成環，至少要有一位哲學家先拿編號大的叉子、再拿編號小的。讓每個人都先拿編號小的叉子，哲學家 4 就會先伸手拿叉子 0 再拿叉子 4，這個環就閉不起來。檢查器也同意：8,447 個狀態，沒有一個卡住。</p>
+<pre><code>class DiningPhilosophers:
+    def __init__(self, n=5):
+        self.n = n
+        self.forks = [threading.Lock() for _ in range(n)]
+
+    def wantsToEat(self, philosopher, pickLeftFork, pickRightFork, eat,
+                   putLeftFork, putRightFork):
+        left, right = philosopher, (philosopher + 1) % self.n
+        lo, hi = min(left, right), max(left, right)
+        with self.forks[lo], self.forks[hi]:
+            pickLeftFork()
+            pickRightFork()
+            eat()
+            putLeftFork()
+            putRightFork()</code></pre>
+<p>五個 thread、每人吃三次：一共 15 餐，重播紀錄也確認沒有任何一支叉子同時在兩個人手上。</p>
+<p><a href="https://leetcode.com/problems/the-dining-philosophers/">leetcode.com/problems/the-dining-philosophers</a></p>
+<h2>LeetCode 1114 - Print in Order（按順序印出）</h2>
+<p><strong>題目。</strong> 一個物件有三個方法：<code>first</code>、<code>second</code>、<code>third</code>。三個不同的 thread 各呼叫其中一個，而且 thread 啟動的順序不固定。請保證輸出永遠是先 &quot;first&quot;、再 &quot;second&quot;、再 &quot;third&quot;。</p>
+<p><strong>輸入／輸出。</strong> 寫一個 class <code>Foo</code>，含 <code>first(printFirst)</code>、<code>second(printSecond)</code>、<code>third(printThird)</code>；每個方法會收到一個印出對應字的函式。測資是三個 thread 被啟動的順序，也就是 <code>[1, 2, 3]</code> 的某種排列；輸出一定要是 <code>&quot;firstsecondthird&quot;</code>。</p>
+<p><strong>範例。</strong> <code>[1, 3, 2]</code> 代表呼叫 <code>first</code> 的 thread 最先啟動，接著是呼叫 <code>third</code> 的，最後才是呼叫 <code>second</code> 的。<code>third</code> 必須等 <code>second</code> 印完，所以輸出仍然是 <code>&quot;firstsecondthird&quot;</code>。</p>
+<p><strong>限制。</strong> 輸入永遠是 <code>[1, 2, 3]</code> 的某種排列。重要的是：你沒辦法讓 thread 按順序「啟動」，所以每個方法都得「等」前一個做完——而用一個不停檢查旗標的 <code>while</code> 迴圈來等，會燒掉一整顆核心，在 Python 裡還會跟它正在等的那個 thread 搶 GIL。</p>
+<p>沒有同步時，檢查器發現 6 種輸出都有可能；加上兩個 <code>threading.Event</code>，只剩一種：</p>
+<pre><code>class Foo:
+    def __init__(self):
+        self.done1 = threading.Event()
+        self.done2 = threading.Event()
+
+    def first(self, printFirst):
+        printFirst()
+        self.done1.set()
+
+    def second(self, printSecond):
+        self.done1.wait()          # sleeps, without spinning, until first() is done
+        printSecond()
+        self.done2.set()
+
+    def third(self, printThird):
+        self.done2.wait()
+        printThird()</code></pre>
+<p>用 6 種順序實際啟動 thread，每一次都印出 <code>firstsecondthird</code>。<code>Event</code> 是表達「這件事要在那件事之後」最小的工具；<code>Barrier</code>（大家等到全員到齊）、<code>Condition</code>、<code>Queue</code> 是同一個概念的放大版。</p>
+<p><a href="https://leetcode.com/problems/print-in-order/">leetcode.com/problems/print-in-order</a></p>
+<h2>asyncio：一個 thread，很多個等待</h2>
+<p><code>asyncio</code> 不用 thread 就能得到 thread 那種「等待重疊」。每個 <code>async def</code> 函式是一個 task，一路執行到碰到 <code>await</code> 某個慢東西時，就把控制權交回 event loop，由它去跑另一個 task。只有一個 thread、沒有 GIL 爭搶，上千個在等的 task 幾乎不花成本。</p>
+<p>問題就出在「一路執行到碰到 <code>await</code>」。十次各 0.1 秒的抓取：</p>
+<img alt="day43_6" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2043%20-%20concurrency%20and%20parallelism/imgs/day43_6.png">
+<pre><code>await asyncio.sleep         : 0.10 s   start times [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+time.sleep inside async def : 1.00 s   start times [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+await, Semaphore(3)         : 0.40 s   start times [0.0, 0.0, 0.0, 0.1, 0.1, 0.1, 0.2, 0.2, 0.2, 0.3]</code></pre>
+<pre><code>async def fetch_blocking(i, delay, log, t0):
+    log.append((i, &#x27;start&#x27;, time.perf_counter() - t0))
+    time.sleep(delay)                   # blocks the only thread the loop has
+    log.append((i, &#x27;end&#x27;, time.perf_counter() - t0))
+    return i</code></pre>
+<p>第二行就是無聲的失敗：它仍然是 <code>async def</code>、<code>asyncio.gather</code> 仍然回傳十個結果、沒有任何警告——只是一次只跑一個 task，慢了十倍。任何會卡住的呼叫都會這樣：<code>requests.get</code>、吃 CPU 的迴圈、同步的資料庫 driver。修法是改用可以 <code>await</code> 的版本，或用 <code>await asyncio.to_thread(blocking_call)</code> 把它丟到 thread 上。第三行的 <code>asyncio.Semaphore(3)</code> 是刻意設下的同類限制：同時最多三個抓取，所以 10 個要分 4 輪。</p>
+<h2>LeetCode 1242 - Web Crawler Multithreaded（多執行緒網頁爬蟲）</h2>
+<p><strong>題目。</strong> 從一個 URL 出發，沿著連結找出所有走得到的網頁，但只要跟起點 URL 同一個主機名稱（host name）的網頁。抓一個網頁很慢，所以抓取必須平行進行。</p>
+<p><strong>輸入／輸出。</strong> 給你 <code>startUrl</code> 和一個 <code>HtmlParser</code>，它只有一個方法 <code>getUrls(url)</code>，回傳那個網頁上的連結清單。回傳所有從 <code>startUrl</code> 走得到、主機名稱和起點相同的 URL，順序不拘、每個只出現一次。所有 URL 都是 <code>http://</code> 開頭、不帶 port，主機名稱就是 <code>http://</code> 和下一個 <code>/</code> 之間的那段。</p>
+<p><strong>範例。</strong> 如果 <code>http://news.yahoo.com/</code> 連到 <code>http://news.yahoo.com/world</code> 和 <code>http://news.google.com/</code>，而 world 那頁又連到 <code>http://news.yahoo.com/world/asia</code>，答案就是那三個 <code>news.yahoo.com</code> 的網頁；Google 那頁不跟進去。</p>
+<p><strong>限制。</strong> 最多 1,000 個 URL，每個最長 300 個字元，<code>startUrl</code> 是其中之一。重要的不是規模而是成本：一次抓一頁的單執行緒爬蟲在評測機上太慢，所以抓取一定要重疊。這讓它成為一個「在等」的工作——正是 Python thread 派得上用場的地方。</p>
+<p>我的測試網站在 <code>news.yahoo.com</code> 上有 16 頁，另外有連到 <code>news.google.com</code>、<code>yahoo.com</code> 和 <code>news.yahoo.com.evil.example</code> 的連結；每次抓取花 50 毫秒。解法用廣度優先、一波一波地爬：目前這一波的所有網頁，交給一個 thread pool 同時抓。</p>
+<pre><code>from concurrent.futures import ThreadPoolExecutor
+
+class Solution:
+    def crawl(self, startUrl: str, htmlParser: &#x27;HtmlParser&#x27;, workers=16) -&gt; list[str]:
+        hostname = lambda url: url.split(&#x27;/&#x27;)[2]     # the part after http://
+        host, seen, frontier = hostname(startUrl), {startUrl}, [startUrl]
+        with ThreadPoolExecutor(workers) as pool:
+            while frontier:
+                nxt = []
+                for urls in pool.map(htmlParser.getUrls, frontier):
+                    for v in urls:
+                        if hostname(v) == host and v not in seen:
+                            seen.add(v)
+                            nxt.append(v)
+                frontier = nxt
+        return list(seen)</code></pre>
+<pre><code>serial:  16 pages, 16 fetches, 0.80 s
+threads: 16 pages, 16 fetches in 5 waves, 0.26 s (= waves x 50 ms; the longest link chain is 5 pages)
+`host in url` instead of ==: 17 pages, extra [&#x27;http://news.yahoo.com.evil.example/ai&#x27;]</code></pre>
+<p>看看時間取決於什麼。依序爬的成本是每頁一次抓取：16 × 50 毫秒。平行爬的成本是每「波」一次抓取：5 × 50 毫秒，因為最長那條連結鏈上的第 5 頁，一定要等第 4 頁讀完才知道要抓它。再多 thread 也打不破這個 5。這就是下一節濃縮成一個例子。題目裡藏了兩個陷阱：這裡的 <code>seen</code> 只有主 thread 會碰，所以不需要 lock（如果改成每個 worker 自己往 <code>seen</code> 加，就需要了）；另外用 <code>host in url</code> 而不是比對主機名稱，會讓 <code>news.yahoo.com.evil.example</code> 混進來。</p>
+<p><a href="https://leetcode.com/problems/web-crawler-multithreaded/">leetcode.com/problems/web-crawler-multithreaded</a></p>
+<h2>Work 與 depth：它到底能平行多少？</h2>
+<p>把一個計算畫成一張圖：每個節點是一次運算，箭頭代表「需要那個結果」。兩個數字描述它：</p>
+<ul><li><strong>Work W</strong>：運算的總次數——也就是只有一個 worker 時要花的時間。</li><li><strong>Depth D</strong>：最長的一條「每一步都要等前一步」的運算鏈——也就是有無限多個 worker 時要花的時間。</li></ul>
+<p>有 <code>p</code> 個 worker、而且排程器只要有事能做就不讓 worker 閒著時，完成需要 <code>T_p</code> 步，且 <code>max(W/p, D) ≤ T_p ≤ W/p + D</code>（Brent 定理）。所以 <code>W/D</code> 就是能拿到的最大平行度。</p>
+<img alt="day43_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2043%20-%20concurrency%20and%20parallelism/imgs/day43_4.png">
+<p>用迴圈加總 8 個數字是一條鏈：work 7、depth 7，再多 worker 也沒用，因為每次加法都要等上一個總和。兩兩相加成一棵樹，一樣是 7 次加法，depth 只有 3。我的 <code>Dag</code> class 會建出這些圖、拿真的數字去算一遍證明它們算得對，再模擬一個有 <code>p</code> 個 worker 的貪婪排程器。</p>
+<p>prefix sum（前綴和）是最有意思的例子。Day 22 的 counting sort 靠它把「每個值有幾個」變成「每個值該放在哪」，也在那裡見過它最有名的兩個平行版本；現在排程器可以告訴我們各自什麼時候贏。Hillis-Steele：第 <code>d</code> 輪，每個位置都加上它左邊 <code>2^d</code> 格的值。Blelloch：先沿著一棵樹往上算部分和，再把「我左邊所有東西的總和」往下傳。1024 個數字時：</p>
+<pre><code>scan, loop           W=1023  D=1023  T_1=1023  T_4=1023  T_16=1023  T_64=1023  T_256=1023  T_1024=1023
+scan, Hillis-Steele  W=9217  D=10    T_1=9217  T_4=2305  T_16=577  T_64=145  T_256=37  T_1024=10
+scan, Blelloch       W=2036  D=18    T_1=2036  T_4=509  T_16=128  T_64=34  T_256=19  T_1024=18
+Hillis-Steele beats Blelloch only from p = 545 workers</code></pre>
+<p>（Day 22 寫的 Blelloch 是 2,046 次加法、20 輪。那個數字包含了往下傳時「加上起始的 0」的那些加法；這張圖把它們省略了，所以少 10 次加法、2 輪。）</p>
+<img alt="day43_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2043%20-%20concurrency%20and%20parallelism/imgs/day43_5.png">
+<p>Hillis-Steele 的 depth 最小，只有 10，但 work 是九倍。在 4 個 worker 上它要 2,305 步——比普通迴圈的 1,023 步慢了一倍多。「平行演算法」輸給了循序的。Blelloch 把 work 壓在大約兩個迴圈的量，在 worker 少於 545 個的每一台機器上都贏。Hillis-Steele 只有在 worker 比資料還多時才合理，也就是 GPU 一個 thread block 內部的情況——它實際上也正是用在那裡。Day 20 的平行 merge sort 做的是同一種交易：depth 從 2,046 降到 235，代價是多 84% 的 work。</p>
+<p>Amdahl 定律是一個特例：固定有 <code>s</code> 比例的工作是一條拆不開的鏈，那麼 <code>p</code> 個 worker 的加速比是 <code>1 / (s + (1 - s)/p)</code>。</p>
+<pre><code>s = 5%: p=2: 1.9x  p=4: 3.5x  p=8: 5.9x  p=16: 9.1x  p=64: 15.4x   limit 20x
+s = 10%: p=2: 1.8x  p=4: 3.1x  p=8: 4.7x  p=16: 6.4x  p=64: 8.8x   limit 10x</code></pre>
+<p>只要有 5% 是循序的，64 顆核心只給你 15 倍。買核心之前，先找出那條鏈。</p>
+<h2>Map-reduce：reduce 必須老實</h2>
+<p>map-reduce 就是把 work-depth 的想法用在一台機器裝不下的資料上。<strong>Map</strong>：每份文件各自算字數（depth 1，所有文件同時做）。<strong>Shuffle</strong>：每個字送到第 <code>bucket(word)</code> 號 reducer。<strong>Reduce</strong>：每個 reducer 把收到的次數加起來。所有 reducer 的答案依序寫出來，就是結果。</p>
+<p>40 份文件、16,000 個字、2 個 process、4 個 reducer，結果跟 <code>Counter</code> 一模一樣。接著是失敗的情況，全部都無聲無息：</p>
+<img alt="day43_7" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2043%20-%20concurrency%20and%20parallelism/imgs/day43_7.png">
+<pre><code>two mappers that bucket words differently: 51 of 67 words wrong, e.g. &quot;of&quot; 821 instead of 1640
+hash() buckets, fork workers: 0 words wrong
+hash() buckets, spawn workers (default on Windows, macOS): 53 words wrong (this run)
+latency chunks of [3, 1, 6]: mean of means 200.00, true mean 130.00
+ten 0.1s: loop 0.9999999999999999, tree 1.0, math.fsum 1.0</code></pre>
+<p><strong>每個 mapper 都必須把同一個字放進同一個桶子。</strong> 如果一個 mapper 把 &quot;of&quot; 送給 reducer 0、另一個送給 reducer 3，兩個 reducer 各數到一半，輸出裡 &quot;of&quot; 會出現兩次，最後讀到的那一行算數。最自然的寫法——<code>hash(word) % reducers</code>——在 Windows 和 macOS 上剛好就會這樣：Python 對字串的 <code>hash()</code> 每個 process 都隨機化（跟 Day 27 MinHash 學到的是同一課），而用 <code>spawn</code> 啟動的 worker 每個都拿到新的隨機種子。用 <code>fork</code> 產生的 worker（Python 3.14 以前 Linux 的預設）會繼承父 process 的種子，所以這個 bug 永遠不會出現。修法是用一個不依賴 process 的雜湊，例如 <code>hashlib.blake2b</code>。</p>
+<p><strong>reduce 必須正確地合併大小不同的片段。</strong> 三個區塊（分別有 3、1、6 個值）各自平均再平均，得到 200；真正的平均是 130，因為那一個 400 毫秒的離群值被算成了答案的三分之一。reduce 的應該是 <code>(總和, 個數)</code>，最後再除一次。</p>
+<p><strong>加法順序會改變浮點數的結果。</strong> 十個 0.1 用迴圈加是 0.9999999999999999，用樹狀加是 1.0。平行 reduce 在 2 個 worker 和 4 個 worker 上的相加順序不同，所以最後幾位數會隨 worker 數而變。在意的話用 <code>math.fsum</code>，不然就接受平行的浮點加總不會每一個 bit 都重現。</p>
+<p>三件事背後是同一條線：reduce 這一步要能拆給多個 worker，運算必須滿足結合律——<code>(a + b) + c == a + (b + c)</code>——而且每個片段要帶著合併所需的所有資訊。整數的 <code>+</code>、<code>max</code>、<code>min</code>、集合聯集，還有 Day 32 的 HyperLogLog 合併（每一格取最大值）都符合。平均數不符合；如果你要求每個 bit 都一樣，浮點數的 <code>+</code> 也不符合。</p>
+<h2>複雜度</h2>
+<pre><code>做法                        p 個 worker 的時間                   備註
+--------------------------  -----------------------------------  --------------------
+thread 跑吃 CPU 的 Python   約等於循序時間                       只有一把 GIL
+process 跑吃 CPU 的 Python  約為循序 / p，加上啟動與傳資料       工作要夠大
+thread / asyncio 處理等待   每一波約等於最長的單次等待           asyncio 撐得到上千個
+樹狀加總 n 個數             W = n - 1, D = log₂ n
+Hillis-Steele scan          W ≈ n log₂ n, D = log₂ n             只在 p ≈ n 時划算
+Blelloch scan               W ≈ 2n, D ≈ 2 log₂ n                 預設的平行 scan
+貪婪排程                    max(W/p, D) ≤ Tp ≤ W/p + D           Brent
+交錯檢查器                  隨狀態數成長（5 位哲學家 9,302 個）  以狀態做 memo</code></pre>
+<h2>這些之後會用在哪</h2>
+<p>這個系列的 AI 後半段，大部分都是今天的放大版。LLM 推論伺服器就是一個 event loop：上百個請求同時在等 GPU，continuous batching 就是排程器決定哪些在等的請求共用下一步。強化學習會把很多個環境並排成一個 batch 一起跑；完全非同步的 RL 讓一部分 GPU 持續產生 rollout、另一部分在訓練——整條管線的速度由它的 depth 決定。agent 一生大部分的時間都在等工具和模型回應，那正是 <code>asyncio</code> 的主場。而資料平行訓練的每一步都以 all-reduce 收尾：把各個 GPU 的梯度做樹狀加總，浮點結果取決於相加順序——跟上面「迴圈得到 0.9999999999999999、樹狀得到 1.0」是同一回事，這也是為什麼在不同 GPU 數量上跑的兩次訓練，很少能每個 bit 都一樣。</p>
+<p>值得留下的習慣：選工具前先問「在算還是在等？」；加 worker 前先量 work 和 depth；然後記得，一個通過的並行測試只檢查了幾百萬種交錯中的一種——要嘛把交錯都檢查過，要嘛用 lock 順序和滿足結合律的 reduce，讓壞的那些根本不可能發生。</p>
+<p>明天：NumPy 向量化，以及自動微分背後的直覺——外加一個手寫的迷你 autograd。</p>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2043%20-%20concurrency%20and%20parallelism">day 43 on GitHub</a></p>
+</body>
+</html>

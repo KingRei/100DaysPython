@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NumPy vectorisation and automatic differentiation: making array code fast, and computing gradients you can trust</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>NumPy vectorisation and automatic differentiation: making array code fast, and computing gradients you can trust</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2044%20-%20numpy%20vectorization%20and%20autograd">day 44 on GitHub</a></p>
+<p><em>100 Days of Python - day 44</em></p>
+<p>Summing the squares of a million floats took 41 ms in a Python <code>for</code> loop on my machine and 0.1 ms with <code>np.dot</code> - about three hundred times faster, same answer to the last printed digit. Later today a gradient computed by a hand-written autograd took about 16 ms; the same gradient written as one matrix formula took about 0.005 ms (single runs on my machine). Both halves of this day are the same lesson: move the loop out of the Python interpreter and into one call that works on a whole array.</p>
+<img alt="day44_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2044%20-%20numpy%20vectorization%20and%20autograd/imgs/day44_1.png">
+<p>This is the first day of the machine-learning part of the series, and the silent-failure theme of the last few days carries straight over. None of these raise an error:</p>
+<ul><li>Predictions of shape <code>(5, 1)</code> against targets of shape <code>(5,)</code> give a mean squared error of 4.01 instead of 0.01, because NumPy quietly builds a 5 x 5 table of every prediction against every target.</li><li>Averaging two <code>uint8</code> images pixel by pixel turns 200 and 100 into 22, not 150.</li><li><code>v[[0, 2]][0] = 99</code> changes nothing at all.</li><li>An autograd that writes <code>grad = g</code> instead of <code>grad += g</code> says the derivative of <code>x * x</code> at 3 is 3, not 6.</li><li>An autograd that walks the graph without a topological order says the derivative of <code>(2x)²</code> at 3 is 48, not 24.</li><li>A training loop that forgets to reset gradients ends at a loss of 3.09 instead of 0.0083.</li></ul>
+<p>Yesterday (Day 43) was about splitting work across threads and processes. Vectorisation is the other kind of parallelism: one call, one tight loop in C, often over SIMD instructions that handle several numbers at a time - and NumPy releases the GIL inside its numeric loops.</p>
+<p>Run <code>python vectorize_autograd.py</code> to print every number on this page (timings will differ on your machine).</p>
+<h2>Why the loop is slow and the array is fast</h2>
+<p>A Python list of floats is a list of pointers. Each pointer leads to a separate float object with its own type tag and reference count, and <code>s += x * x</code> makes the interpreter look up the type of <code>x</code>, find its multiplication, create a new float object for the result, and do the same for the addition - a million times. A NumPy array is one buffer of raw 8-byte doubles plus one type for all of them, so <code>np.dot(a, a)</code> is a single call that runs a C loop over contiguous memory.</p>
+<pre><code>for loop              41.4 ms
+sum(generator)        61.9 ms
+(a * a).sum()          1.2 ms      36x faster than the loop
+np.dot(a, a)           0.1 ms     284x</code></pre>
+<p>(One run; the exact ratios move around, the order of magnitude does not.) <code>(a * a).sum()</code> is slower than <code>np.dot</code> because it first writes a whole second array of a million squares and then reads it back; <code>np.dot</code> multiplies and adds in one pass.</p>
+<h2>Shape and strides: what an array really is</h2>
+<p>An array is a buffer, a shape and <em>strides</em>: how many bytes to jump to take one step along each axis. <code>np.arange(12).reshape(3, 4)</code> is twelve integers with shape <code>(3, 4)</code> and strides <code>(32, 8)</code> - one row is 4 x 8 bytes, one column step is 8 bytes.</p>
+<img alt="day44_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2044%20-%20numpy%20vectorization%20and%20autograd/imgs/day44_2.png">
+<pre><code>m                {&#x27;shape&#x27;: (3, 4), &#x27;strides&#x27;: (32, 8), &#x27;shares memory&#x27;: True, &#x27;C-contiguous&#x27;: True}
+m.T              {&#x27;shape&#x27;: (4, 3), &#x27;strides&#x27;: (8, 32), &#x27;shares memory&#x27;: True, &#x27;C-contiguous&#x27;: False}
+m[:, ::2]        {&#x27;shape&#x27;: (3, 2), &#x27;strides&#x27;: (32, 16), &#x27;shares memory&#x27;: True, &#x27;C-contiguous&#x27;: False}
+m.T.reshape(12)  {&#x27;shape&#x27;: (12,), &#x27;strides&#x27;: (8,), &#x27;shares memory&#x27;: False, &#x27;C-contiguous&#x27;: True}</code></pre>
+<p>Transposing swaps the strides; taking every other column doubles one of them. No number moves, so both are free, and both are <em>views</em>: writing into them writes into <code>m</code>. The last line is the exception: reading <code>m.T</code> row by row means jumping around the buffer in a pattern no single pair of strides can describe, so <code>reshape</code> has to copy.</p>
+<p>That leads to the first silent failure. <code>s = v[::2]; s[:] = 0</code> zeroes every other element of <code>v</code>, because a slice is a view. But <code>v[[0, 2]]</code> - indexing with a list - always copies, so <code>v[[0, 2]][0] = 99</code> writes 99 into a temporary copy and throws it away. <code>v</code> is unchanged and nothing complains. (<code>v[[0, 2]] = 99</code>, a single assignment, does write into <code>v</code>.)</p>
+<h3>LeetCode 566 - Reshape the Matrix</h3>
+<p><strong>The task.</strong> Given a matrix and a new number of rows and columns, rearrange its numbers into the new shape, reading the old matrix row by row and filling the new one row by row. If the new shape cannot hold exactly the same numbers, return the original matrix unchanged.</p>
+<p><strong>Input / output.</strong> <code>mat</code>, an <code>m x n</code> list of lists, and two integers <code>r</code> and <code>c</code>. Return an <code>r x c</code> list of lists, or <code>mat</code> itself when <code>m * n != r * c</code>.</p>
+<p><strong>Example.</strong> <code>mat = [[1, 2], [3, 4]]</code> with <code>r = 1, c = 4</code> reads 1, 2, 3, 4 and writes them into one row: <code>[[1, 2, 3, 4]]</code>. With <code>r = 2, c = 4</code> there would be 8 places for 4 numbers, so the answer is the original <code>[[1, 2], [3, 4]]</code>.</p>
+<p><strong>Constraints.</strong> <code>m</code> and <code>n</code> are between 1 and 100, the values between -1000 and 1000, and <code>r</code>, <code>c</code> between 1 and 300. Small enough that any linear solution passes; the only thing to get right is the order, and the size check.</p>
+<p>Element number <code>k</code> in reading order sits at row <code>k // n</code>, column <code>k % n</code> of the old matrix and at row <code>k // c</code>, column <code>k % c</code> of the new one - which is exactly the arithmetic strides do:</p>
+<pre><code>class Solution:
+    def matrixReshape(self, mat: list[list[int]], r: int, c: int) -&gt; list[list[int]]:
+        m, n = len(mat), len(mat[0])
+        if m * n != r * c:
+            return mat
+        out = [[0] * c for _ in range(r)]
+        for k in range(m * n):
+            out[k // c][k % c] = mat[k // n][k % n]
+        return out</code></pre>
+<p>In NumPy this is <code>np.array(mat).reshape(r, c)</code>, which is a view when the input is contiguous. The trap is the order: <code>reshape(3, 2, order=&#x27;F&#x27;)</code> reads column by column and turns <code>[[1, 2, 3], [4, 5, 6]]</code> into <code>[[1, 5], [4, 3], [2, 6]]</code> instead of <code>[[1, 2], [3, 4], [5, 6]]</code> - a valid-looking matrix, just the wrong one.</p>
+<p><a href="https://leetcode.com/problems/reshape-the-matrix/">leetcode.com/problems/reshape-the-matrix</a></p>
+<h2>Broadcasting, and the bug it hides</h2>
+<p>Broadcasting lets arrays of different shapes meet in one operation. The rule: line the shapes up from the right; each pair of sizes must be equal or contain a 1, and a 1 is stretched to match.</p>
+<pre><code>def broadcast_shape(s1, s2):
+    out = []
+    for i in range(1, max(len(s1), len(s2)) + 1):
+        a = s1[-i] if i &lt;= len(s1) else 1
+        b = s2[-i] if i &lt;= len(s2) else 1
+        if a != b and 1 not in (a, b):
+            raise ValueError(f&#x27;shapes {s1} and {s2} do not broadcast&#x27;)
+        out.append(max(a, b))
+    return tuple(reversed(out))</code></pre>
+<p><code>(200, 5)</code> with <code>(5,)</code> is <code>(200, 5)</code>: add a bias to every row. <code>(3,)</code> with <code>(3, 1)</code> is <code>(3, 3)</code>. That second one is where the bug lives. Many models return predictions as a column, shape <code>(n, 1)</code>, while targets come as a flat <code>(n,)</code>:</p>
+<img alt="day44_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2044%20-%20numpy%20vectorization%20and%20autograd/imgs/day44_3.png">
+<pre><code>y (5,), pred (5, 1): pred - y has shape (5, 5)
+MSE with pred.ravel(): 0.0100   MSE with pred as (5, 1): 4.0100  (no error, no warning)</code></pre>
+<p>Every prediction is compared with every target, and <code>.mean()</code> happily averages all 25 cells. Training on that loss pushes every prediction towards the mean of all targets. The fix is one <code>.ravel()</code> (or <code>reshape(-1)</code>), and the habit is an <code>assert pred.shape == y.shape</code> before every loss.</p>
+<p>The other silent failure in this section is integer wrap-around. A <code>uint8</code> holds 0 to 255, and NumPy does not widen it for you: <code>200 + 100</code> is 44, so averaging two images as <code>(a + b) // 2</code> gives 22 where it should give 150. Convert first: <code>(a.astype(np.int16) + b) // 2</code> gives <code>[150, 100, 130]</code>.</p>
+<h2>Vectorising a double loop: pairwise distances</h2>
+<p>The distance between every pair of 300 points in 3-d took about 205 ms with Python loops (one run, like every timing in this section). Broadcasting writes the same thing in one line, <code>x[:, None, :] - x[None, :, :]</code>, and took about 4.7 ms. But it builds an <code>(n, n, 3)</code> array of every difference: 2.2 MB for 300 points, and 9,600 MB for 20,000. Vectorising traded time for memory.</p>
+<p>The identity <code>|a - b|² = |a|² + |b|² - 2 a·b</code> avoids the big array: one matrix product <code>x @ x.T</code> plus two vectors, about 0.63 ms. It has its own trap. The distance from a point to itself should be 0, but <code>|a|² + |a|² - 2 a·a</code> is computed in floating point and can come out slightly negative - as low as -8.9e-16 in this run. On 500 random points, 63 squared distances came out below zero, and <code>np.sqrt</code> turned all 63 into NaN with only a runtime warning. Clip at zero before the square root - every production implementation does.</p>
+<h2>Derivatives, three ways</h2>
+<p>Training a model means following the slope of a loss downhill, so we need derivatives. The first way needs no theory: nudge the input and watch the output.</p>
+<pre><code>def central_diff(f, x, h):
+    return (f(x + h) - f(x - h)) / (2 * h)</code></pre>
+<p>For <code>sin</code> at 1, whose derivative is <code>cos 1</code>:</p>
+<img alt="day44_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2044%20-%20numpy%20vectorization%20and%20autograd/imgs/day44_4.png">
+<pre><code>h = 1e-2   forward 4.2e-03   central 9.0e-06
+h = 1e-5   forward 4.2e-06   central 1.1e-11
+h = 1e-8   forward 3.0e-09   central 2.6e-09
+h = 1e-12  forward 4.3e-05   central 1.2e-05</code></pre>
+<p>Making <code>h</code> smaller helps until about <code>1e-5</code>, then hurts: <code>f(x+h)</code> and <code>f(x-h)</code> agree in nearly every digit, and subtracting them leaves mostly rounding noise. Difference quotients are perfect for <em>checking</em> gradients and useless for training a model with a million weights, because you need two evaluations of the whole function per weight.</p>
+<p>The second way, <strong>forward mode</strong>, carries the derivative along with the value. A dual number is a pair <code>(value, derivative)</code> with the product rule built into multiplication:</p>
+<pre><code>class Dual:
+    def __init__(self, val, der=0.0):
+        self.val, self.der = val, der
+
+    def __mul__(self, o):
+        o = o if isinstance(o, Dual) else Dual(o)
+        return Dual(self.val * o.val, self.der * o.val + self.val * o.der)</code></pre>
+<p><code>f(x) = x sin x + 3x</code> at 2 gives <code>f&#x27; = 3.077003753731</code>, exact to every digit. But one pass gives the derivative with respect to <em>one</em> input. For a function of 200 inputs that took 200 passes.</p>
+<p>The third way, <strong>reverse mode</strong>, is what PyTorch and JAX use for training: one forward pass that records the computation, and one backward pass that produces the derivative with respect to <em>every</em> input at once. For the same 200-input function: 1 forward and 1 backward pass, identical numbers.</p>
+<h2>A mini autograd</h2>
+<p>Every <code>Value</code> remembers which values it was made from and keeps a small function that sends its gradient back to them using the local rule - for <code>out = a * b</code>, the gradient reaching <code>a</code> is <code>b * out.grad</code>:</p>
+<pre><code>def __mul__(self, o):
+    o = self._wrap(o)
+    out = Value(self.data * o.data, (self, o), &#x27;*&#x27;)
+
+    def _backward():
+        self.grad += o.data * out.grad
+        o.grad += self.data * out.grad
+    out._backward = _backward
+    return out</code></pre>
+<p><code>backward()</code> puts the graph in topological order - the Day 13 algorithm, here as an iterative depth-first search - and runs the <code>_backward</code> functions from the output back to the inputs:</p>
+<pre><code>def backward(self):
+    order = self.topo()            # every node after all of its inputs
+    for v in order:
+        v.grad = 0.0
+    self.grad = 1.0
+    for v in reversed(order):      # every node after all of its users
+        v._backward()
+    return order</code></pre>
+<img alt="day44_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2044%20-%20numpy%20vectorization%20and%20autograd/imgs/day44_5.png">
+<p>For <code>L = (a*b + c) * f</code> with <code>a=2, b=-3, c=10, f=-2</code>: <code>L = -8</code>, and the gradients are <code>dL/da = 6</code>, <code>dL/db = -4</code>, <code>dL/dc = -2</code>, <code>dL/df = 4</code>. A gradient check against central differences on a messier function, <code>tanh(p*q + r) * p + exp(q/r) - p²</code>, agreed to a relative error of 1.3e-10.</p>
+<p>Two lines in that code carry the correctness, and getting either one wrong still returns a number:</p>
+<img alt="day44_6" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2044%20-%20numpy%20vectorization%20and%20autograd/imgs/day44_6.png">
+<p><strong><code>+=</code>, not <code>=</code>.</strong> In <code>x * x</code>, both inputs are the same node, so <code>_backward</code> sends two contributions of 3 to <code>x</code>. Accumulating gives 6, the right derivative of <code>x²</code>. Assigning keeps only the second write: 3.</p>
+<p><strong>The topological order.</strong> The tempting backward pass is &quot;run my <code>_backward</code>, then recurse into each input&quot;. For <code>q = 2x; y = q * q</code>, the recursion reaches <code>q</code> twice, and each visit pushes <code>q</code>&#x27;s full gradient into <code>x</code> again: 48 instead of 24, using 7 visits where the topological order needs 4. Running every node only after all of its users have reported is exactly what the order guarantees.</p>
+<p>The third bug lives in the training loop, not the autograd. Gradients accumulate by design, so they must be reset between steps. Fitting <code>y = 3x - 0.5</code> on 20 points for 60 steps:</p>
+<pre><code>zeroing gradients:     w = 3.020, b = -0.534, final loss 0.0083
+never zeroing them:    w = 6.089, b = -1.029, final loss 3.0924</code></pre>
+<p>Without the reset every step uses the sum of all previous gradients, the weights overshoot, and the loss bounces around (4.40, 2.18, 2.59, 0.015, 2.78, 2.40 every ten steps) instead of settling. This is why PyTorch training loops call <code>optimizer.zero_grad()</code> every iteration.</p>
+<h2>Back to vectorisation: the gradient as one formula</h2>
+<p>A scalar autograd is correct but slow. The mean squared error of a linear model on 200 rows and 5 features is a Value graph of 4,408 nodes, and its gradient took about 16 ms in one run. Working the same derivative out by hand on whole arrays gives <code>2/n · Xᵀ(Xw - y)</code>: about 0.005 ms, and the two gradients agree to 5.3e-15. Real autograd libraries do exactly this: their nodes are whole arrays and each node&#x27;s backward rule is a vectorised formula, so the graph has a handful of nodes instead of thousands.</p>
+<h2>LeetCode 150 - Evaluate Reverse Polish Notation</h2>
+<p><strong>The task.</strong> Compute the value of an arithmetic expression written in Reverse Polish Notation, where each operator comes after its two operands, so no parentheses are needed.</p>
+<p><strong>Input / output.</strong> <code>tokens</code>, a list of strings, each either an integer or one of <code>+</code>, <code>-</code>, <code>*</code>, <code>/</code>. Return the integer value of the expression. Division between two integers keeps only the integer part, rounding toward zero.</p>
+<p><strong>Example.</strong> <code>[&quot;2&quot;, &quot;1&quot;, &quot;+&quot;, &quot;3&quot;, &quot;*&quot;]</code> means <code>(2 + 1) * 3 = 9</code>: push 2, push 1, <code>+</code> pops both and pushes 3, push 3, <code>*</code> pops both and pushes 9. <code>[&quot;4&quot;, &quot;13&quot;, &quot;5&quot;, &quot;/&quot;, &quot;+&quot;]</code> is <code>4 + 13 / 5 = 4 + 2 = 6</code>.</p>
+<p><strong>Constraints.</strong> Up to ten thousand tokens; every number is between -200 and 200; the expression is always valid, never divides by zero, and every intermediate result fits in a 32-bit integer. The constraint that bites is &quot;rounding toward zero&quot; for negative quotients.</p>
+<p>The stack from Day 02 does all the work:</p>
+<pre><code>class Solution:
+    def evalRPN(self, tokens: list[str]) -&gt; int:
+        st = []
+        for t in tokens:
+            if t in (&#x27;+&#x27;, &#x27;-&#x27;, &#x27;*&#x27;, &#x27;/&#x27;):
+                b, a = st.pop(), st.pop()
+                if t == &#x27;+&#x27;:
+                    st.append(a + b)
+                elif t == &#x27;-&#x27;:
+                    st.append(a - b)
+                elif t == &#x27;*&#x27;:
+                    st.append(a * b)
+                else:
+                    st.append(int(a / b))      # truncate, NOT a // b (which floors)
+            else:
+                st.append(int(t))
+        return st[0]</code></pre>
+<p>The trap is Python&#x27;s <code>//</code>, which rounds <em>down</em>: <code>6 // -132</code> is -1, while truncating toward zero gives 0. The positive examples pass either way. LeetCode&#x27;s longer example, <code>10 6 9 3 + -11 * / * 17 + 5 +</code>, is 22 with <code>int(a / b)</code> and 12 with <code>//</code>.</p>
+<p>Run the same stack machine over <code>Value</code> objects instead of integers and evaluating the expression <em>builds the computation graph</em>. <code>x y * x + y /</code> at <code>x = 2, y = -3</code> gives 1.3333, and one <code>backward()</code> gives <code>d/dx = 0.6667</code> and <code>d/dy = -0.2222</code> - exactly <code>(y + 1)/y</code> and <code>-x/y²</code>. That is all an autograd tape is: record operations while you evaluate, then replay them backwards.</p>
+<p><a href="https://leetcode.com/problems/evaluate-reverse-polish-notation/">leetcode.com/problems/evaluate-reverse-polish-notation</a></p>
+<h2>Complexity</h2>
+<pre><code>Operation                              Time                              Space
+-------------------------------------  --------------------------------  ---------------------------
+Elementwise NumPy op on n values       O(n), one C loop                  O(n) for the result
+Transpose, slice, contiguous reshape   O(1), new strides only            O(1) (a view)
+Pairwise distances, broadcasting       O(n² d)                           O(n² d) temporary
+Pairwise distances, Gram trick         O(n² d) as one matrix product     O(n²)
+Central difference gradient, n inputs  2n function evaluations           O(1) extra
+Forward mode (dual numbers), n inputs  n passes                          O(1) per value
+Reverse mode (Value.backward)          1 forward + 1 backward, O(nodes)  O(nodes) to store the graph
+LeetCode 566 / LeetCode 150            O(m n) / O(tokens)                O(m n) / O(tokens)</code></pre>
+<h2>Why this matters later</h2>
+<p>Everything the machine-learning part of the series builds runs on today&#x27;s two ideas. Gradient descent and its variants (momentum, Adam) are loops that call <code>backward()</code> and then step the weights - after zeroing the gradients. Linear and logistic regression are today&#x27;s <code>2/n Xᵀ(Xw - y)</code> with a different loss. Backpropagation through a multilayer network is reverse mode over a graph whose nodes are matrix products, and every one of today&#x27;s three bugs exists there too, plus the broadcasting one in every loss function. PyTorch&#x27;s autograd is a tape of operations replayed backwards in topological order; JAX writes the same idea as function transformations. And the broadcasting rule is the one GPUs use to apply one bias to a whole batch of activations.</p>
+<p>The habits to keep: assert shapes before every loss, check every hand-written gradient against central differences once, and when a Python loop over numbers is slow, look for the array expression that says the same thing.</p>
+<p>Tomorrow: the gradient descent family - SGD, momentum and Adam.</p>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2044%20-%20numpy%20vectorization%20and%20autograd">day 44 on GitHub</a></p>
+</body>
+</html>

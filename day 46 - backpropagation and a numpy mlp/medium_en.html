@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Backpropagation in pure NumPy: a two-layer network, the three lines that train it, and five ways to get them wrong without an error</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Backpropagation in pure NumPy: a two-layer network, the three lines that train it, and five ways to get them wrong without an error</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2046%20-%20backpropagation%20and%20a%20numpy%20mlp">day 46 on GitHub</a></p>
+<p><em>100 Days of Python - day 46</em></p>
+<p>Backpropagation through a linear layer is three lines, and each one is a transpose away from the forward pass:</p>
+<pre><code>dW = x.T @ dz
+db = dz.sum(axis=0)
+dx = dz @ W.T</code></pre>
+<p>That is the entire algorithm. A network is a list of layers, the forward pass caches what the backward pass will need, and the backward pass walks the same list in reverse. With those three lines and a classification loss, a two-layer network separates a three-armed spiral that no straight line can touch: 100% against 53% for the same model with the hidden layer removed.</p>
+<img alt="day46_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2046%20-%20backpropagation%20and%20a%20numpy%20mlp/imgs/day46_1.png">
+<p>The interesting part is not the three lines. It is that every way of getting them slightly wrong produces a training loop that runs to completion and hands you a model:</p>
+<ul><li><code>softmax</code> on the wrong axis still returns numbers between 0 and 1, and something still sums to 1.</li><li>Cross entropy that builds the probabilities first takes <code>log(0)</code> and returns <code>inf</code>.</li><li><code>db = dz.sum()</code> instead of <code>dz.sum(axis=0)</code> is a scalar, and a scalar broadcasts.</li><li><code>dW = x @ dz</code> without the transpose runs fine whenever the batch size happens to equal the input width.</li><li>Initialising every weight to zero leaves 64 hidden units behaving as one, forever.</li></ul>
+<p>And one failure that is <em>not</em> a bug: a gradient check on a ReLU network can report a relative error of 1.0 while the code is perfectly correct.</p>
+<p>Day 44 built a scalar autograd; Day 45 replaced the update rule at the end of the loop. This is the model that goes in the middle. Run <code>python mlp.py</code> to print every number here.</p>
+<h2>The losses an output layer needs, written so they cannot overflow</h2>
+<p>A classifier&#x27;s last layer produces one real number per class - logits - and <code>softmax</code> turns them into a distribution. The textbook spelling is <code>exp(z) / exp(z).sum()</code>. Subtracting the row maximum first changes nothing mathematically, because the constant cancels in the ratio:</p>
+<pre><code>def softmax(z, axis=-1):
+    z = z - np.max(z, axis=axis, keepdims=True)
+    e = np.exp(z)
+    return e / np.sum(e, axis=axis, keepdims=True)</code></pre>
+<p>Numerically it is the difference between an answer and a <code>nan</code>:</p>
+<img alt="day46_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2046%20-%20backpropagation%20and%20a%20numpy%20mlp/imgs/day46_4.png">
+<pre><code>logits [1000.0, 1001.0, 1002.0]
+  naive  [nan nan nan]          &lt;- exp(1002) overflows, then inf/inf
+  stable [0.090031 0.244728 0.665241]</code></pre>
+<p>On ordinary logits the two agree to <code>1.1e-16</code>, which is exactly why this never shows up in testing. It shows up the first time a logit grows, which is the first time something else has already gone slightly wrong - and then the <code>nan</code> spreads into every weight on the next backward pass.</p>
+<p>Cross entropy has the same shape of problem one level up. Written as <code>-log(softmax(z)[label])</code>, it forms a probability and then takes its log. With logits <code>[-400, 0, 400]</code>, <code>exp(-800)</code> underflows to exactly zero, so the probability of class 0 is <code>0.0</code> and its log is <code>-inf</code>:</p>
+<pre><code>label 0 (the model is wrong):   stable 800.0,  naive inf</code></pre>
+<p>A loss of 800 is enormous but finite, and it produces a usable gradient that pushes the model away from being confidently wrong. An <code>inf</code> is the end of training. The fix is to never build the probability:</p>
+<pre><code>def log_softmax(z, axis=-1):
+    m = np.max(z, axis=axis, keepdims=True)
+    return z - m - np.log(np.sum(np.exp(z - m), axis=axis, keepdims=True))</code></pre>
+<p>The two-class version is the same story. <code>1 / (1 + np.exp(-x))</code> at <code>x = -800</code> computes <code>1 / (1 + inf)</code> and happens to land on the right answer, <code>0.0</code>, after an overflow. The damage is downstream: <code>log(0.0)</code> is <code>-inf</code>, and the loss is the thing being differentiated. <code>log_sigmoid(-800)</code> returns <code>-800.0</code>, and binary cross entropy taken straight from the logits with <code>np.logaddexp(0, z) - y * z</code> never forms a probability at all.</p>
+<h2>The axis bug that still returns probabilities</h2>
+<p>This one deserves its own section because it is the most common and the least visible. A batch of logits has shape <code>(n_examples, n_classes)</code>, and the softmax has to run across the classes:</p>
+<pre><code>softmax(axis=1), per example:     row sums [1. 1.]        &lt;- what we want
+softmax(axis=0), per class:       row sums [1.475 1.525]  column sums [1. 1. 1.]</code></pre>
+<p>With <code>axis=0</code> every entry is still in <code>[0, 1]</code> and something still sums to 1 - the classes are just being normalised across the batch instead of within each example. No assertion fires. On this example even the <code>argmax</code> of each row is unchanged, <code>[0, 1]</code> either way, so the predictions look fine and only the loss is wrong. A model trained this way is being told that examples compete with each other for a class, which is a coherent but completely different problem.</p>
+<h2>Why softmax and cross entropy are one function</h2>
+<p>Differentiate them separately and you need the softmax Jacobian - a full <code>k x k</code> matrix per example - and then a division by <code>p</code> from the log. Compose them and almost everything cancels, leaving a subtraction:</p>
+<img alt="day46_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2046%20-%20backpropagation%20and%20a%20numpy%20mlp/imgs/day46_3.png">
+<pre><code>def softmax_ce_grad(logits, y, mean=True):
+    n = len(y)
+    p = softmax(logits)
+    p[np.arange(n), y] -= 1.0
+    return p / n if mean else p</code></pre>
+<p>The gradient of the loss with respect to the logits is the predicted distribution minus the one-hot label. Checked against central differences, the largest difference is <code>2.47e-11</code>. That identity is why every framework exposes a fused <code>cross_entropy(logits, labels)</code> and why passing it probabilities instead of logits is a documented mistake: by the time you have the probabilities, the cancellation has already been thrown away.</p>
+<h2>The layers</h2>
+<p>With the loss gradient in hand, the rest is mechanical. A linear layer caches its input going forward:</p>
+<pre><code>def forward(self, x):
+    self.x = x
+    return x @ self.W + self.b
+
+def backward(self, dz):
+    self.dW = self.x.T @ dz
+    self.db = dz.sum(axis=0)
+    return dz @ self.W.T</code></pre>
+<p>Each of the three lines is forced by shapes, and each has a reading. <code>dW = x.T @ dz</code> sums, over the batch, the outer product of what came in with the gradient of what went out. <code>db = dz.sum(axis=0)</code> undoes a broadcast: the bias was added to every row, so its gradient collects from every row. <code>dx = dz @ W.T</code> is the same matrix the forward pass used, transposed, which is what makes the backward pass cost about the same as the forward one.</p>
+<p>ReLU&#x27;s backward is <code>dz * (x &gt; 0)</code>, which means the whole network is:</p>
+<pre><code>def backward(self, dlogits):
+    for layer in reversed(self.layers):
+        dlogits = layer.backward(dlogits)</code></pre>
+<p><code>reversed(self.layers)</code> is Day 13&#x27;s reverse topological order, except that a plain feed-forward network is a straight line, so reversing a list is enough. The moment a network has skip connections or shares a layer between two branches, the list is no longer sufficient and a real topological sort is - which is exactly the step Day 44&#x27;s scalar autograd had to do.</p>
+<h2>Checking it</h2>
+<p>A hand-written gradient is a claim, and central differences are how the claim gets tested. Perturb one entry of one parameter array by <code>h</code>, measure the loss on both sides, divide:</p>
+<pre><code>gradcheck, correct backward:  7.85e-09</code></pre>
+<p>That number is the whole reason to write the check before trusting anything below.</p>
+<h2>Training it</h2>
+<p>A three-armed spiral, 300 points, three classes, trained full-batch with Day 45&#x27;s Adam:</p>
+<img alt="day46_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2046%20-%20backpropagation%20and%20a%20numpy%20mlp/imgs/day46_2.png">
+<pre><code>step     1  loss 1.1068  accuracy 0.633
+step   200  loss 0.0036  accuracy 1.000
+step  1200  loss 0.0001  accuracy 1.000
+
+one hidden layer of 64 ReLU units:     accuracy 1.000
+no hidden layer (softmax regression):  accuracy 0.530</code></pre>
+<p>Both figures are on the training set: this is a demonstration that the model can represent the shape at all, not a claim about generalisation. The comparison is the point. The output layer is still a linear classifier drawing straight boundaries - look at the right-hand panel, which is all a linear model can ever do. The hidden layer does not add curvature to the boundary directly; it bends the <em>space</em>, and then the output layer draws its straight lines in the bent space. That is the whole idea of a deep network in one picture.</p>
+<h2>Four bugs that never raise</h2>
+<p><strong><code>db = dz.sum()</code> instead of <code>dz.sum(axis=0)</code>.</strong> The correct gradient has one entry per output unit. <code>dz.sum()</code> collapses it to a scalar, and <code>b -= lr * scalar</code> broadcasts without complaint, moving every bias by the same amount. Gradient check: <code>1.00e+00</code>.</p>
+<p><strong>Forgetting the division by n.</strong> The loss reported is the mean over the batch; if the gradient is the gradient of the <em>sum</em>, every step is <code>n</code> times larger than intended. Nothing breaks visibly - it looks like a learning rate that is suddenly too high, which is the hardest kind of bug to attribute. Gradient check: <code>8.46e-01</code>.</p>
+<p><strong><code>dW = x @ dz</code> without the transpose.</strong> <code>x</code> is <code>(n, d_in)</code> and <code>dz</code> is <code>(n, d_out)</code>, so this is a shape error - unless <code>n == d_in</code>, in which case it runs and produces a <code>(d_in, d_out)</code> array of the right shape full of wrong numbers. With a batch of 8 and an input width of 8, the gradient check says <code>1.00e+00</code>; change the batch size and the same line becomes a loud <code>ValueError</code>. A bug that depends on the batch size is a bug that will appear in production and not in your test.</p>
+<p><strong>All-zero initialisation.</strong></p>
+<img alt="day46_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2046%20-%20backpropagation%20and%20a%20numpy%20mlp/imgs/day46_5.png">
+<pre><code>all-zero init: 1 distinct hidden activation value out of 256
+accuracy after 400 steps 0.333, against 1.000 for the randomly initialised net</code></pre>
+<p>If every weight is identical, every hidden unit computes the same thing, receives the same gradient and takes the same step - forever. Sixty-four units behave as one, and <code>0.333</code> on three classes is chance. Symmetry has to be broken by the initialisation; this is the reason random init is not an implementation detail. Biases can start at zero because the weights already break the symmetry.</p>
+<h2>One failure that is not a bug</h2>
+<img alt="day46_6" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2046%20-%20backpropagation%20and%20a%20numpy%20mlp/imgs/day46_6.png">
+<p>ReLU has no derivative at exactly zero. Backpropagation picks a side - <code>mask = x &gt; 0</code>, so zero. Central differences average both sides: <code>(h - 0) / 2h = 0.5</code>. Feed the network a row of zeros, and with biases starting at zero the pre-activations land exactly on the corner:</p>
+<pre><code>4 of 8 pre-activations are exactly 0
+ReLU gradcheck 1.00,  the same network with tanh 3.4e-10</code></pre>
+<p>The code is right and the check is right; the function has a corner. I found this the honest way - my first spiral started every arm at radius 0, so all three classes shared the origin, and that one point made the gradient check fail on a correct implementation. Two lessons came out of it: gradient-check with a smooth activation, and look at your data when a check fails before assuming the gradient is wrong.</p>
+<h2>LeetCode 867 - Transpose Matrix</h2>
+<p><strong>The task.</strong> Return the transpose of a matrix: the element at row <code>i</code>, column <code>j</code> moves to row <code>j</code>, column <code>i</code>.</p>
+<p><strong>Input / output.</strong> <code>matrix</code>, an <code>m x n</code> list of lists of integers. Return the <code>n x m</code> transposed list of lists.</p>
+<p><strong>Example.</strong> <code>[[1, 2, 3], [4, 5, 6]]</code> becomes <code>[[1, 4], [2, 5], [3, 6]]</code>: the first row becomes the first column.</p>
+<p><strong>Constraints.</strong> <code>m</code> and <code>n</code> are between 1 and 1000, and <code>m * n</code> is at most 10⁵, so a linear pass over every element is expected. The matrix is not necessarily square, which is what rules out the in-place swap used in the next problem.</p>
+<pre><code>class Solution:
+    def transpose(self, matrix: list[list[int]]) -&gt; list[list[int]]:
+        m, n = len(matrix), len(matrix[0])
+        out = [[0] * m for _ in range(n)]
+        for i in range(m):
+            for j in range(n):
+                out[j][i] = matrix[i][j]
+        return out</code></pre>
+<p>This is the operation every backward rule above is built on, and it is worth noticing what it costs. The list-of-lists version has to move every element. NumPy&#x27;s <code>a.T</code> moves nothing: it returns a view with the strides swapped, <code>(24, 8)</code> becoming <code>(8, 24)</code>, sharing memory with the original - the Day 44 result. That is why <code>x.T @ dz</code> costs no more than <code>x @ dz</code>, and why a backward pass costs roughly what a forward pass costs rather than several times more.</p>
+<p><a href="https://leetcode.com/problems/transpose-matrix/">leetcode.com/problems/transpose-matrix</a></p>
+<h2>LeetCode 48 - Rotate Image</h2>
+<p><strong>The task.</strong> Rotate an <code>n x n</code> matrix by 90 degrees clockwise, in place.</p>
+<p><strong>Input / output.</strong> <code>matrix</code>, a square list of lists. Return nothing; modify the input. Allocating another <code>n x n</code> matrix and copying it back is explicitly disallowed.</p>
+<p><strong>Example.</strong> <code>[[1, 2, 3], [4, 5, 6], [7, 8, 9]]</code> becomes <code>[[7, 4, 1], [8, 5, 2], [9, 6, 3]]</code>: the first column, read bottom to top, becomes the first row.</p>
+<p><strong>Constraints.</strong> <code>n</code> is between 1 and 20, so the work is trivial and the whole problem is the in-place requirement. Being square is what makes an in-place transpose possible at all.</p>
+<p>A clockwise rotation is a transpose followed by reversing each row:</p>
+<pre><code>class Solution:
+    def rotate(self, matrix: list[list[int]]) -&gt; None:
+        n = len(matrix)
+        for i in range(n):
+            for j in range(i + 1, n):        # j &gt; i only, or every pair swaps twice
+                matrix[i][j], matrix[j][i] = matrix[j][i], matrix[i][j]
+        for row in matrix:
+            row.reverse()</code></pre>
+<p>The trap is the inner loop&#x27;s starting index. With <code>for j in range(n)</code>, every pair <code>(i, j)</code> is swapped once as <code>(i, j)</code> and once as <code>(j, i)</code>, so the matrix comes back exactly as it started and the transpose silently does nothing. The function still returns, still modifies the matrix, and still produces a square matrix of the same numbers - just the input with its rows reversed:</p>
+<pre><code>rotated (j &gt; i):       [[7, 4, 1], [8, 5, 2], [9, 6, 3]]
+j over every column:   [[3, 2, 1], [6, 5, 4], [9, 8, 7]]</code></pre>
+<p>That is the same flavour of failure as the whole day: an off-by-one in a loop bound that leaves every shape intact and every value plausible.</p>
+<p><a href="https://leetcode.com/problems/rotate-image/">leetcode.com/problems/rotate-image</a></p>
+<h2>Complexity</h2>
+<pre><code>Operation                                Time                                          Space
+---------------------------------------  --------------------------------------------  ------------------------------
+Forward pass, batch n, layer din x dout  O(n · din · dout)                             O(n · dout) activations
+Backward pass, same layer                O(n · din · dout), about the same as forward  O(din · dout) gradients
+Caching for backward                     -                                             one activation array per layer
+softmax / logsoftmax over k classes      O(n · k)                                      O(n · k)
+softmax + cross entropy gradient         O(n · k), one subtraction                     O(n · k)
+Gradient check, P parameters             2P forward passes                             O(1) extra
+LeetCode 867                             O(m · n)                                      O(m · n) output
+LeetCode 48                              O(n²)                                         O(1)</code></pre>
+<h2>Why this matters</h2>
+<p>The three lines above are what <code>torch.nn.Linear.backward</code> does, with the same two reasons for the same two transposes. The fused <code>cross_entropy(logits, labels)</code> in every framework exists because of the <code>p - y</code> cancellation, and its documentation warns against passing probabilities for exactly that reason. The <code>log_softmax</code> and <code>logaddexp</code> tricks are why a loss can be reported as 800 instead of <code>inf</code> when a model is confidently wrong, which is the difference between a bad step and a dead run. The memory profile of training comes straight from the caching rule: the activations kept for the backward pass are what gradient checkpointing trades away and recomputes. And initialisation schemes - He, Xavier, and the rest - all exist downstream of the observation that identical weights produce identical units.</p>
+<p>The habit worth keeping is the gradient check. Every hand-written backward pass is a claim about derivatives, it costs two forward passes per parameter to test on a tiny network, and it is the only thing in this article that catches all four bugs at once.</p>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2046%20-%20backpropagation%20and%20a%20numpy%20mlp">day 46 on GitHub</a></p>
+</body>
+</html>

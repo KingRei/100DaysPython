@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 46 — 用純 NumPy 寫反向傳播：一個兩層網路、訓練它的那三行，以及五種寫錯了也不會報錯的方式</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 46 — 用純 NumPy 寫反向傳播：一個兩層網路、訓練它的那三行，以及五種寫錯了也不會報錯的方式</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2046%20-%20backpropagation%20and%20a%20numpy%20mlp">day 46 on GitHub</a></p>
+<p><em>100 Days of Python - day 46</em></p>
+<p>一個線性層的反向傳播就三行，而且每一行都只是前向傳播轉置一次：</p>
+<pre><code>dW = x.T @ dz
+db = dz.sum(axis=0)
+dx = dz @ W.T</code></pre>
+<p>整個演算法就這樣。一個網路是一串 layer，前向傳播把反向傳播會用到的東西快取起來，反向傳播就把同一串倒著走一遍。有了這三行加上一個分類用的 loss，一個兩層網路就能分開三條螺旋臂——那是任何一條直線都碰不到的形狀：準確率 100%，而同一個模型拿掉隱藏層之後是 53%。</p>
+<img alt="day46_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2046%20-%20backpropagation%20and%20a%20numpy%20mlp/imgs/day46_1.png">
+<p>有意思的不是那三行，而是：每一種把它們寫得稍微不對的方式，都會給你一個能跑完、而且會交出一個模型的訓練迴圈。</p>
+<ul><li><code>softmax</code> 用錯軸，回傳的數字照樣都在 0 和 1 之間，而且照樣有東西加起來等於 1。</li><li>先算出機率再取 log 的 cross entropy 會取到 <code>log(0)</code>，回傳 <code>inf</code>。</li><li>把 <code>dz.sum(axis=0)</code> 寫成 <code>db = dz.sum()</code> 得到一個純量，而純量會 broadcast。</li><li>少了轉置的 <code>dW = x @ dz</code>，只要 batch size 剛好等於輸入寬度就跑得過去。</li><li>把所有權重初始化成零，64 個隱藏單元會永遠表現得像一個。</li></ul>
+<p>另外還有一個<strong>不是 bug</strong> 的失敗：在 ReLU 網路上做梯度檢查，可能在程式完全正確的情況下回報 1.0 的相對誤差。</p>
+<p>Day 44 做了一個純量的 autograd，Day 45 換掉了迴圈最後那行更新規則。今天放進中間的，就是模型本身。執行 <code>python mlp.py</code> 會印出本文的每一個數字。</p>
+<h2>輸出層需要的那些 loss，要寫成不會溢位的形式</h2>
+<p>分類器的最後一層對每個類別吐出一個實數（logit），<code>softmax</code> 把它們變成一個機率分布。教科書寫法是 <code>exp(z) / exp(z).sum()</code>。先減掉每一列的最大值在數學上什麼都沒改，因為那個常數在比值裡會消掉：</p>
+<pre><code>def softmax(z, axis=-1):
+    z = z - np.max(z, axis=axis, keepdims=True)
+    e = np.exp(z)
+    return e / np.sum(e, axis=axis, keepdims=True)</code></pre>
+<p>但在數值上，那是「有答案」和「<code>nan</code>」的差別：</p>
+<img alt="day46_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2046%20-%20backpropagation%20and%20a%20numpy%20mlp/imgs/day46_4.png">
+<pre><code>logits [1000.0, 1001.0, 1002.0]
+  naive  [nan nan nan]          &lt;- exp(1002) 溢位，然後 inf/inf
+  stable [0.090031 0.244728 0.665241]</code></pre>
+<p>在正常大小的 logit 上，兩者只差 <code>1.1e-16</code>——這正是它在測試裡永遠不會出現的原因。它會在某個 logit 變大的那一刻出現，而那通常已經是別的地方先出了一點問題之後；接著這個 <code>nan</code> 會在下一次反向傳播裡擴散到每一個權重。</p>
+<p>Cross entropy 有同一種形狀的問題，只是高一層。寫成 <code>-log(softmax(z)[label])</code> 就是先算出一個機率、再取它的 log。logits 是 <code>[-400, 0, 400]</code> 時，<code>exp(-800)</code> 會下溢成剛好 0，所以類別 0 的機率是 <code>0.0</code>，它的 log 是 <code>-inf</code>：</p>
+<pre><code>label 0（模型答錯了）：stable 800.0，naive inf</code></pre>
+<p>800 這個 loss 很大，但它是有限的，而且會產生一個有用的梯度，把模型從「很有自信地答錯」推開。<code>inf</code> 則是訓練的終點。修法是根本不要把機率算出來：</p>
+<pre><code>def log_softmax(z, axis=-1):
+    m = np.max(z, axis=axis, keepdims=True)
+    return z - m - np.log(np.sum(np.exp(z - m), axis=axis, keepdims=True))</code></pre>
+<p>兩類別的版本是同一個故事。<code>1 / (1 + np.exp(-x))</code> 在 <code>x = -800</code> 時算的是 <code>1 / (1 + inf)</code>，溢位之後碰巧落在正確答案 <code>0.0</code> 上。真正的傷害在下游：<code>log(0.0)</code> 是 <code>-inf</code>，而被拿去微分的正是 loss。<code>log_sigmoid(-800)</code> 回傳 <code>-800.0</code>；用 <code>np.logaddexp(0, z) - y * z</code> 直接從 logit 算 binary cross entropy，則從頭到尾不會形成任何機率。</p>
+<h2>那個用錯軸、卻還是回傳機率的 bug</h2>
+<p>這個值得獨立一節，因為它最常見也最難看出來。一批 logits 的形狀是 <code>(樣本數, 類別數)</code>，softmax 必須沿著類別那一軸做：</p>
+<pre><code>softmax(axis=1)，每個樣本一列：  row sums [1. 1.]        &lt;- 我們要的
+softmax(axis=0)，每個類別一欄：  row sums [1.475 1.525]  column sums [1. 1. 1.]</code></pre>
+<p>用 <code>axis=0</code> 時每個元素照樣落在 <code>[0, 1]</code>，而且照樣有東西加起來等於 1——只是類別變成在整個 batch 之間被正規化，而不是在每個樣本內部。沒有任何 assertion 會響。在這個例子裡連每一列的 <code>argmax</code> 都沒變，兩邊都是 <code>[0, 1]</code>，所以預測看起來完全正常，只有 loss 是錯的。用這種方式訓練出來的模型，被告知的是「樣本之間要互相搶同一個類別」——那是一個自洽、但完全不同的問題。</p>
+<h2>為什麼 softmax 和 cross entropy 是同一個函式</h2>
+<p>分開微分的話，你需要 softmax 的 Jacobian（每個樣本一個 <code>k × k</code> 矩陣），再加上 log 帶來的除以 <code>p</code>。把兩者合起來微分，幾乎所有東西都會消掉，只剩一個減法：</p>
+<img alt="day46_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2046%20-%20backpropagation%20and%20a%20numpy%20mlp/imgs/day46_3.png">
+<pre><code>def softmax_ce_grad(logits, y, mean=True):
+    n = len(y)
+    p = softmax(logits)
+    p[np.arange(n), y] -= 1.0
+    return p / n if mean else p</code></pre>
+<p>loss 對 logits 的梯度，就是「預測的分布減掉 one-hot 標籤」。拿去跟 central difference 比對，最大差距是 <code>2.47e-11</code>。這個恆等式就是每個框架都提供一個融合好的 <code>cross_entropy(logits, labels)</code> 的原因，也是「傳機率進去而不是傳 logit」被文件明文列為錯誤的原因：等你手上拿到機率的時候，那個消掉的機會已經被丟掉了。</p>
+<h2>那些 layer</h2>
+<p>有了 loss 的梯度，剩下的就是機械動作。線性層在前向時把輸入快取起來：</p>
+<pre><code>def forward(self, x):
+    self.x = x
+    return x @ self.W + self.b
+
+def backward(self, dz):
+    self.dW = self.x.T @ dz
+    self.db = dz.sum(axis=0)
+    return dz @ self.W.T</code></pre>
+<p>這三行每一行都被形狀逼出來，而且每一行都有一個讀法。<code>dW = x.T @ dz</code> 是把「進來的東西」和「出去那邊的梯度」的外積，沿著整個 batch 加起來。<code>db = dz.sum(axis=0)</code> 是在還原一次 broadcast：bias 被加到了每一列，所以它的梯度要從每一列收回來。<code>dx = dz @ W.T</code> 用的是前向那同一個矩陣的轉置——這正是反向傳播的成本跟前向差不多的原因。</p>
+<p>ReLU 的反向是 <code>dz * (x &gt; 0)</code>，於是整個網路的反向傳播是：</p>
+<pre><code>def backward(self, dlogits):
+    for layer in reversed(self.layers):
+        dlogits = layer.backward(dlogits)</code></pre>
+<p><code>reversed(self.layers)</code> 就是 Day 13 的逆拓樸順序，只不過一個單純的前饋網路是一條直線，所以把 list 倒過來就夠了。一旦網路有了 skip connection，或是同一個 layer 被兩條分支共用，list 就不夠用、需要真正的拓樸排序——那正是 Day 44 那個純量 autograd 必須做的那一步。</p>
+<h2>檢查它</h2>
+<p>手寫的梯度是一個「宣稱」，而 central difference 就是用來驗證這個宣稱的方法。把某個參數陣列的某一格推 <code>h</code>，量兩邊的 loss，相除：</p>
+<pre><code>gradcheck，正確的 backward：7.85e-09</code></pre>
+<p>這個數字就是「在相信底下任何東西之前先把檢查寫出來」的全部理由。</p>
+<h2>訓練它</h2>
+<p>一個三臂螺旋、300 個點、三個類別，用 Day 45 的 Adam 做全批訓練：</p>
+<img alt="day46_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2046%20-%20backpropagation%20and%20a%20numpy%20mlp/imgs/day46_2.png">
+<pre><code>step     1  loss 1.1068  accuracy 0.633
+step   200  loss 0.0036  accuracy 1.000
+step  1200  loss 0.0001  accuracy 1.000
+
+一層 64 個 ReLU 單元的隱藏層：   accuracy 1.000
+沒有隱藏層（softmax regression）：accuracy 0.530</code></pre>
+<p>兩個數字都是在訓練集上量的：這是在示範「模型到底能不能表示出這個形狀」，不是在宣稱泛化能力。重點是那個對照。輸出層始終是一個畫直線的線性分類器——看右邊那一格，那就是線性模型能做到的極限。隱藏層並不是直接把邊界弄彎；它把<strong>空間</strong>弄彎了，然後輸出層在被弄彎的空間裡畫它的直線。這張圖就是深度網路的全部想法。</p>
+<h2>四個不會報錯的 bug</h2>
+<p><strong>把 <code>dz.sum(axis=0)</code> 寫成 <code>dz.sum()</code>。</strong> 正確的梯度每個輸出單元一格。<code>dz.sum()</code> 把它壓成一個純量，而 <code>b -= lr * 純量</code> 會毫無怨言地 broadcast，把每個 bias 都移動同樣的量。梯度檢查：<code>1.00e+00</code>。</p>
+<p><strong>忘了除以 n。</strong> 回報的 loss 是整個 batch 的平均；如果梯度算的是<strong>總和</strong>的梯度，那每一步就比你想的大 <code>n</code> 倍。表面上什麼都沒壞——它看起來只像「學習率突然太高了」，而那是最難歸因的一種 bug。梯度檢查：<code>8.46e-01</code>。</p>
+<p><strong>少了轉置的 <code>dW = x @ dz</code>。</strong> <code>x</code> 是 <code>(n, d_in)</code>、<code>dz</code> 是 <code>(n, d_out)</code>，所以這是一個形狀錯誤——除非 <code>n == d_in</code>，那它就會跑過去，交出一個形狀正確、內容全錯的 <code>(d_in, d_out)</code> 陣列。batch 8、輸入寬度 8 時梯度檢查是 <code>1.00e+00</code>；把 batch size 一改，同一行就變成大聲的 <code>ValueError</code>。<strong>一個取決於 batch size 的 bug，就是一個會出現在正式環境、不會出現在你測試裡的 bug。</strong></p>
+<p><strong>全零初始化。</strong></p>
+<img alt="day46_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2046%20-%20backpropagation%20and%20a%20numpy%20mlp/imgs/day46_5.png">
+<pre><code>全零初始化：256 個隱藏 activation 值裡只有 1 個相異值
+400 步之後 accuracy 0.333，隨機初始化的那個網路是 1.000</code></pre>
+<p>如果每個權重都一樣，每個隱藏單元算的就是同一件事、收到同一個梯度、走同一步——而且永遠如此。64 個單元表現得像一個，三個類別的 <code>0.333</code> 就是亂猜。對稱必須由初始化來打破；這就是「隨機初始化不是實作細節」的原因。bias 可以從零開始，因為權重已經把對稱打破了。</p>
+<h2>一個不是 bug 的失敗</h2>
+<img alt="day46_6" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2046%20-%20backpropagation%20and%20a%20numpy%20mlp/imgs/day46_6.png">
+<p>ReLU 在剛好 0 的地方沒有導數。反向傳播會挑一邊——<code>mask = x &gt; 0</code>，所以是 0。Central difference 則把兩邊平均：<code>(h - 0) / 2h = 0.5</code>。餵一列全零進去，而 bias 又從零開始，於是 pre-activation 剛好落在那個轉角上：</p>
+<pre><code>8 個 pre-activation 裡有 4 個剛好是 0
+ReLU gradcheck 1.00，同一個網路換成 tanh 是 3.4e-10</code></pre>
+<p>程式是對的，檢查也是對的；是那個函式有一個角。我是用最誠實的方式發現這件事的——我第一版的螺旋資料每條臂都從半徑 0 出發，於是三個類別共用了原點，就是那一個點讓一份正確的實作在梯度檢查上失敗。從中得到兩個教訓：梯度檢查請用平滑的激活函數；還有，檢查失敗時先去看你的資料，不要一開始就假設是梯度寫錯了。</p>
+<h2>LeetCode 867 - Transpose Matrix（轉置矩陣）</h2>
+<p><strong>題目。</strong> 回傳一個矩陣的轉置：第 <code>i</code> 列第 <code>j</code> 欄的元素，移到第 <code>j</code> 列第 <code>i</code> 欄。</p>
+<p><strong>輸入／輸出。</strong> <code>matrix</code> 是一個 <code>m × n</code> 的二維整數 list。回傳轉置後的 <code>n × m</code> 二維 list。</p>
+<p><strong>範例。</strong> <code>[[1, 2, 3], [4, 5, 6]]</code> 變成 <code>[[1, 4], [2, 5], [3, 6]]</code>：第一列變成第一欄。</p>
+<p><strong>限制。</strong> <code>m</code> 和 <code>n</code> 介於 1 到 1000，而且 <code>m * n</code> 最多 10⁵，所以掃過每個元素一次的線性做法就是預期解。矩陣<strong>不一定是方陣</strong>，這正是它不能用下一題那種原地交換的原因。</p>
+<pre><code>class Solution:
+    def transpose(self, matrix: list[list[int]]) -&gt; list[list[int]]:
+        m, n = len(matrix), len(matrix[0])
+        out = [[0] * m for _ in range(n)]
+        for i in range(m):
+            for j in range(n):
+                out[j][i] = matrix[i][j]
+        return out</code></pre>
+<p>這就是上面每一條反向規則所依賴的那個操作，而它的成本值得注意一下。二維 list 的版本必須搬動每一個元素。NumPy 的 <code>a.T</code> 一個都不搬：它回傳一個把 strides 對調的 view，<code>(24, 8)</code> 變成 <code>(8, 24)</code>，而且跟原陣列共用記憶體——這是 Day 44 的結論。這就是為什麼 <code>x.T @ dz</code> 不比 <code>x @ dz</code> 貴，也是為什麼反向傳播的成本大約等於前向、而不是好幾倍。</p>
+<p><a href="https://leetcode.com/problems/transpose-matrix/">leetcode.com/problems/transpose-matrix</a></p>
+<h2>LeetCode 48 - Rotate Image（旋轉影像）</h2>
+<p><strong>題目。</strong> 把一個 <code>n × n</code> 的矩陣原地順時針旋轉 90 度。</p>
+<p><strong>輸入／輸出。</strong> <code>matrix</code> 是一個方陣二維 list。不回傳任何東西，直接修改輸入。題目明確禁止另外配置一個 <code>n × n</code> 矩陣再複製回去。</p>
+<p><strong>範例。</strong> <code>[[1, 2, 3], [4, 5, 6], [7, 8, 9]]</code> 變成 <code>[[7, 4, 1], [8, 5, 2], [9, 6, 3]]</code>：第一欄由下往上讀，變成第一列。</p>
+<p><strong>限制。</strong> <code>n</code> 介於 1 到 20，所以計算量完全不是問題，整題的重點就是「原地」這個要求。而「是方陣」正是原地轉置之所以可能的前提。</p>
+<p>順時針旋轉 = 轉置，再把每一列反過來：</p>
+<pre><code>class Solution:
+    def rotate(self, matrix: list[list[int]]) -&gt; None:
+        n = len(matrix)
+        for i in range(n):
+            for j in range(i + 1, n):        # j &gt; i only, or every pair swaps twice
+                matrix[i][j], matrix[j][i] = matrix[j][i], matrix[i][j]
+        for row in matrix:
+            row.reverse()</code></pre>
+<p>陷阱在內層迴圈的起始索引。寫成 <code>for j in range(n)</code> 的話，每一組 <code>(i, j)</code> 會以 <code>(i, j)</code> 交換一次、再以 <code>(j, i)</code> 交換一次，於是矩陣原封不動地回到起點，轉置悄悄什麼都沒做。函式照樣回傳、照樣修改了矩陣、照樣交出一個由同樣數字組成的方陣——只是那是「把每一列反過來」的輸入：</p>
+<pre><code>rotated (j &gt; i):       [[7, 4, 1], [8, 5, 2], [9, 6, 3]]
+j 跑完整列：            [[3, 2, 1], [6, 5, 4], [9, 8, 7]]</code></pre>
+<p>這跟今天其他所有失敗是同一種味道：一個迴圈邊界的差一錯誤，形狀全對、每個值都看起來合理。</p>
+<p><a href="https://leetcode.com/problems/rotate-image/">leetcode.com/problems/rotate-image</a></p>
+<h2>複雜度</h2>
+<pre><code>操作                             時間                             空間
+-------------------------------  -------------------------------  -------------------------
+前向，batch n、層 din × dout     O(n · din · dout)                O(n · dout) 個 activation
+反向，同一層                     O(n · din · dout)，與前向差不多  O(din · dout) 個梯度
+為反向而做的快取                 —                                每層一份 activation 陣列
+k 個類別的 softmax / logsoftmax  O(n · k)                         O(n · k)
+softmax + cross entropy 的梯度   O(n · k)，一個減法               O(n · k)
+P 個參數的梯度檢查               2P 次前向                        額外 O(1)
+LeetCode 867                     O(m · n)                         輸出 O(m · n)
+LeetCode 48                      O(n²)                            O(1)</code></pre>
+<h2>這些用在哪</h2>
+<p>上面那三行，就是 <code>torch.nn.Linear.backward</code> 在做的事，兩個轉置的理由也完全相同。每個框架都有的那個融合版 <code>cross_entropy(logits, labels)</code>，存在的理由就是 <code>p - y</code> 的消去；它的文件之所以警告不要傳機率進去，也正是因為這個。<code>log_softmax</code> 和 <code>logaddexp</code> 這些寫法，則是模型很有自信地答錯時 loss 能報成 800 而不是 <code>inf</code> 的原因——那是「走錯一步」和「整個 run 死掉」的差別。訓練的記憶體輪廓直接來自那條快取規則：為了反向傳播而留下的 activation，正是 gradient checkpointing 拿去交換、之後再重算的東西。而各種初始化方法（He、Xavier 等等），全都長在「一樣的權重會產生一樣的單元」這個觀察的下游。</p>
+<p>值得留下的習慣是梯度檢查。每一個手寫的反向傳播都是一個關於導數的宣稱，在一個很小的網路上每個參數只要兩次前向就能驗，而它是這篇文章裡唯一一個能一次抓到那四個 bug 的東西。</p>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2046%20-%20backpropagation%20and%20a%20numpy%20mlp">day 46 on GitHub</a></p>
+</body>
+</html>

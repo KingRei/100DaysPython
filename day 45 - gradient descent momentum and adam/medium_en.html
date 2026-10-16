@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The gradient descent family: SGD, momentum and Adam, and the exact point where a learning rate stops working</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>The gradient descent family: SGD, momentum and Adam, and the exact point where a learning rate stops working</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2045%20-%20gradient%20descent%20momentum%20and%20adam">day 45 on GitHub</a></p>
+<p><em>100 Days of Python - day 45</em></p>
+<p>On a quadratic bowl, the learning rate has an exact ceiling. For <code>f(w) = 0.5(w0² + 20w1²)</code> it is <code>2 / 20 = 0.1</code>: at <code>lr = 0.0999</code> gradient descent converges, at <code>lr = 0.1001</code> it runs off to infinity. Nothing raises an exception on the way. After 400 steps at <code>lr = 0.11</code> my parameter vector was <code>[5.7e-21, 4.7e+31]</code> - one coordinate perfectly solved, the other somewhere past the end of the universe.</p>
+<img alt="day45_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2045%20-%20gradient%20descent%20momentum%20and%20adam/imgs/day45_1.png">
+<p>Day 44 ended with a training loop whose last line was <code>w -= lr * w.grad</code>. Everything today replaces that one line and nothing else:</p>
+<pre><code>g = grad(w)
+w = opt.step(w, g)</code></pre>
+<p>Seven update rules go through that interface: SGD, SGD with momentum, Nesterov, AdaGrad, RMSProp, Adam and AdamW. The interesting part is not the formulas, it is which of their details are load-bearing. Four that are, and that never report an error when you get them wrong:</p>
+<ul><li>Adam without bias correction takes steps that are <strong>too large</strong>, not too small as the folklore says - 3.2x too large on the first step, 6.6x at step 12, still 1.26x at step 1,000.</li><li><code>sqrt(v) + eps</code> and <code>sqrt(v + eps)</code> differ by 99x on a coordinate whose <code>v</code> is <code>1e-12</code>.</li><li>L2 regularisation inside Adam decays the weights with the largest gradients <strong>10x less</strong> than the others, which is backwards.</li><li>A batch of one needs a learning rate 8.5x smaller than full batch on the same data, because it has to respect the curvature of its own row rather than the average.</li></ul>
+<p>Run <code>python optimizers.py</code> to print every number here (timings aside, they are all exact).</p>
+<h2>The ravine, and where the ceiling comes from</h2>
+<p><code>f(w) = 0.5(w0² + 20w1²)</code> is a bowl that is 20 times more curved across than along - a ravine. That ratio, largest curvature over smallest, is the <strong>condition number</strong>, and it is the single number that decides how hard a bowl is to descend.</p>
+<p>Plain gradient descent on a quadratic does something very simple: it multiplies each coordinate by <code>(1 - lr × curvature)</code> every step. That is the whole algorithm, and it hands you the convergence condition for free - every multiplier has to be smaller than 1 in absolute value:</p>
+<img alt="day45_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2045%20-%20gradient%20descent%20momentum%20and%20adam/imgs/day45_3.png">
+<pre><code>lr = 0.05    largest multiplier 0.95000  converges
+lr = 0.0999  largest multiplier 0.99800  converges
+lr = 0.1001  largest multiplier 1.00200  diverges
+lr = 0.11    largest multiplier 1.20000  diverges</code></pre>
+<p>The sharpest direction sets the limit, so <code>lr &lt; 2 / largest curvature</code>. Above it the flat direction still converges beautifully while the sharp one explodes - which is why a diverged run often has some parameters that look perfectly reasonable.</p>
+<p>Below the ceiling you get the other half of the problem. At <code>lr = 0.09</code> the sharp direction&#x27;s multiplier is <code>-0.80</code>: it overshoots and flips sign every step, which is the zigzag in the first figure. Meanwhile the flat direction shrinks by <code>0.91</code> per step, which is a crawl. The step size you are allowed is set by the steepest direction; the progress you make is set by the flattest one. That gap is the condition number, and it is why this bowl takes 147 steps instead of a handful.</p>
+<h2>Momentum turns kappa into sqrt(kappa)</h2>
+<p>Momentum keeps a running sum of past gradients and steps along that instead:</p>
+<pre><code>self.v = self.momentum * self.v + g
+return w - self.lr * self.v</code></pre>
+<p>Along the zigzag direction the alternating gradients cancel in the sum; along the valley floor they agree and accumulate. The theory says the error multiplier per step improves from <code>(kappa - 1)/(kappa + 1)</code> to <code>(sqrt(kappa) - 1)/(sqrt(kappa) + 1)</code>, which for <code>kappa = 20</code> is 0.905 against 0.635. Measured against theory:</p>
+<img alt="day45_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2045%20-%20gradient%20descent%20momentum%20and%20adam/imgs/day45_2.png">
+<pre><code>plain GD   lr 0.0952  rate 0.9048  theory 138.0 steps  measured 139
+momentum   lr 0.1336  beta 0.4026  rate 0.6345  theory  30.4 steps  measured  39</code></pre>
+<p>The plain-GD prediction lands within one step of the measurement, which is a good sign that the model of what is happening is right. Momentum&#x27;s measured 39 against a predicted 30 is the asymptotic rate ignoring the transient, and it is still 3.6x fewer steps.</p>
+<p>One thing worth measuring rather than assuming: <code>beta = 0.9</code> is not a constant of nature. The best beta for this bowl is <code>0.4026</code>, and at a fixed <code>lr = 0.04</code>:</p>
+<pre><code>beta 0       -&gt; 338 steps
+beta 0.4026  -&gt; 190 steps
+beta 0.9     -&gt; 245 steps</code></pre>
+<p>Copying 0.9 from a blog post made things <em>worse</em> than the tuned value, and on some learning rates worse than no momentum at all. Beta is under-damping or over-damping an oscillator; it has a right answer that depends on the problem.</p>
+<h2>On a real problem, with every learning rate tuned</h2>
+<p>A least-squares fit on 400 rows and 3 features, with one feature scaled up 8x so the condition number is 77. Comparing optimisers at one shared learning rate would be meaningless - AdaGrad, RMSProp and Adam divide the gradient by its own size, so their <code>lr</code> is a different quantity - so each one got its own sweep:</p>
+<img alt="day45_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2045%20-%20gradient%20descent%20momentum%20and%20adam/imgs/day45_4.png">
+<pre><code>SGD                  best lr  0.0126    400 steps
+SGD + momentum 0.9   best lr  0.0032    181 steps
+SGD + Nesterov 0.9   best lr  0.0079    163 steps
+AdaGrad              best lr  1.5849     10 steps
+RMSProp              best lr  0.1585     26 steps
+Adam                 best lr  0.6310    153 steps</code></pre>
+<p>AdaGrad winning by 40x deserves an explanation rather than a celebration. AdaGrad divides by the square root of <em>every squared gradient ever seen</em>, so its effective step size only ever shrinks. On a small, fixed, noiseless quadratic that is close to ideal - it is approximating the curvature and then annealing. The same property is what makes it stall on a long training run: the denominator keeps growing, the steps keep shrinking, and eventually nothing moves. RMSProp is AdaGrad with a decay factor on that sum so the step size can recover, and Adam is RMSProp plus momentum on the gradient as well.</p>
+<h2>Adam, and the two places it is usually written wrong</h2>
+<p>Adam keeps two running averages: <code>m</code> of the gradient and <code>v</code> of the gradient squared. The step is <code>lr * m / sqrt(v)</code>, so each coordinate moves by roughly <code>lr</code> regardless of its gradient&#x27;s scale.</p>
+<p>Both averages start at zero, which biases them low early on. The standard fix divides <code>m</code> by <code>1 - b1^t</code> and <code>v</code> by <code>1 - b2^t</code>. The folklore is that skipping this makes the first steps too small. It does not - it makes them too <strong>large</strong>, because <code>v</code> sits under a square root and the two biases do not cancel:</p>
+<img alt="day45_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2045%20-%20gradient%20descent%20momentum%20and%20adam/imgs/day45_5.png">
+<pre><code>uncorrected / corrected = (1 - 0.9^t) / sqrt(1 - 0.999^t)
+  step     1: 3.162x        step   100: 3.241x
+  step    12: 6.569x        step  1000: 1.258x</code></pre>
+<p>Measured on the real problem at <code>lr = 0.05</code>, the first three steps are <code>0.087, 0.086, 0.086</code> with correction and <code>0.274, 0.363, 0.404</code> without. The uncorrected version spends its first few hundred steps taking a learning rate several times larger than the one you asked for, which is exactly when a model is most fragile.</p>
+<p>The second detail is where the epsilon goes. <code>sqrt(v) + eps</code> and <code>sqrt(v + eps)</code> both prevent a division by zero, but <code>eps = 1e-8</code> has <code>sqrt(eps) = 1e-4</code>:</p>
+<pre><code>v = 1e-12   sqrt(v) + eps = 1.010e-06   sqrt(v + eps) = 1.000e-04   ratio    99.0x
+v = 1e-16   sqrt(v) + eps = 2.000e-08   sqrt(v + eps) = 1.000e-04   ratio  5000.0x</code></pre>
+<p>On any coordinate whose gradients are small - a rarely-used embedding row, a nearly-dead unit - the second form quietly divides the step by a hundred or more. PyTorch uses <code>sqrt(v) + eps</code>.</p>
+<h2>Adam + L2 is not AdamW</h2>
+<p>L2 regularisation is usually implemented by adding <code>wd * w</code> to the gradient. Inside Adam, that sum then gets divided by <code>sqrt(v)</code> - so the decay applied to each weight is scaled by <code>1 / sqrt(v)</code>, and the weights with the largest gradients get the least decay:</p>
+<img alt="day45_6" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2045%20-%20gradient%20descent%20momentum%20and%20adam/imgs/day45_6.png">
+<p>After 400 Adam steps on the least-squares problem, <code>sqrt(v)</code> per weight is <code>[0.41, 0.15, 4.06]</code> (measured on a run without the penalty; adding it moves <code>sqrt(v)</code> by at most 2.5%). Normalising so the average decay strength is 1, Adam + L2 applies <code>[0.77, 2.15, 0.08]</code> while AdamW applies <code>[1, 1, 1]</code>. The weight on the 8x-scaled feature - the one with by far the largest gradients - is decayed 10x less than weight 0 and 28x less than weight 1. AdamW fixes it by not routing the decay through the gradient at all:</p>
+<pre><code>w = w - self.lr * mh / denom
+if self.weight_decay and self.decoupled:
+    w = w - self.lr * self.weight_decay * w    # decay applied straight to w</code></pre>
+<p>Those two lines are the entire difference between <code>torch.optim.Adam(weight_decay=...)</code> and <code>torch.optim.AdamW</code>, and they are why AdamW is the default for transformer training.</p>
+<h2>Mini-batches move the ceiling</h2>
+<p>Everything above used the full dataset per step. Real training uses mini-batches, and the first thing that changes is the learning-rate ceiling. The ceiling comes from the sharpest curvature a step has to survive, and a batch of one sees its own row&#x27;s curvature, not the average:</p>
+<pre><code>ceiling from the average over all 400 rows   0.0140
+ceiling from the sharpest single row         0.00165   (8.5x smaller)
+
+lr 0.01, batch 1     after 30 epochs: blew up
+lr 0.01, batch 8     after 30 epochs: 4.6e-04
+lr 0.01, full batch  after 30 epochs: 1.5e+00</code></pre>
+<p>Below that ceiling, small batches are enormously more efficient per pass over the data - and then they stop:</p>
+<img alt="day45_7" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2045%20-%20gradient%20descent%20momentum%20and%20adam/imgs/day45_7.png">
+<pre><code>after  10 epochs   batch 8 8.813e-02   full batch 4.626e+00
+after  30 epochs   batch 8 2.545e-03   full batch 3.911e+00
+after 100 epochs   batch 8 5.396e-03   full batch 2.210e+00
+after 300 epochs   batch 8 2.484e-03   full batch 4.352e-01</code></pre>
+<p>Batch 8 gets three orders of magnitude further in 30 epochs, then sits on a noise floor around <code>2.5e-3</code> for the next 270. Each mini-batch gradient points in a slightly wrong direction, so with a fixed step size the parameters circle the optimum at a radius set by the noise and the learning rate. Shrinking the learning rate over time is what shrinks that radius - which is what a learning-rate schedule is for.</p>
+<p>Shuffling is worth measuring rather than taking on faith. On rows that are already in random order, reshuffling every epoch made no difference I could detect (1.6e-3 against 1.5e-3, median of five seeds). On the <em>same data sorted by target</em> it was 12x better. Sorted data makes every batch unrepresentative in the same way every epoch, so the identical biased sequence of steps repeats - that is the failure shuffling actually protects against.</p>
+<h2>LeetCode 462 - Minimum Moves to Equal Array Elements II</h2>
+<p><strong>The task.</strong> Given an integer array, find the smallest number of moves that makes every element equal, where one move adds 1 to a single element or subtracts 1 from it.</p>
+<p><strong>Input / output.</strong> <code>nums</code>, a list of integers. Return one integer: the total number of moves.</p>
+<p><strong>Example.</strong> <code>[1, 2, 3]</code> needs 2 moves: raise the 1 and lower the 3 until both reach 2. <code>[1, 10, 2, 9]</code> needs 16: pick 9 (or any value between 2 and 9), giving <code>8 + 1 + 7 + 0</code>.</p>
+<p><strong>Constraints.</strong> Up to 100,000 elements, each between -10⁹ and 10⁹. The large range rules out counting into an array indexed by value, and the size means <code>O(n log n)</code> sorting is fine. The real constraint is hidden in the word &quot;moves&quot;: the cost is the sum of absolute differences, not squared differences, and those two have different minimisers.</p>
+<p>Choosing a target <code>c</code> costs <code>sum|x - c|</code>. The derivative of <code>|x - c|</code> with respect to <code>c</code> is the <em>sign</em> of <code>c - x</code>, so the total derivative is &quot;how many points are below me, minus how many are above me&quot;. That is zero exactly at the median:</p>
+<pre><code>class Solution:
+    def minMoves2(self, nums: list[int]) -&gt; int:
+        nums = sorted(nums)
+        mid = nums[len(nums) // 2]
+        return sum(abs(x - mid) for x in nums)</code></pre>
+<p>The trap is reaching for the mean, which minimises <em>squared</em> error - the thing Day 44&#x27;s <code>2/n Xᵀ(Xw - y)</code> was built on. On <code>[1, 2, 3]</code> and <code>[1, 10, 2, 9]</code> the mean and the median give the same answer, so a quick test passes. On <code>[1, 2, 3, 100]</code> the median gives 100 and the mean gives 146: a plausible, larger, wrong number.</p>
+<p>Running today&#x27;s gradient descent on <code>sum|x - c|</code> is a nice check. Starting from <code>c = 0</code> with a <code>1/sqrt(k)</code> schedule it lands at <code>2.354</code>, which costs exactly 100 - because with an even count every <code>c</code> between the two middle values is optimal, and the minimiser is an interval rather than a point. Note the schedule is doing real work: with a fixed step size the sign gradient never shrinks near the optimum, so the iterate would oscillate forever. That is the same noise-floor mechanism as the mini-batch section, in its purest form.</p>
+<p><a href="https://leetcode.com/problems/minimum-moves-to-equal-array-elements-ii/">leetcode.com/problems/minimum-moves-to-equal-array-elements-ii</a></p>
+<h2>LeetCode 852 - Peak Index in a Mountain Array</h2>
+<p><strong>The task.</strong> An array is a mountain: it strictly increases up to one index and strictly decreases after it. Find that index.</p>
+<p><strong>Input / output.</strong> <code>arr</code>, a list of integers guaranteed to form a mountain. Return the integer index of the largest element.</p>
+<p><strong>Example.</strong> <code>[0, 10, 5, 2]</code> returns 1: <code>arr[1] = 10</code> is larger than both neighbours, and everything after it decreases.</p>
+<p><strong>Constraints.</strong> Between 3 and 100,000 elements, and the problem explicitly asks for <code>O(log n)</code>. That requirement is the whole problem - a linear scan finds the answer but is rejected.</p>
+<p>The slope of a discrete array between <code>mid</code> and <code>mid + 1</code> is just the comparison <code>arr[mid] &lt; arr[mid + 1]</code>. On a mountain that comparison is true for every index before the peak and false for every index at or after it, so it is a sorted boolean array and Day 23&#x27;s binary search applies:</p>
+<pre><code>class Solution:
+    def peakIndexInMountainArray(self, arr: list[int]) -&gt; int:
+        lo, hi = 0, len(arr) - 1
+        while lo &lt; hi:
+            mid = (lo + hi) // 2
+            if arr[mid] &lt; arr[mid + 1]:    # still going up: the peak is to the right
+                lo = mid + 1
+            else:                          # already coming down: mid could be the peak
+                hi = mid
+        return lo</code></pre>
+<p>On a 4,001-element mountain this looks at 24 elements. It is gradient ascent in the sense that the only information used is the sign of the slope - but instead of taking a step proportional to it, each probe deletes half of the remaining space. The continuous twin is ternary search: evaluate a unimodal <code>f</code> at two interior points, throw away the third that cannot contain the minimum, and converge without ever computing a derivative. On <code>(x - 1.234567)² + 3</code> over <code>[-10, 10]</code> it recovers <code>1.234567</code>.</p>
+<p><a href="https://leetcode.com/problems/peak-index-in-a-mountain-array/">leetcode.com/problems/peak-index-in-a-mountain-array</a></p>
+<p>The reason gradient descent exists despite being slower per unit of information is dimensionality. Binary and ternary search own one-dimensional unimodal problems; neither survives contact with a million parameters, where the gradient gives a direction in all million at once.</p>
+<h2>Complexity</h2>
+<pre><code>Operation                                         Time                                       Space
+------------------------------------------------  -----------------------------------------  -----------------
+One SGD step on d parameters                      O(d)                                       O(1)
+One momentum / RMSProp / AdaGrad step             O(d)                                       O(d)
+One Adam / AdamW step                             O(d)                                       O(2d) for m and v
+GD steps to a given accuracy, condition number k  proportional to k                          -
+Momentum steps, best beta                         proportional to sqrt(k)                    -
+LeetCode 462                                      O(n log n) sorting, O(n) with quickselect  O(1) extra
+LeetCode 852                                      O(log n)                                   O(1)
+Ternary search to a tolerance                     O(log(range / tol))                        O(1)</code></pre>
+<h2>Why this matters</h2>
+<p>Adam&#x27;s extra <code>m</code> and <code>v</code> are the reason an optimiser state is twice the size of the model: training a 7B-parameter model in fp32 needs 28 GB for the weights and another 56 GB for Adam&#x27;s two moments, which is most of what sharded optimiser states in distributed training exist to spread out. AdamW is the default in essentially every transformer training script. The learning-rate warmup at the start of those scripts is dealing with the same early-training fragility that bias correction addresses - at step 1 Adam has almost no idea what the gradient scale is. Reinforcement learning implementations tend to set Adam&#x27;s epsilon to <code>1e-5</code> rather than the <code>1e-8</code> default, because RL gradients are small and noisy and the default epsilon is too small to damp them.</p>
+<p>The habits worth keeping: when a loss becomes <code>nan</code>, suspect the learning rate before the model, and remember the ceiling scales with the sharpest curvature in the batch, so halving the batch size can require lowering the learning rate. When a comparison between optimisers is needed, tune each one&#x27;s learning rate or the comparison means nothing. And when a hyperparameter like <code>beta = 0.9</code> is copied from somewhere else, it is worth one sweep to find out whether it is right for the problem at hand.</p>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2045%20-%20gradient%20descent%20momentum%20and%20adam">day 45 on GitHub</a></p>
+</body>
+</html>

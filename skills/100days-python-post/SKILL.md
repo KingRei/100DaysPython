@@ -101,11 +101,17 @@ Two articles, same content and structure, not machine-translated stubs:
 scratch/outputs directory (e.g. `outputs/medium_src/dayNN_en.md`), convert it, and drop
 only the HTML into the day folder - Eric does not want the `.md` drafts committed.
 
-**Do not promise specific future days.** Saying "this comes back on Day 98" is a
-commitment the roadmap may not keep. Name the *algorithms and applications* that will
-use today's topic ("autograd's backward pass is a reverse topological traversal",
-"Kruskal leans on Union-Find") and leave the day numbers out. Referring backwards to
-days already published is fine, and so is a one-line teaser for tomorrow.
+**Never promise future content at all (rule since 2026-10-14).** Not a day number, not
+a topic, not a next-day teaser. The roadmap changes - Day 46 was deleted and every later
+day shifted by one on 2026-10-14 - so any sentence of the form "we will cover X" or
+"tomorrow: X" or "this comes back later in the series" can go stale. **Delete the
+closing teaser line entirely.** Looking *backwards* at already-published days is
+encouraged and is the only cross-day reference allowed.
+
+The "why this matters" section stays, but it describes where the idea already lives in
+real systems - PyTorch's autograd tape, SGLang's radix cache, a CleanRL training loop -
+not what this series intends to write about later. Say "a reverse-mode autograd replays
+a tape backwards in topological order", never "we will build one".
 
 Structure that works for both:
 
@@ -116,8 +122,9 @@ Structure that works for both:
 5. Code in chunks, each followed by prose.
 6. Complexity.
 7. The paired LeetCode problem, solved, with the interview-relevant caveat.
-8. "Why this matters later", using the ROADMAP dependency list.
-9. Next-day teaser + repo link.
+8. "Why this matters" - where the idea already shows up in real systems. No promises
+   about future articles.
+9. Repo link. No next-day teaser.
 
 ### Medium-ready HTML - the paste step
 

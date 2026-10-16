@@ -1,0 +1,750 @@
+// DAY: 44
+// TITLE_ZH: NumPy 向量化與自動微分：讓陣列運算變快，以及算出可以信任的梯度
+// TITLE_EN: NumPy vectorisation and automatic differentiation: making array code fast, and computing gradients you can trust
+// SUB_ZH: 一百萬個數的平方和，Python 迴圈約 41 毫秒、np.dot 約 0.1 毫秒：把迴圈搬進 C、對一整塊連續記憶體跑。陣列只是緩衝區加上 shape 與 strides，轉置和 slice 都不搬數字。後半段手寫一個 reverse-mode autograd：照拓樸順序倒著傳梯度，梯度要用 += 累加、每一步要歸零——寫錯任何一個都還是會回傳一個數字。
+// SUB_EN: The sum of squares of a million numbers takes about 41 ms in a Python loop and 0.1 ms with np.dot: the loop moves into C and runs over one block of memory. An array is just a buffer plus a shape and strides, so transposing and slicing move no numbers. The second half hand-writes a reverse-mode autograd: gradients flow backwards in topological order, are added with +=, and are reset every step - get any of those wrong and you still get a number.
+// FOLDER: day%2044%20-%20numpy%20vectorization%20and%20autograd
+// MEDIUM: https://medium.com/100-days-of-python
+
+const VIEW = [9.8, 6.4];
+function chip(t, cls){ return {t:t, cls:cls || ''}; }
+const curV = () => (typeof varIx !== 'undefined' ? varIx : 0);
+
+const isCJK = ch => { const c = ch.codePointAt(0);
+  return (c >= 0x2e80 && c <= 0x9fff) || (c >= 0xff00 && c <= 0xff60) || (c >= 0x3000 && c <= 0x303f); };
+function tw(str, fs){ let w = 0;
+  for (const ch of String(str)) w += isCJK(ch) ? 1.0 : .55;
+  return w * fs; }
+function fitT(x, y, s, opt){
+  opt = Object.assign({}, opt || {});
+  const fs = opt.fs || .32, a = opt.anchor || 'middle', pad = .20;
+  const room = a === 'start' ? VIEW[0] - pad - x
+             : a === 'end'   ? x - pad
+             : 2 * Math.min(x - pad, VIEW[0] - pad - x);
+  const strs = (typeof s === 'string') ? [s] : [s.zh, s.en].filter(t => t != null);
+  const w = Math.max.apply(null, strs.map(t => tw(t, fs)));
+  if (w > room) opt.fs = fs * room / w;
+  return S.t(x, y, s, opt);
+}
+function fitFs(lab, w, fs){
+  const strs = (typeof lab === 'string') ? [lab] : [lab.zh, lab.en];
+  const need = Math.max.apply(null, strs.map(t => tw(t, fs)));
+  return need > w - .08 ? fs * (w - .08) / need : fs;
+}
+const box = (x, y, w, h, s, lab, fs) => S.r(x, y, w, h, s, lab, {fs:fitFs(lab, w, fs || h * .5)});
+const fmt = n => { const s = String(n), neg = s[0] === '-', d = neg ? s.slice(1) : s;
+  return (neg ? '-' : '') + d.replace(/\B(?=(\d{3})+(?!\d))/g, ','); };
+function caps(sh, o){
+  if (o.cap) sh.push(fitT(4.9, 5.62, o.cap, {c:o.capc || COL.pale, fs:.30}));
+  if (o.cap2) sh.push(fitT(4.9, 6.06, o.cap2, {c:COL.grey, fs:.26}));
+  return sh;
+}
+const side = (sh, x, y0, lines, dy) => (lines || []).forEach((l, k) =>
+  sh.push(fitT(x, y0 + k * (dy || .5), l[0], {anchor:'start', c:l[1] || COL.pale, fs:l[2] || .30})));
+
+const LINE_X = [-0.1829282414910125, 0.0839440182091924, 0.7240732329585464, -0.6466687116091123, -0.5496809588437066, -0.9418054934637778, -0.7666989331142724, -0.9823887482258662, -0.6866193298332723, 0.02742641700535131, 0.9789858207551021, 0.38702052286287625, -0.24314685775343814, -0.18990452936148783, 0.3826192568247586, -0.34776025476628014, -0.8528931388434635, 0.6830457938124181, 0.23443991182816637, -0.7759803457407048];
+const LINE_Y = [-1.0084473651460069, -0.22916597651782195, 1.7183818005165885, -2.452192028242983, -2.3355457832226296, -3.512663738887744, -2.7037269593493565, -3.4256229165660583, -2.7806401326062815, -0.3859887405138851, 2.466052985535631, 0.732692029898457, -1.2290343332792062, -1.037949370994008, 0.5629077387707969, -1.7067332290427129, -3.08426215036304, 1.559948467052782, 0.16624270322743598, -2.9871290340035763];
+
+/* ================================================================ tab 1: strides */
+const CODE_STR = [
+  'm = np.arange(12).reshape(3, 4)   # strides (32, 8)',
+  'm.T                               # strides (8, 32): a view',
+  'm[:, ::2]                         # strides (32, 16): a view',
+  'm.T.reshape(12)                   # no strides can do it: a copy',
+  '',
+  '# element [i, j] lives at byte  i * strides[0] + j * strides[1]'
+];
+const STR_V = [
+  {name:'m', shape:[3, 4], strides:[32, 8], line:0},
+  {name:'m.T', shape:[4, 3], strides:[8, 32], line:1},
+  {name:'m[:, ::2]', shape:[3, 2], strides:[32, 16], line:2},
+  {name:'m.T.reshape(12)', shape:[12], strides:null, line:3}
+];
+function strStage(v, k, offs, o){
+  const sh = [], BW = .74;
+  sh.push(S.t(.3, .55, {zh:'緩衝區（int64，每格 8 位元組）', en:'the buffer (int64, 8 bytes each)'}, {anchor:'start', c:COL.grey, fs:.24}));
+  for (let i = 0; i < 12; i++){
+    const hit = offs.slice(0, k).includes(i * 8), cur = k > 0 && offs[k - 1] === i * 8;
+    sh.push(box(.3 + i * BW, .7, BW - .06, .55, cur ? 'hot' : hit ? 'ok' : 'idle', String(i), .26));
+    sh.push(S.t(.3 + i * BW + BW / 2 - .03, 1.55, String(i * 8), {c:COL.grey, fs:.18}));
+  }
+  sh.push(S.t(.3, 1.85, {zh:'位元組位移', en:'byte offset'}, {anchor:'start', c:COL.grey, fs:.18}));
+  const [R, C] = v.shape.length === 2 ? v.shape : [1, 12];
+  const cw = v.shape.length === 2 ? .7 : .62, x0 = .3, y0 = 2.5;
+  for (let r = 0; r < R; r++) for (let c = 0; c < C; c++){
+    const idx = r * C + c;
+    const s = idx === k - 1 ? 'hot' : idx < k ? (o.copy ? 'act' : 'ok') : 'ghost';
+    sh.push(box(x0 + c * cw, y0 + r * .55, cw - .06, .48, s, idx < k ? String(offs[idx] / 8) : '', .24));
+  }
+  sh.push(S.t(x0, y0 - .15, v.name + '  shape ' + '(' + v.shape.join(', ') + (v.shape.length === 1 ? ',' : '') + ')', {anchor:'start', c:COL.purpleL, fs:.26}));
+  side(sh, 5.4, v.shape.length === 2 ? 2.7 : 3.5, o.side, .48);
+  return caps(sh, o);
+}
+function strFrames(v){
+  const F = new Frames(), V = STR_V[v];
+  /* offsets of every element of the view, in its own row-major order */
+  const offs = [];
+  if (V.strides){
+    const [R, C] = V.shape;
+    for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) offs.push(r * V.strides[0] + c * V.strides[1]);
+  } else {
+    for (let r = 0; r < 4; r++) for (let c = 0; c < 3; c++) offs.push((c * 4 + r) * 8);   /* m.T read row by row */
+  }
+  const steps = offs.slice(1).map((o, i) => o - offs[i]);
+  const uniq = [...new Set(steps)];
+  F.push({shapes:strStage(V, 0, offs, {copy:!V.strides, side:[[V.strides ? 'strides (' + V.strides.join(', ') + ')' : {zh:'沒有一組 strides 描述得出來', en:'no strides describe it'}, COL.orangeL]],
+      cap:V.strides ? {zh:V.name + '：同一塊緩衝區，只是 shape 和 strides 不同', en:V.name + ': the same buffer, only a different shape and strides'} : {zh:'把 m.T 攤平成一維', en:'flattening m.T into one dimension'},
+      cap2:{zh:'元素 [i, j] 在位元組 i × strides[0] + j × strides[1]', en:'element [i, j] sits at byte i x strides[0] + j x strides[1]'}}),
+    panels:[{lbl:'shape', chips:[chip('(' + V.shape.join(', ') + ')', 'act')]}, {lbl:'strides', chips:[chip(V.strides ? '(' + V.strides.join(', ') + ')' : '?', V.strides ? 'hot' : 'bad')]}], line:V.line,
+    msg:[{zh:'np.arange(12).reshape(3, 4)：12 個 int64 排成一列，shape (3, 4)。往右一格跳 8 位元組，往下一列跳 4 × 8 = 32 位元組，所以 strides 是 (32, 8)。下面一格一格照它自己的順序讀，看每一格在緩衝區的哪裡。',
+          en:'np.arange(12).reshape(3, 4): twelve int64s in a row, shape (3, 4). One step right jumps 8 bytes, one row down jumps 4 x 8 = 32, so the strides are (32, 8). Below, the view is read in its own order, cell by cell, to see where each cell lives in the buffer.'},
+         {zh:'m.T 的 shape 是 (4, 3)，strides 只是把 (32, 8) 對調成 (8, 32)。沒有任何數字被搬動：轉置是免費的，而且是 view——寫進 m.T 就是寫進 m。',
+          en:'m.T has shape (4, 3) and strides (8, 32) - just (32, 8) swapped. Not one number moves: a transpose is free, and it is a view - writing into m.T writes into m.'},
+         {zh:'m[:, ::2] 每隔一欄取一個：往右一格現在跳 16 位元組，strides (32, 16)。一樣是 view：s = v[::2]; s[:] = 0 會改到原本的陣列。',
+          en:'m[:, ::2] takes every other column: one step right now jumps 16 bytes, strides (32, 16). Again a view: s = v[::2]; s[:] = 0 changes the original array.'},
+         {zh:'把 m.T 攤平成 12 個數：依序讀出來是 0, 4, 8, 1, 5, 9, …，每一步在緩衝區裡跳的距離不一樣，沒有任何一個 stride 描述得出來，所以 reshape 只好複製一份新的緩衝區。',
+          en:'Flattening m.T into 12 numbers reads 0, 4, 8, 1, 5, 9, ... - the jump through the buffer changes from step to step, no single stride describes it, so reshape has to copy into a new buffer.'}][v]});
+  offs.forEach((off, k) => {
+    const r = V.shape.length === 2 ? Math.floor(k / V.shape[1]) : k, c = V.shape.length === 2 ? k % V.shape[1] : 0;
+    const step = k > 0 ? off - offs[k - 1] : null;
+    const show = k < 3 || k === offs.length - 1 || (step != null && steps.length && step !== steps[0]);
+    if (!show && V.strides) return;
+    F.push({shapes:strStage(V, k + 1, offs, {copy:!V.strides,
+        side:[[V.shape.length === 2 ? '[' + r + ', ' + c + '] -> ' + r + ' x ' + V.strides[0] + ' + ' + c + ' x ' + V.strides[1] + ' = ' + off : {zh:'第 ' + k + ' 個 → 位元組 ' + off, en:'item ' + k + ' -> byte ' + off}, COL.orangeL],
+              [step == null ? {zh:'第一格', en:'first cell'} : {zh:'這一步跳了 ' + step + ' 位元組', en:'this step jumped ' + step + ' bytes'}, step != null && step < 0 ? COL.red : COL.pale]],
+        cap:{zh:V.name + ' 的第 ' + (k + 1) + ' 格是緩衝區的第 ' + off / 8 + ' 個數', en:'cell ' + (k + 1) + ' of ' + V.name + ' is buffer item ' + off / 8},
+        cap2:V.strides ? {zh:'不用搬任何數字：只是換一種讀法', en:'nothing is moved: it is just another way to read'} : {zh:'跳躍距離：' + uniq.join('、'), en:'jumps seen: ' + uniq.join(', ')}}),
+      panels:[{lbl:'offset', chips:[chip(String(off), 'hot')]}, {lbl:'shape', chips:[chip('(' + V.shape.join(', ') + ')', 'act')]}], line:5,
+      msg:V.strides ? (k === offs.length - 1 ? {zh:'讀完了，' + offs.length + ' 格全部來自同一塊緩衝區。np.shares_memory(' + V.name + ', m) 是 True。', en:'Done: all ' + offs.length + ' cells come from the same buffer. np.shares_memory(' + V.name + ', m) is True.'}
+                                              : {zh:'位置 = 列 × ' + V.strides[0] + ' + 欄 × ' + V.strides[1] + '。換一組 strides，同一塊記憶體就變成另一個矩陣。', en:'offset = row x ' + V.strides[0] + ' + column x ' + V.strides[1] + '. Change the strides and the same memory becomes another matrix.'})
+        : (k === offs.length - 1 ? {zh:'跳躍距離有 ' + uniq.length + ' 種（' + uniq.join('、') + '），一個 stride 裝不下。所以 m.T.reshape(12) 是複製：np.shares_memory 是 False。對它寫入不會改到 m。', en:'There are ' + uniq.length + ' different jumps (' + uniq.join(', ') + '); one stride cannot hold them. So m.T.reshape(12) is a copy: np.shares_memory is False, and writing into it does not change m.'}
+                                 : {zh:'讀到 m.T 的第 ' + (k + 1) + ' 個數，要從緩衝區的位元組 ' + off + ' 拿。' + (step != null && step < 0 ? '往回跳了——一維陣列只有一個 stride，做不到這種跳法。' : ''), en:'Reading item ' + (k + 1) + ' of m.T means fetching byte ' + off + '.' + (step != null && step < 0 ? ' That jumps backwards - a 1-d array has one stride and cannot jump like this.' : '')})});
+  });
+  return F.list;
+}
+
+/* ================================================================ tab 2: broadcasting */
+const CODE_BC = [
+  'def broadcast_shape(s1, s2):          # align from the right',
+  '    for i in range(1, max(len(s1), len(s2)) + 1):',
+  '        a = s1[-i] if i <= len(s1) else 1',
+  '        b = s2[-i] if i <= len(s2) else 1',
+  '        if a != b and 1 not in (a, b): raise ValueError',
+  '        out.append(max(a, b))',
+  '',
+  'y = np.array([1., 2., 3., 4., 5.])',
+  'pred = (y + 0.1).reshape(-1, 1)        # a model that returns (n, 1)',
+  'mse(pred.ravel(), y)                   # 0.0100',
+  'mse(pred, y)                           # (5, 5) table -> 4.0100'
+];
+function bshape(s1, s2){
+  const out = [], rows = [];
+  for (let i = 1; i <= Math.max(s1.length, s2.length); i++){
+    const a = i <= s1.length ? s1[s1.length - i] : 1, b = i <= s2.length ? s2[s2.length - i] : 1;
+    rows.push([a, b]);
+    if (a !== b && a !== 1 && b !== 1) return {err:true, rows:rows};
+    out.unshift(Math.max(a, b));
+  }
+  return {shape:out, rows:rows};
+}
+const BY = [1, 2, 3, 4, 5], BP = BY.map(v => Math.round((v + .1) * 10) / 10);
+function bcStage(o){
+  const sh = [], x0 = 2.0, y0 = 1.0, s = .66;
+  BY.forEach((v, j) => sh.push(S.t(x0 + j * s + s / 2, y0 - .15, String(v), {c:COL.purpleL, fs:.28})));
+  sh.push(S.t(x0 + 2.5 * s, y0 - .5, {zh:'y，shape (5,)', en:'y, shape (5,)'}, {c:COL.purpleL, fs:.24}));
+  BP.forEach((v, i) => sh.push(S.t(x0 - .15, y0 + i * s + s * .62, v.toFixed(1), {c:COL.orangeL, fs:.26, anchor:'end'})));
+  sh.push(S.t(.25, y0 + 2.5 * s + .05, o.col ? 'pred (5, 1)' : 'pred (5,)', {c:COL.orangeL, fs:.22, anchor:'start'}));
+  for (let i = 0; i < 5; i++) for (let j = 0; j < 5; j++){
+    if (!o.col && i !== j) continue;
+    const v = (BP[i] - BY[j]) ** 2, filled = o.cells && o.cells.has(i * 5 + j);
+    const st = !filled ? 'ghost' : o.hotRow === i ? 'hot' : i === j ? 'ok' : 'bad';
+    sh.push(box(x0 + j * s, y0 + i * s, s - .06, s - .06, st, filled ? v.toFixed(2) : '', .2));
+  }
+  side(sh, 5.75, 1.0, o.side, .5);
+  return caps(sh, o);
+}
+function bcFrames(v){
+  const F = new Frames(), col = v === 1, s1 = col ? [5, 1] : [5], s2 = [5], B = bshape(s1, s2);
+  const shapeStr = a => '(' + a.join(', ') + (a.length === 1 ? ',' : '') + ')';
+  F.push({shapes:bcStage({col:col, cells:new Set(), side:B.rows.map(([a, b], k) => [{zh:'右數第 ' + (k + 1) + ' 軸：' + a + ' 對 ' + b + (a === b ? '，相等' : ' → 拉成 ' + Math.max(a, b)), en:'axis -' + (k + 1) + ': ' + a + ' vs ' + b + (a === b ? ', equal' : ' -> ' + Math.max(a, b))}, a === b ? COL.tealL : COL.orangeL])
+        .concat([[{zh:'結果 shape ' + shapeStr(B.shape), en:'result shape ' + shapeStr(B.shape)}, col ? COL.red : COL.tealL]]),
+      cap:{zh:'pred ' + shapeStr(s1) + ' − y ' + shapeStr(s2), en:'pred ' + shapeStr(s1) + ' - y ' + shapeStr(s2)},
+      cap2:{zh:'broadcasting：靠右對齊，每一對要相等或其中一個是 1', en:'broadcasting: align from the right; each pair equal or one of them 1'}}),
+    panels:[{lbl:'result', chips:[chip(shapeStr(B.shape), col ? 'bad' : 'ok')]}], line:col ? 10 : 9,
+    msg:col ? {zh:'模型輸出的預測是一欄，shape (5, 1)；目標值是攤平的 (5,)。靠右對齊：1 對 5，1 被拉成 5；左邊 5 對「沒有」（當成 1），也拉成 5。結果是 (5, 5)——每個預測都會跟每個目標比一次。沒有錯誤、沒有警告。',
+                   en:'The model returns its predictions as a column, shape (5, 1); the targets are a flat (5,). Align from the right: 1 against 5, so the 1 is stretched to 5; then 5 against nothing (treated as 1), also stretched. The result is (5, 5) - every prediction against every target. No error, no warning.'}
+              : {zh:'兩個都是 (5,)：唯一的一軸 5 對 5，相等，結果還是 (5,)。第 i 個預測只會跟第 i 個目標相減——這才是我們要的。', en:'Both are (5,): the only axis is 5 against 5, equal, so the result is (5,). Prediction i is subtracted from target i only - which is what we want.'}});
+  const cells = new Set();
+  for (let i = 0; i < 5; i++){
+    for (let j = 0; j < 5; j++) if (col || i === j) cells.add(i * 5 + j);
+    const vals = col ? BY.map(y => ((BP[i] - y) ** 2).toFixed(2)) : [((BP[i] - BY[i]) ** 2).toFixed(2)];
+    F.push({shapes:bcStage({col:col, cells:new Set(cells), hotRow:i, side:[[{zh:'pred[' + i + '] = ' + BP[i].toFixed(1), en:'pred[' + i + '] = ' + BP[i].toFixed(1)}, COL.orangeL],
+          ['(pred - y)^2:', COL.grey, .24], [vals.join('  '), col ? COL.red : COL.tealL, .26]],
+        cap:col ? {zh:'第 ' + (i + 1) + ' 列：同一個預測減掉全部 5 個目標', en:'row ' + (i + 1) + ': one prediction minus all 5 targets'} : {zh:'第 ' + (i + 1) + ' 個：預測減掉對應的目標', en:'item ' + (i + 1) + ': prediction minus its own target'},
+        cap2:col ? {zh:'只有對角線（青色）是想要的比較', en:'only the diagonal (teal) is the comparison we wanted'} : {zh:'每個誤差都是 0.1² = 0.01', en:'every error is 0.1^2 = 0.01'}}),
+      panels:[{lbl:'cells', chips:[chip(String(cells.size), col ? 'bad' : 'ok')]}], line:col ? 10 : 9,
+      msg:col ? (i === 0 ? {zh:'第一列：1.1 被拿去跟 1、2、3、4、5 全部比。只有跟 1 比的那格（對角線）有意義，其他 4 格是把預測跟別人的答案比。', en:'Row 1: 1.1 is compared with 1, 2, 3, 4 and 5. Only the comparison with 1 (the diagonal) means anything; the other 4 cells compare the prediction with somebody else\'s answer.'}
+                         : {zh:'每一列都一樣：5 格裡只有 1 格該算。', en:'Every row is the same: of 5 cells only 1 should count.'})
+              : {zh:'預測 ' + BP[i].toFixed(1) + ' 對目標 ' + BY[i] + '，平方誤差 0.01。', en:'Prediction ' + BP[i].toFixed(1) + ' against target ' + BY[i] + ': squared error 0.01.'}});
+  }
+  let sum = 0, n = 0;
+  cells.forEach(c => { const i = Math.floor(c / 5), j = c % 5; sum += (BP[i] - BY[j]) ** 2; n++; });
+  const m = sum / n;
+  F.push({shapes:bcStage({col:col, cells:cells, side:[[{zh:'.mean() 平均了 ' + n + ' 格', en:'.mean() averages ' + n + ' cells'}, COL.pale], ['MSE = ' + m.toFixed(4), col ? COL.red : COL.tealL, .36]],
+      cap:col ? {zh:'MSE 算出 ' + m.toFixed(4) + '，應該是 0.0100', en:'MSE comes out ' + m.toFixed(4) + '; it should be 0.0100'} : {zh:'MSE = ' + m.toFixed(4), en:'MSE = ' + m.toFixed(4)},
+      cap2:col ? {zh:'修法：pred.ravel()，以及每個 loss 前先 assert pred.shape == y.shape', en:'fix: pred.ravel(), and assert pred.shape == y.shape before every loss'} : {zh:'shape 對了，答案就對了', en:'right shapes, right answer'}}),
+    panels:[{lbl:'MSE', chips:[chip(m.toFixed(4), col ? 'bad' : 'ok')]}], line:col ? 10 : 9,
+    msg:col ? {zh:'25 格平均得到 ' + m.toFixed(4) + '，是正確值的 ' + Math.round(m / .01) + ' 倍。拿這個 loss 去訓練，模型會被推向「所有目標的平均」，而不是各自的答案。整個過程沒有任何錯誤訊息——這是 NumPy 最常見的無聲 bug 之一。',
+                   en:'Averaging 25 cells gives ' + m.toFixed(4) + ', ' + Math.round(m / .01) + ' times the right value. Train on this loss and the model is pushed towards the mean of all targets rather than each answer. Not one error message along the way - one of the most common silent NumPy bugs.'}
+              : {zh:'5 格、每格 0.01，平均 0.0100。', en:'5 cells of 0.01 each: 0.0100.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 3: difference quotients */
+const CODE_FD = [
+  'def forward_diff(f, x, h):',
+  '    return (f(x + h) - f(x)) / h          # error ~ h',
+  '',
+  'def central_diff(f, x, h):',
+  '    return (f(x + h) - f(x - h)) / (2 * h)   # error ~ h^2',
+  '',
+  '# d/dx sin(x) at x = 1 is cos(1) = 0.5403023058681398'
+];
+const FX0 = 1.1, FX1 = 6.2, FY0 = 4.4, FY1 = .6;
+const fdX = k => FX0 + (FX1 - FX0) * (k - 1) / 12;
+const fdY = e => FY0 + (FY1 - FY0) * (Math.log10(Math.max(e, 1e-16)) + 14) / 13;
+const agree = (a, b) => { const sa = a.toPrecision(17), sb = b.toPrecision(17); let k = 0;
+  while (k < sa.length && sa[k] === sb[k]) k++; return sa.slice(0, k).replace(/[^0-9]/g, '').length; };
+function fdStage(pts, o){
+  const sh = [];
+  sh.push(S.e(FX0, FY0, FX1, FY0, {s:'idle', w:.03, arrow:false}));
+  sh.push(S.e(FX0, FY0, FX0, FY1, {s:'idle', w:.03, arrow:false}));
+  [1, 4, 7, 10, 13].forEach(k => sh.push(S.t(fdX(k), FY0 + .32, '1e-' + k, {c:COL.grey, fs:.2})));
+  [-13, -10, -7, -4, -1].forEach(e => sh.push(S.t(FX0 - .1, fdY(10 ** e) + .07, '1e' + e, {c:COL.grey, fs:.2, anchor:'end'})));
+  sh.push(S.t((FX0 + FX1) / 2, FY0 + .62, {zh:'步長 h（越右越小）', en:'step h (smaller to the right)'}, {c:COL.grey, fs:.22}));
+  sh.push(S.t(.2, .4, {zh:'誤差', en:'error'}, {c:COL.grey, fs:.22, anchor:'start'}));
+  pts.forEach((p, i) => {
+    if (i > 0) sh.push(S.e(fdX(pts[i - 1][0]), fdY(pts[i - 1][1]), fdX(p[0]), fdY(p[1]), {s:'ok', w:.04, arrow:false}));
+  });
+  pts.forEach((p, i) => sh.push(S.c(fdX(p[0]), fdY(p[1]), i === pts.length - 1 ? .1 : .06, i === pts.length - 1 ? 'hot' : 'ok', '')));
+  side(sh, 6.5, .8, o.side, .46);
+  return caps(sh, o);
+}
+function fdFrames(v){
+  const F = new Frames(), central = v === 0, truth = Math.cos(1), pts = [];
+  F.push({shapes:fdStage(pts, {side:[[{zh:'目標：cos 1', en:'target: cos 1'}, COL.purpleL], [truth.toFixed(16), COL.purpleL, .26]],
+      cap:{zh:central ? 'central difference：(f(x+h) − f(x−h)) / 2h' : 'forward difference：(f(x+h) − f(x)) / h', en:central ? 'central difference: (f(x+h) - f(x-h)) / 2h' : 'forward difference: (f(x+h) - f(x)) / h'},
+      cap2:{zh:'h 從 1e-1 一路縮到 1e-13', en:'h shrinks from 1e-1 down to 1e-13'}}),
+    panels:[{lbl:'h', chips:[chip('-', 'empty')]}], line:central ? 4 : 1,
+    msg:{zh:'最不需要理論的求導方法：把輸入推一點點 h，看輸出變多少。直覺上 h 越小越準。看看實際上會怎樣。', en:'The derivative with no theory at all: nudge the input by a little h and see how much the output moves. Intuition says the smaller h, the better. Let us see.'}});
+  let best = null;
+  for (let k = 1; k <= 13; k++){
+    const h = 10 ** -k, up = Math.sin(1 + h), dn = central ? Math.sin(1 - h) : Math.sin(1);
+    const est = central ? (up - dn) / (2 * h) : (up - dn) / h, err = Math.abs(est - truth);
+    pts.push([k, err]);
+    if (!best || err < best[1]) best = [k, err];
+    const same = agree(up, dn);
+    F.push({shapes:fdStage(pts, {side:[['h = 1e-' + k, COL.orangeL],
+          ['f(x+h) = ' + up.toPrecision(17), COL.pale, .24], [(central ? 'f(x-h) = ' : 'f(x)   = ') + dn.toPrecision(17), COL.pale, .24],
+          [{zh:'前 ' + same + ' 位相同', en:'first ' + same + ' digits agree'}, same >= 12 ? COL.red : COL.grey],
+          [{zh:'估計 ' + est.toPrecision(12), en:'estimate ' + est.toPrecision(12)}, COL.tealL, .26], [{zh:'誤差 ' + err.toExponential(1), en:'error ' + err.toExponential(1)}, COL.orangeL]],
+        cap:{zh:'h = 1e-' + k + '：誤差 ' + err.toExponential(1), en:'h = 1e-' + k + ': error ' + err.toExponential(1)},
+        cap2:{zh:'目前最好的是 h = 1e-' + best[0] + '（誤差 ' + best[1].toExponential(1) + '）', en:'best so far: h = 1e-' + best[0] + ' (error ' + best[1].toExponential(1) + ')'}}),
+      panels:[{lbl:'h', chips:[chip('1e-' + k, 'hot')]}, {lbl:'error', chips:[chip(err.toExponential(1), err < 1e-9 ? 'ok' : 'hot')]}], line:central ? 4 : 1,
+      msg:k <= 3 ? {zh:central ? 'h 每小 10 倍，誤差小 100 倍：central difference 的截斷誤差跟 h² 成正比（兩邊的一次誤差互相抵消）。' : 'h 每小 10 倍，誤差也小 10 倍：forward difference 的截斷誤差跟 h 成正比。', en:central ? 'Ten times smaller h, a hundred times smaller error: the central difference\'s truncation error is proportional to h² (the first-order errors on both sides cancel).' : 'Ten times smaller h, ten times smaller error: the forward difference\'s truncation error is proportional to h.'}
+        : same >= 11 ? {zh:'f(x+h) 和 ' + (central ? 'f(x−h)' : 'f(x)') + ' 前 ' + same + ' 位都一樣，double 一共只有大約 16 位有效數字，相減之後只剩幾位是真的，其餘是捨入雜訊——再除以很小的 h，雜訊被放大。h 太小反而變差。', en:'f(x+h) and ' + (central ? 'f(x-h)' : 'f(x)') + ' agree in the first ' + same + ' digits; a double only has about 16, so the difference keeps just a few real digits and the rest is rounding noise - which dividing by a tiny h then magnifies. Too small an h makes things worse.'}
+        : {zh:'還在變準，但兩個函式值相同的位數越來越多（' + same + ' 位），能用的有效數字正在流失。', en:'Still improving, but the two values now agree in ' + same + ' digits, and the usable significant digits are draining away.'}});
+  }
+  F.push({shapes:fdStage(pts, {side:[[{zh:'最好：h = 1e-' + best[0], en:'best: h = 1e-' + best[0]}, COL.tealL], [{zh:'誤差 ' + best[1].toExponential(1), en:'error ' + best[1].toExponential(1)}, COL.tealL]],
+      cap:{zh:'V 字形：左邊是截斷誤差，右邊是捨入誤差', en:'a V: truncation error on the left, rounding error on the right'},
+      cap2:{zh:'差分用來檢查梯度；訓練要用 autograd', en:'use differences to check gradients; train with autograd'}}),
+    panels:[{lbl:'best h', chips:[chip('1e-' + best[0], 'ok')]}], line:central ? 4 : 1,
+    msg:{zh:(central ? 'central difference 在 h ≈ 1e-5 附近最好，' : 'forward difference 在 h ≈ 1e-8 附近最好，') + '誤差約 ' + best[1].toExponential(1) + '。差分有兩個問題：精度有上限，而且每個輸入都要多算兩次整個函式——一百萬個權重就是兩百萬次。所以差分只拿來檢查 autograd 有沒有寫對（gradient check），真正訓練用 reverse mode。',
+         en:(central ? 'The central difference is best near h = 1e-5' : 'The forward difference is best near h = 1e-8') + ', with an error of about ' + best[1].toExponential(1) + '. Differences have two problems: a ceiling on accuracy, and two whole function evaluations per input - two million for a million weights. So they are used to check that an autograd is right (a gradient check), and training uses reverse mode.'}});
+  return F.list;
+}
+
+/* ================================================================ a JS port of Value */
+let VID = 0;
+function V(data, prev, op, label, acc){
+  return {id:VID++, data:data, grad:0, prev:prev || [], op:op || '', label:label || '', acc:acc !== false, back:null};
+}
+function send(out, child, g){ child.grad = out.acc ? child.grad + g : g; }
+function vadd(a, b, label){ const o = V(a.data + b.data, [a, b], '+', label, a.acc);
+  o.back = () => { send(o, a, o.grad); send(o, b, o.grad); return [[a, o.grad], [b, o.grad]]; }; return o; }
+function vmul(a, b, label){ const o = V(a.data * b.data, [a, b], '*', label, a.acc);
+  o.back = () => { send(o, a, b.data * o.grad); send(o, b, a.data * o.grad); return [[a, b.data * o.grad], [b, a.data * o.grad]]; }; return o; }
+function topo(root){
+  const order = [], seen = new Set(), stack = [[root, false]];
+  while (stack.length){
+    const [v, done] = stack.pop();
+    if (done){ order.push(v); continue; }
+    if (seen.has(v.id)) continue;
+    seen.add(v.id);
+    stack.push([v, true]);
+    v.prev.forEach(c => { if (!seen.has(c.id)) stack.push([c, false]); });
+  }
+  return order;
+}
+
+/* ================================================================ tab 4: forward and backward */
+const CODE_AG = [
+  'def __mul__(self, o):',
+  '    out = Value(self.data * o.data, (self, o), "*")',
+  '    def _backward():',
+  '        self.grad += o.data * out.grad     # local rule: d(ab)/da = b',
+  '        o.grad += self.data * out.grad',
+  '    out._backward = _backward',
+  '    return out',
+  '',
+  'def backward(self):',
+  '    order = self.topo()                    # Day 13: inputs before users',
+  '    self.grad = 1.0',
+  '    for v in reversed(order):              # users before inputs',
+  '        v._backward()'
+];
+const fmtv = x => Number.isInteger(x) ? String(x) : x.toFixed(2);
+function gStage(nodes, pos, o){
+  const sh = [];
+  nodes.forEach(n => n.prev.forEach((c, k) => {
+    const [x1, y1] = pos[c.id], [x2, y2] = pos[n.id];
+    const hot = o.flow && o.flow.includes(c.id) && o.cur === n.id;
+    sh.push(S.e(x1, y1, x2, y2, {s:hot ? 'hot' : 'idle', w:hot ? .06 : .035, pad:.42, dash:(k === 1 && n.prev[0] === c) ? '.1 .07' : null}));
+  }));
+  nodes.forEach(n => {
+    const [x, y] = pos[n.id], fw = o.fwd && o.fwd.has(n.id), bw = o.bwd && o.bwd.has(n.id);
+    const s = o.cur === n.id ? 'hot' : o.recv && o.recv.includes(n.id) ? 'act' : o.bad && o.bad.includes(n.id) ? 'bad' : bw ? 'ok' : fw ? 'idle' : 'ghost';
+    sh.push(S.c(x, y, .38, s, n.label, {fs:.3}));
+    if (n.op) sh.push(S.t(x, y - .5, n.op, {c:COL.purpleL, fs:.3}));
+    if (fw) sh.push(S.t(x, y + .66, n.label + ' = ' + fmtv(n.data), {c:COL.tealL, fs:.24}));
+    if (bw) sh.push(S.t(x, y + .96, 'grad ' + fmtv(n.grad), {c:COL.orangeL, fs:.24}));
+  });
+  const sa = o.sideAt || [.3, 5.1];
+  side(sh, sa[0], sa[1], o.side, .4);
+  return caps(sh, o);
+}
+function agFrames(){
+  const F = new Frames();
+  VID = 0;
+  const a = V(2, [], '', 'a'), b = V(-3, [], '', 'b'), c = V(10, [], '', 'c'), f = V(-2, [], '', 'f');
+  const e = vmul(a, b, 'e'), d = vadd(e, c, 'd'), L = vmul(d, f, 'L');
+  const nodes = [a, b, c, f, e, d, L];
+  const pos = {[a.id]:[.9, .75], [b.id]:[.9, 2.5], [e.id]:[3.2, 1.55], [c.id]:[3.2, 3.2], [d.id]:[5.5, 2.25], [f.id]:[5.5, 3.75], [L.id]:[7.9, 2.75]};
+  const order = topo(L), fwd = new Set(), bwd = new Set();
+  const ordTxt = order.map(v => v.label).join(' ');
+  F.push({shapes:gStage(nodes, pos, {side:[[{zh:'拓樸順序：' + ordTxt, en:'topological order: ' + ordTxt}, COL.purpleL]],
+      cap:'L = (a * b + c) * f', cap2:{zh:'先 forward 算出每個值，再 backward 算出每個梯度', en:'forward computes every value, backward every gradient'}}),
+    panels:[{lbl:'order', chips:order.map(v => chip(v.label, 'act'))}], line:9,
+    msg:{zh:'每個 Value 都記得自己是由哪些值算出來的。topo() 把圖排成拓樸順序（Day 13）：每個節點都排在它的所有輸入之後。forward 照這個順序算值，backward 倒過來傳梯度。',
+         en:'Every Value remembers which values it was made from. topo() puts the graph in topological order (Day 13): every node after all of its inputs. Forward computes values in that order; backward sends gradients in the reverse order.'}});
+  order.forEach(v => {
+    fwd.add(v.id);
+    if (!v.op) return;
+    F.push({shapes:gStage(nodes, pos, {fwd:new Set(fwd), cur:v.id, side:[[v.label + ' = ' + v.prev.map(p => p.label).join(' ' + v.op + ' ') + ' = ' + v.prev.map(p => fmtv(p.data)).join(' ' + v.op + ' ') + ' = ' + fmtv(v.data), COL.tealL]],
+        cap:{zh:'forward：' + v.label + ' = ' + fmtv(v.data), en:'forward: ' + v.label + ' = ' + fmtv(v.data)}, cap2:{zh:'同時把 _backward 記下來，等一下倒著用', en:'its _backward is recorded too, for later'}}),
+      panels:[{lbl:'computed', chips:order.filter(x => fwd.has(x.id)).map(x => chip(x.label, x.id === v.id ? 'hot' : 'ok'))}], line:1,
+      msg:{zh:v.label + ' 的值由輸入算出來，並記住它的輸入（' + v.prev.map(p => p.label).join('、') + '）和一個「怎麼把梯度送回去」的小函式。', en:v.label + ' is computed from its inputs and remembers them (' + v.prev.map(p => p.label).join(', ') + ') together with a small function that knows how to send a gradient back.'}});
+  });
+  L.grad = 1; bwd.add(L.id);
+  F.push({shapes:gStage(nodes, pos, {fwd:fwd, bwd:new Set(bwd), cur:L.id, side:[['dL/dL = 1', COL.orangeL]],
+      cap:{zh:'backward 從 L 開始：dL/dL = 1', en:'backward starts at L: dL/dL = 1'}, cap2:{zh:'接下來照拓樸順序倒著走', en:'then walk the order backwards'}}),
+    panels:[{lbl:'grad', chips:[chip('L: 1', 'hot')]}], line:10,
+    msg:{zh:'L 對自己的導數是 1。之後每個節點都要等「所有用到它的節點」都把梯度送來，才能把自己的梯度往下傳——倒過來的拓樸順序剛好保證這件事。', en:'The derivative of L with respect to itself is 1. From here every node must wait until every node that uses it has sent its gradient, before passing its own on - and the reversed topological order guarantees exactly that.'}});
+  [...order].reverse().forEach(v => {
+    if (!v.back) return;
+    const contrib = v.back();
+    contrib.forEach(([ch]) => bwd.add(ch.id));
+    const rule = v.op === '*' ? contrib.map(([ch, g], k) => 'd' + v.label + '/d' + ch.label + ' = ' + v.prev[1 - k].label + ' = ' + fmtv(v.prev[1 - k].data) + ', grad += ' + fmtv(g))
+                              : contrib.map(([ch, g]) => 'd' + v.label + '/d' + ch.label + ' = 1, grad += ' + fmtv(g));
+    F.push({shapes:gStage(nodes, pos, {fwd:fwd, bwd:new Set(bwd), cur:v.id, recv:contrib.map(([ch]) => ch.id), flow:contrib.map(([ch]) => ch.id),
+        side:rule.map(r => [r, COL.orangeL, .26]),
+        cap:{zh:v.label + ' 把梯度 ' + fmtv(v.grad) + ' 送給 ' + v.prev.map(p => p.label).join(' 和 '), en:v.label + ' sends its gradient ' + fmtv(v.grad) + ' to ' + v.prev.map(p => p.label).join(' and ')},
+        cap2:v.op === '*' ? {zh:'乘法：送給一邊的梯度 = 另一邊的值 × 自己的梯度', en:'multiply: each side gets the other side\'s value x my gradient'} : {zh:'加法：梯度原封不動送給兩邊', en:'add: the gradient goes to both sides unchanged'}}),
+      panels:[{lbl:'grads', chips:nodes.filter(x => bwd.has(x.id)).map(x => chip(x.label + ': ' + fmtv(x.grad), x.id === v.id ? 'hot' : 'ok'))}], line:v.op === '*' ? 3 : 11,
+      msg:v.op === '*' ? {zh:'乘法的局部規則：∂(xy)/∂x = y。所以 ' + v.prev[0].label + ' 收到 ' + v.prev[1].label + ' 的值乘上 ' + v.label + ' 的梯度，' + v.prev[1].label + ' 反過來。這就是連鎖律：一路乘上去。', en:'The local rule for a product: ∂(xy)/∂x = y. So ' + v.prev[0].label + ' receives ' + v.prev[1].label + '\'s value times ' + v.label + '\'s gradient, and ' + v.prev[1].label + ' the other way round. That is the chain rule: multiply along the path.'}
+                       : {zh:'加法的局部導數是 1，梯度原封不動分給兩個輸入。', en:'The local derivative of a sum is 1, so the gradient is handed unchanged to both inputs.'}});
+  });
+  F.push({shapes:gStage(nodes, pos, {fwd:fwd, bwd:bwd, side:[[nodes.filter(x => !x.op).map(x => 'dL/d' + x.label + ' = ' + fmtv(x.grad)).join('   '), COL.tealL]],
+      cap:{zh:'一趟 backward 就得到對所有輸入的導數', en:'one backward pass gives the derivative for every input'}, cap2:{zh:'Python 版用 central difference 檢查：相對誤差 1.3e-10', en:'checked in Python against central differences: relative error 1.3e-10'}}),
+    panels:[{lbl:'grads', chips:nodes.map(x => chip(x.label + ': ' + fmtv(x.grad), 'ok'))}], line:12,
+    msg:{zh:'a 的梯度 6 = f × b = (−2)(−3)：要是 a 變大一點點，L 會以 6 倍的速度變大。差分法要對每個輸入各算兩次整個函式；reverse mode 一趟 forward、一趟 backward，全部輸入一次搞定——這就是 PyTorch 訓練時在做的事。',
+         en:'a\'s gradient 6 = f x b = (-2)(-3): nudge a up a little and L grows six times as fast. Differences need two whole evaluations per input; reverse mode needs one forward and one backward pass for all inputs at once - which is what PyTorch does while training.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 5: two autograd bugs */
+const CODE_BUG = [
+  'def _backward():                  # inside __mul__',
+  '    self.grad += o.data * out.grad    # right: add every contribution',
+  '    o.grad += self.data * out.grad',
+  '    # self.grad = o.data * out.grad   # wrong: the last write wins',
+  '',
+  'def backward_naive(self):          # wrong: no topological order',
+  '    def go(v):',
+  '        v._backward()',
+  '        for c in v._prev:',
+  '            go(c)                 # reaches a shared node once per path',
+  '    self.grad = 1.0; go(self)'
+];
+function bugFrames(v){
+  const F = new Frames();
+  VID = 0;
+  if (v < 2){
+    const acc = v === 0, x = V(3, [], '', 'x', acc), y = vmul(x, x, 'y');
+    const nodes = [x, y], pos = {[x.id]:[2.2, 3.4], [y.id]:[2.2, 1.2]};
+    F.push({shapes:gStage(nodes, pos, {sideAt:[4.6, 1.0], fwd:new Set([x.id, y.id]), side:[[{zh:'y = x * x，x = 3', en:'y = x * x at x = 3'}, COL.purpleL], [{zh:'正確導數：2x = 6', en:'right answer: 2x = 6'}, COL.tealL]],
+        cap:{zh:'同一個節點被用了兩次', en:'one node used twice'}, cap2:{zh:'x 既是乘法的左邊，也是右邊', en:'x is both the left and the right input of the product'}}),
+      panels:[{lbl:'x.grad', chips:[chip('0', 'empty')]}], line:acc ? 1 : 3,
+      msg:{zh:'x * x 的兩個輸入是同一個 Value。backward 時乘法會送兩份梯度給「self」和「o」——在這裡兩個都是 x。', en:'Both inputs of x * x are the same Value. On the way back the product sends one gradient to "self" and one to "o" - and here both are x.'}});
+    y.grad = 1;
+    const parts = [[x, x.data * y.grad], [x, x.data * y.grad]];
+    let g = 0;
+    parts.forEach(([ch, val], k) => {
+      g = acc ? g + val : val;
+      F.push({shapes:gStage(nodes, pos, {sideAt:[4.6, 1.0], fwd:new Set([x.id, y.id]), bwd:new Set([y.id]), cur:y.id, recv:[x.id], flow:[x.id],
+          side:[[(k === 0 ? 'self' : 'o') + '.grad ' + (acc ? '+=' : '=') + ' ' + val, COL.orangeL], ['x.grad = ' + g, acc || k === 0 ? COL.tealL : COL.red]],
+          cap:{zh:'第 ' + (k + 1) + ' 份梯度：' + val, en:'contribution ' + (k + 1) + ': ' + val},
+          cap2:k === 1 ? (acc ? {zh:'累加：3 + 3 = 6，正確', en:'accumulated: 3 + 3 = 6, correct'} : {zh:'覆蓋：第二次寫入蓋掉第一次，3', en:'overwritten: the second write replaces the first, 3'}) : null}),
+        panels:[{lbl:'x.grad', chips:[chip(String(g), k === 1 && !acc ? 'bad' : 'ok')]}], line:acc ? (k === 0 ? 1 : 2) : 3,
+        msg:k === 0 ? {zh:'第一份：x 當作 self，收到 o 的值 × out.grad = 3 × 1 = 3。', en:'Contribution 1: x as self receives o\'s value x out.grad = 3 x 1 = 3.'}
+          : acc ? {zh:'第二份：x 當作 o，又收到 3。用 += 累加成 6，就是 x² 的導數 2x。一個節點被幾條路徑用到，梯度就要把幾條路徑的貢獻加起來（多變數連鎖律）。', en:'Contribution 2: x as o receives another 3. With += it adds up to 6, the derivative 2x of x². A node used along several paths gets the sum of their contributions (the multivariable chain rule).'}
+                : {zh:'第二份用 = 寫進去，把第一份蓋掉：x.grad = 3，只有正確值的一半。沒有錯誤，只是一個錯的數字——而且只有在節點被重複使用時才會出事，簡單的測試很容易全過。', en:'Contribution 2 is written with =, wiping out the first: x.grad = 3, half the right value. No error, just a wrong number - and only when a node is reused, so simple tests easily pass.'}});
+    });
+    return F.list;
+  }
+  const naive = v === 3;
+  const x = V(3, [], '', 'x'), two = V(2, [], '', '2'), q = vmul(x, two, 'q'), y = vmul(q, q, 'y');
+  const nodes = [x, two, q, y], pos = {[x.id]:[1.2, 4.15], [two.id]:[3.4, 4.15], [q.id]:[2.3, 2.75], [y.id]:[2.3, .95]};
+  const fw = new Set(nodes.map(n => n.id));
+  F.push({shapes:gStage(nodes, pos, {sideAt:[4.6, 1.0], fwd:fw, side:[[{zh:'y = (2x)²，x = 3', en:'y = (2x)^2 at x = 3'}, COL.purpleL], [{zh:'正確導數：8x = 24', en:'right answer: 8x = 24'}, COL.tealL],
+        [naive ? {zh:'走法：先跑自己，再遞迴每個輸入', en:'walk: run myself, then recurse into each input'} : {zh:'走法：倒過來的拓樸順序', en:'walk: reversed topological order'}, naive ? COL.red : COL.tealL]],
+      cap:{zh:'q = 2x 被 y 用了兩次', en:'q = 2x is used twice by y'}, cap2:{zh:'問題是：誰先、誰後、每個節點跑幾次', en:'the question: who runs first, and how many times'}}),
+    panels:[{lbl:'x.grad', chips:[chip('0', 'empty')]}], line:naive ? 5 : 1,
+    msg:naive ? {zh:'最直覺的 backward：跑完自己的 _backward，就對每個輸入遞迴下去。看起來沒問題——直到某個節點有兩條路可以走到。', en:'The most tempting backward: run my own _backward, then recurse into each input. It looks fine - until a node can be reached along two paths.'}
+              : {zh:'正確做法：拓樸順序 x, 2, q, y 倒過來走，每個節點剛好跑一次，而且都在它的所有使用者之後。', en:'The right way: walk the topological order x, 2, q, y backwards; every node runs exactly once, after all of its users.'}});
+  y.grad = 1;
+  const visits = [];
+  if (naive){ (function go(n){ visits.push(n); n.prev.forEach(go); })(y); }
+  else topo(y).reverse().forEach(n => visits.push(n));
+  const seenCount = {};
+  visits.forEach((n, k) => {
+    seenCount[n.id] = (seenCount[n.id] || 0) + 1;
+    const contrib = n.back ? n.back() : [];
+    const again = seenCount[n.id] > 1 && n.back;
+    F.push({shapes:gStage(nodes, pos, {sideAt:[4.6, 1.0], fwd:fw, bwd:new Set(nodes.filter(m => m.grad !== 0 || m === y).map(m => m.id)), cur:n.id, recv:contrib.map(([c]) => c.id), flow:contrib.map(([c]) => c.id), bad:again ? [x.id] : [],
+        side:[[{zh:'第 ' + (k + 1) + ' 次走訪：' + n.label + (seenCount[n.id] > 1 ? '（第 ' + seenCount[n.id] + ' 次）' : ''), en:'visit ' + (k + 1) + ': ' + n.label + (seenCount[n.id] > 1 ? ' (time ' + seenCount[n.id] + ')' : '')}, seenCount[n.id] > 1 ? COL.red : COL.orangeL],
+              ['x.grad = ' + fmtv(x.grad) + '   q.grad = ' + fmtv(q.grad), COL.pale]],
+        cap:n.back ? {zh:n.label + ' 把梯度送給 ' + n.prev.map(p => p.label).join('、'), en:n.label + ' sends its gradient to ' + n.prev.map(p => p.label).join(', ')} : {zh:n.label + ' 是葉節點，沒東西要送', en:n.label + ' is a leaf: nothing to send'},
+        cap2:again ? {zh:'q 又跑了一次：把完整的 12 再送一次給 x', en:'q runs again: its full 12 goes to x a second time'} : null}),
+      panels:[{lbl:'visits', chips:[chip(String(k + 1), naive && k >= 4 ? 'bad' : 'act')]}, {lbl:'x.grad', chips:[chip(fmtv(x.grad), again ? 'bad' : 'ok')]}],
+      line:naive ? (n.back ? 7 : 9) : 1,
+      msg:n === y ? {zh:'y = q · q：兩份梯度都給 q，各是 q 的值 6，累加成 12。', en:'y = q · q: both contributions go to q, each equal to q\'s value 6, adding up to 12.'}
+        : n === q && !again ? {zh:'q = 2x：x 收到 2 × 12 = 24。' + (naive ? '' : '這時 q 已經收齊所有使用者（只有 y）的梯度，所以 24 是完整的答案。'), en:'q = 2x: x receives 2 x 12 = 24.' + (naive ? '' : ' By now q has heard from all of its users (just y), so 24 is the whole answer.')}
+        : again ? {zh:'遞迴從 y 的第二個輸入又走進 q——q 的 _backward 再跑一次，把同樣的 12 × 2 = 24 又加給 x。x.grad 變成 48，剛好兩倍。', en:'The recursion enters q again through y\'s second input - q\'s _backward runs once more and adds the same 12 x 2 = 24 to x. x.grad becomes 48, exactly double.'}
+        : {zh:n.label + ' 是葉節點，_backward 什麼都不做。', en:n.label + ' is a leaf; its _backward does nothing.'}});
+  });
+  F.push({shapes:gStage(nodes, pos, {sideAt:[4.6, 1.0], fwd:fw, bwd:new Set(nodes.map(m => m.id)), bad:naive ? [x.id] : [],
+      side:[['x.grad = ' + fmtv(x.grad), naive ? COL.red : COL.tealL, .34], [{zh:visits.length + ' 次走訪（圖上只有 ' + nodes.length + ' 個節點）', en:visits.length + ' visits (the graph has ' + nodes.length + ' nodes)'}, naive ? COL.red : COL.tealL]],
+      cap:naive ? {zh:'天真遞迴：48，多算了一倍', en:'naive recursion: 48, counted twice'} : {zh:'拓樸順序：24，正確', en:'topological order: 24, correct'},
+      cap2:naive ? {zh:'共用的子圖越多，重複計算得越多——數字錯，走訪次數也會爆增', en:'the more shared subgraphs, the more double counting - wrong numbers and an explosion of visits'} : {zh:'每個節點跑一次，O(節點數)', en:'every node once, O(nodes)'}}),
+    panels:[{lbl:'x.grad', chips:[chip(fmtv(x.grad), naive ? 'bad' : 'ok')]}], line:naive ? 10 : 1,
+    msg:naive ? {zh:'天真遞迴的問題不在 += 本身，而在「q 還沒收齊梯度就往下傳」或「收齊了又傳第二次」。拓樸順序保證每個節點只跑一次、而且在所有使用者之後。在一個深的網路裡，這種重複會讓走訪次數隨層數指數成長。',
+                 en:'The naive recursion\'s problem is not += itself but passing q\'s gradient on before it is complete, or passing it twice once it is. The topological order guarantees every node runs once, after all of its users. In a deep network this kind of repetition makes the number of visits grow exponentially with depth.'}
+              : {zh:'每個節點剛好跑一次（' + visits.length + ' 次走訪），x.grad = 24 = 8x。', en:'Every node runs exactly once (' + visits.length + ' visits), and x.grad = 24 = 8x.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 6: zero_grad */
+const CODE_TRAIN = [
+  'w, b = Value(0.0), Value(0.0)',
+  'for step in range(60):',
+  '    loss = sum(((w * x + b) - y) ** 2 for x, y in zip(xs, ys)) * (1 / n)',
+  '    w.grad = b.grad = 0.0         # zero_grad: forget the last step',
+  '    loss.backward()               # gradients ADD into .grad',
+  '    w.data -= lr * w.grad',
+  '    b.data -= lr * b.grad'
+];
+function fitJS(zero){
+  const n = LINE_X.length, lr = .1;
+  let w = 0, b = 0, gw = 0, gb = 0;
+  const hist = [];
+  for (let s = 0; s < 60; s++){
+    let loss = 0, dw = 0, db = 0;
+    for (let i = 0; i < n; i++){ const r = w * LINE_X[i] + b - LINE_Y[i]; loss += r * r; dw += 2 * r * LINE_X[i]; db += 2 * r; }
+    loss /= n; dw /= n; db /= n;
+    if (zero){ gw = 0; gb = 0; }
+    gw += dw; gb += db;
+    w -= lr * gw; b -= lr * gb;
+    hist.push({loss:loss, w:w, b:b, gw:gw, gb:gb});
+  }
+  return hist;
+}
+const TPX0 = 5.3, TPX1 = 9.5, TPY0 = 3.9, TPY1 = .7;
+function trainStage(hist, upto, o){
+  const sh = [], sx = x => .5 + (x + 1.05) * 2.1, sy = y => 2.6 - y * .52;
+  sh.push(S.r(.4, .5, 4.6, 4.2, 'soft', ''));
+  LINE_X.forEach((x, i) => sh.push(S.c(sx(x), sy(LINE_Y[i]), .06, 'act', '')));
+  if (upto > 0){ const h = hist[upto - 1];
+    let xa = -1.05, xb = 1.05;
+    const lim = x => Math.min(Math.max(x, -1.05), 1.05);
+    if (h.w !== 0){ const xl = (-3.9 - h.b) / h.w, xh = (4.0 - h.b) / h.w;
+      xa = lim(Math.max(xa, Math.min(xl, xh))); xb = lim(Math.min(xb, Math.max(xl, xh))); }
+    sh.push(S.e(sx(xa), sy(h.w * xa + h.b), sx(xb), sy(h.w * xb + h.b), {s:o.bad ? 'bad' : 'ok', w:.05, arrow:false})); }
+  sh.push(S.t(2.7, .4, {zh:'資料與目前的直線', en:'the data and the current line'}, {c:COL.grey, fs:.22}));
+  const lg = l => TPY0 + (TPY1 - TPY0) * (Math.log10(Math.max(l, 1e-3)) + 3) / 4;
+  sh.push(S.e(TPX0, TPY0, TPX1, TPY0, {s:'idle', w:.03, arrow:false}));
+  sh.push(S.e(TPX0, TPY0, TPX0, TPY1, {s:'idle', w:.03, arrow:false}));
+  [-2, 0].forEach(e => sh.push(S.t(TPX0 - .08, lg(10 ** e) + .07, '1e' + e, {c:COL.grey, fs:.18, anchor:'end'})));
+  sh.push(S.t((TPX0 + TPX1) / 2, TPY0 + .35, {zh:'步數（0 到 60），loss 取對數', en:'step (0 to 60), log loss'}, {c:COL.grey, fs:.2}));
+  for (let s = 1; s < upto; s++){
+    const x1 = TPX0 + (TPX1 - TPX0) * (s - 1) / 59, x2 = TPX0 + (TPX1 - TPX0) * s / 59;
+    sh.push(S.e(x1, lg(hist[s - 1].loss), x2, lg(hist[s].loss), {s:o.bad ? 'bad' : 'ok', w:.04, arrow:false}));
+  }
+  side(sh, 5.3, 4.7, o.side, .4);
+  return caps(sh, o);
+}
+function trainFrames(v){
+  const F = new Frames(), zero = v === 0, hist = fitJS(zero);
+  F.push({shapes:trainStage(hist, 0, {bad:!zero, cap:{zh:'用梯度下降擬合 y = 3x − 0.5（20 個點、60 步、學習率 0.1）', en:'gradient descent fits y = 3x - 0.5 (20 points, 60 steps, learning rate 0.1)'},
+      cap2:zero ? {zh:'每一步先把 w.grad、b.grad 歸零', en:'each step starts by zeroing w.grad and b.grad'} : {zh:'這次從來不歸零', en:'this time they are never zeroed'}}),
+    panels:[{lbl:'w', chips:[chip('0', 'act')]}, {lbl:'b', chips:[chip('0', 'act')]}], line:zero ? 3 : 4,
+    msg:zero ? {zh:'每一步：算 loss、backward 得到梯度、沿著反方向走一小步。因為 backward 是用 += 把梯度加進 .grad，所以每一步開始前必須先歸零——PyTorch 裡就是 optimizer.zero_grad()。',
+                en:'Every step: compute the loss, call backward to get the gradient, take a small step against it. backward adds into .grad with +=, so each step must start by resetting it - optimizer.zero_grad() in PyTorch.'}
+             : {zh:'同樣的迴圈，只是少了歸零那一行。backward 的 += 是對的（同一個節點被重複使用時需要它），但它也會把上一步的梯度一起加進來。', en:'The same loop without the zeroing line. The += in backward is right (reused nodes need it), but it also adds the previous step\'s gradient on top.'}});
+  [1, 2, 3, 5, 8, 12, 20, 30, 40, 50, 60].forEach(s => {
+    const h = hist[s - 1];
+    F.push({shapes:trainStage(hist, s, {bad:!zero, side:[['step ' + s + ':  w = ' + h.w.toFixed(3) + ',  b = ' + h.b.toFixed(3), COL.orangeL, .26], ['loss ' + h.loss.toFixed(4) + '   w.grad ' + h.gw.toFixed(3), zero ? COL.tealL : COL.red, .26]],
+        cap:{zh:'第 ' + s + ' 步：loss ' + h.loss.toFixed(4), en:'step ' + s + ': loss ' + h.loss.toFixed(4)}, cap2:zero ? {zh:'loss 一路下降', en:'the loss keeps falling'} : {zh:'梯度一直在累積：每一步用的是過去所有梯度的總和', en:'the gradient keeps piling up: each step uses the sum of all past gradients'}}),
+      panels:[{lbl:'w', chips:[chip(h.w.toFixed(3), zero ? 'ok' : 'bad')]}, {lbl:'b', chips:[chip(h.b.toFixed(3), zero ? 'ok' : 'bad')]}, {lbl:'loss', chips:[chip(h.loss.toFixed(4), zero ? 'ok' : 'bad')]}],
+      line:s === 1 ? 4 : 5,
+      msg:zero ? (s < 10 ? {zh:'w 朝 3 靠近、b 朝 −0.5 靠近，loss 穩定下降。', en:'w moves towards 3 and b towards -0.5; the loss falls steadily.'}
+                         : s === 60 ? {zh:'60 步後 w = ' + h.w.toFixed(3) + '、b = ' + h.b.toFixed(3) + '、loss ' + h.loss.toFixed(4) + '：資料本來就帶了一點雜訊，所以不會剛好是 3 和 −0.5。', en:'After 60 steps w = ' + h.w.toFixed(3) + ', b = ' + h.b.toFixed(3) + ', loss ' + h.loss.toFixed(4) + ': the data carries a little noise, so it is not exactly 3 and -0.5.'}
+                         : {zh:'越靠近答案，梯度越小，步子也越小。', en:'The closer to the answer, the smaller the gradient and the smaller the steps.'})
+               : (s < 5 ? {zh:'一開始看起來還正常：梯度方向是對的。但被用掉的梯度沒有清掉，下一步會再被加一次。', en:'At first it looks normal: the gradient points the right way. But the used gradient is not cleared, so it will be added again next step.'}
+                        : s === 60 ? {zh:'60 步後 w = ' + h.w.toFixed(3) + '、loss ' + h.loss.toFixed(4) + '，是歸零版本的好幾百倍。這等於把動量設成 1、又沒有任何阻尼：權重衝過頭、再被拉回來，永遠在答案附近擺盪。沒有錯誤訊息，loss 也沒有爆成無限大——只是一直練不好。',
+                                     en:'After 60 steps w = ' + h.w.toFixed(3) + ' and the loss is ' + h.loss.toFixed(4) + ', hundreds of times the zeroed version. It is momentum of 1 with no damping: the weights overshoot, get pulled back, and swing around the answer forever. No error, and the loss does not blow up to infinity - it just never trains.'}
+                        : {zh:'累積的梯度讓權重衝過頭；方向反過來之後，舊的梯度還在推它往原來的方向。loss 上上下下。', en:'The accumulated gradient makes the weights overshoot; once the direction flips, the old gradients still push the old way. The loss goes up and down.'})});
+  });
+  return F.list;
+}
+
+/* ================================================================ tab 7: LeetCode 150 */
+const CODE_RPN = [
+  'class Solution:                                   # LeetCode 150',
+  '    def evalRPN(self, tokens):',
+  '        st = []',
+  '        for t in tokens:',
+  '            if t in ("+", "-", "*", "/"):',
+  '                b, a = st.pop(), st.pop()',
+  '                if t == "+": st.append(a + b)',
+  '                elif t == "-": st.append(a - b)',
+  '                elif t == "*": st.append(a * b)',
+  '                else: st.append(int(a / b))   # truncate; a // b floors',
+  '            else:',
+  '                st.append(int(t))',
+  '        return st[0]'
+];
+const RPN = ['10', '6', '9', '3', '+', '-11', '*', '/', '*', '17', '+', '5', '+'];
+const truncDiv = (a, b) => Math.trunc(a / b), floorDiv = (a, b) => Math.floor(a / b);
+function rpnStage(k, st, o){
+  const sh = [], w = .66;
+  RPN.forEach((t, i) => sh.push(box(.3 + i * (w + .04), .55, w, .5, i === k ? 'hot' : i < k ? 'done' : 'idle', t, .24)));
+  sh.push(S.t(.3, .4, 'tokens', {c:COL.grey, fs:.2, anchor:'start'}));
+  sh.push(S.t(1.3, 5.0, {zh:'stack（底 → 頂）', en:'stack (bottom -> top)'}, {c:COL.grey, fs:.22}));
+  st.forEach((v, i) => sh.push(box(.6, 4.2 - i * .58, 1.4, .5, i === st.length - 1 && o.pushed ? 'hot' : 'act', String(v), .26)));
+  side(sh, 2.8, 1.8, o.side, .5);
+  return caps(sh, o);
+}
+function rpnFrames(v){
+  const F = new Frames(), floor = v === 1, div = floor ? floorDiv : truncDiv, st = [];
+  F.push({shapes:rpnStage(-1, st, {cap:{zh:'逆波蘭表示法：運算子寫在兩個運算元後面', en:'Reverse Polish Notation: each operator follows its two operands'},
+      cap2:floor ? {zh:'這次除法用 Python 的 //（往下取整）', en:'this time division uses Python\'s // (floor)'} : {zh:'除法往零捨去：int(a / b)', en:'division truncates toward zero: int(a / b)'}}),
+    panels:[{lbl:'stack', chips:[chip('empty', 'empty')]}], line:2,
+    msg:{zh:'LeetCode 150。數字就推進 stack（Day 02）；碰到運算子就彈出兩個、算完推回去。注意彈出的順序：先彈出的是右邊的 b。', en:'LeetCode 150. Numbers are pushed on the stack (Day 02); an operator pops two, computes, and pushes the result. Mind the pop order: the first one popped is the right operand b.'}});
+  RPN.forEach((t, k) => {
+    let msg, line, side2;
+    if ('+-*/'.includes(t) && t.length === 1){
+      const b = st.pop(), a = st.pop();
+      const r = t === '+' ? a + b : t === '-' ? a - b : t === '*' ? a * b : div(a, b);
+      st.push(r);
+      side2 = [[a + ' ' + t + ' ' + b + ' = ' + r, COL.orangeL, .34]];
+      if (t === '/'){
+        side2.push([{zh:'精確值 ' + (a / b).toFixed(4), en:'exact ' + (a / b).toFixed(4)}, COL.pale]);
+        side2.push(['int(a / b) = ' + truncDiv(a, b) + '     a // b = ' + floorDiv(a, b), truncDiv(a, b) !== floorDiv(a, b) ? COL.red : COL.tealL]);
+      }
+      line = t === '/' ? 9 : t === '+' ? 6 : t === '-' ? 7 : 8;
+      msg = t === '/' ? (truncDiv(a, b) !== floorDiv(a, b)
+          ? {zh:a + ' / ' + b + ' = ' + (a / b).toFixed(4) + '。往零捨去是 ' + truncDiv(a, b) + '，Python 的 // 往下取整是 ' + floorDiv(a, b) + '。負的商才會分出差別，所以只有正數的範例怎麼寫都會過。' + (floor ? '這裡用了 //，推進去的是 ' + r + '。' : ''),
+             en:a + ' / ' + b + ' = ' + (a / b).toFixed(4) + '. Truncating toward zero gives ' + truncDiv(a, b) + '; Python\'s // floors to ' + floorDiv(a, b) + '. Only negative quotients tell them apart, so the all-positive examples pass either way.' + (floor ? ' Here // was used, so ' + r + ' is pushed.' : '')}
+          : {zh:a + ' / ' + b + '：正數，兩種除法一樣。', en:a + ' / ' + b + ': positive, both divisions agree.'})
+        : {zh:'彈出 ' + b + ' 和 ' + a + '，算 ' + a + ' ' + t + ' ' + b + ' = ' + r + ' 再推回去。', en:'Pop ' + b + ' and ' + a + ', compute ' + a + ' ' + t + ' ' + b + ' = ' + r + ', push it back.'};
+    } else {
+      st.push(+t); line = 11; side2 = [[{zh:'推入 ' + t, en:'push ' + t}, COL.purpleL]];
+      msg = {zh:'數字直接推進 stack，等運算子來用它。', en:'A number goes straight on the stack, waiting for an operator.'};
+    }
+    F.push({shapes:rpnStage(k, st.slice(), {pushed:true, side:side2, cap:{zh:'token ' + (k + 1) + ' / ' + RPN.length + '：' + t, en:'token ' + (k + 1) + ' / ' + RPN.length + ': ' + t}}),
+      panels:[{lbl:'stack', chips:st.map(x => chip(String(x), 'act'))}], line:line, msg:msg});
+  });
+  const ans = st[0];
+  F.push({shapes:rpnStage(RPN.length, st.slice(), {side:[[{zh:'答案 ' + ans, en:'answer ' + ans}, floor ? COL.red : COL.tealL, .4]],
+      cap:floor ? {zh:'用 // 得到 ' + ans + '，正確答案是 22', en:'with // the answer is ' + ans + '; the right one is 22'} : {zh:'答案 22', en:'answer 22'},
+      cap2:{zh:'把 stack 裡的整數換成 Value，求值就會建出計算圖', en:'put Values on the stack instead of ints and evaluating builds the computation graph'}}),
+    panels:[{lbl:'answer', chips:[chip(String(ans), floor ? 'bad' : 'ok')]}], line:12,
+    msg:floor ? {zh:'只差一個除法的捨入方向：0 變成 −1，乘上 10 再一路加上去，最後 12 對 22。修法：int(a / b)，或 math.trunc。', en:'One division rounded the other way: 0 became -1, which gets multiplied by 10 and carried through, ending at 12 instead of 22. The fix: int(a / b), or math.trunc.'}
+              : {zh:'22。順帶一提：如果 stack 裡放的是 Value 而不是整數，這台 stack 機器在求值的同時就記下了每一個運算——一呼叫 backward() 就得到每個輸入的梯度。autograd 的 tape 就是這樣來的。', en:'22. And if the stack held Values instead of ints, this stack machine would record every operation while evaluating - one call to backward() then gives the gradient of every input. That is where an autograd tape comes from.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 8: LeetCode 566 */
+const CODE_566 = [
+  'class Solution:                                   # LeetCode 566',
+  '    def matrixReshape(self, mat, r, c):',
+  '        m, n = len(mat), len(mat[0])',
+  '        if m * n != r * c:',
+  '            return mat',
+  '        out = [[0] * c for _ in range(r)]',
+  '        for k in range(m * n):                    # k-th number, reading row by row',
+  '            out[k // c][k % c] = mat[k // n][k % n]',
+  '        return out'
+];
+function rsStage(k, colMajor, o){
+  const sh = [], src = [[1, 2, 3], [4, 5, 6]], s = .7;
+  sh.push(S.t(.4, .55, {zh:'mat（2 × 3）', en:'mat (2 x 3)'}, {c:COL.grey, fs:.24, anchor:'start'}));
+  const order = [];
+  for (let q = 0; q < 6; q++) order.push(colMajor ? [q % 2, Math.floor(q / 2)] : [Math.floor(q / 3), q % 3]);
+  for (let i = 0; i < 2; i++) for (let j = 0; j < 3; j++){
+    const q = order.findIndex(([a, b]) => a === i && b === j);
+    sh.push(box(.4 + j * s, .7 + i * s, s - .06, s - .06, q === k - 1 ? 'hot' : q < k ? 'done' : 'idle', String(src[i][j]), .3));
+  }
+  sh.push(S.t(4.4, .55, {zh:'結果（3 × 2）', en:'result (3 x 2)'}, {c:COL.grey, fs:.24, anchor:'start'}));
+  for (let q = 0; q < 6; q++){
+    const [ri, rj] = colMajor ? [q % 3, Math.floor(q / 3)] : [Math.floor(q / 2), q % 2];
+    const [si, sj] = order[q];
+    sh.push(box(4.4 + rj * s, .7 + ri * s, s - .06, s - .06, q === k - 1 ? 'hot' : q < k ? (colMajor ? 'bad' : 'ok') : 'ghost', q < k ? String(src[si][sj]) : '', .3));
+  }
+  side(sh, .4, 3.3, o.side, .48);
+  return caps(sh, o);
+}
+function rsFrames(v){
+  const F = new Frames(), col = v === 1;
+  F.push({shapes:rsStage(0, col, {side:[[{zh:'r = 3, c = 2：2 × 3 = 3 × 2 = 6，裝得下', en:'r = 3, c = 2: 2 x 3 = 3 x 2 = 6, it fits'}, COL.tealL]],
+      cap:col ? {zh:'order="F"：一欄一欄讀、一欄一欄寫', en:'order="F": read column by column, write column by column'} : {zh:'一列一列讀、一列一列寫', en:'read row by row, write row by row'},
+      cap2:{zh:'先檢查大小：m × n 不等於 r × c 就原樣回傳', en:'check the size first: if m x n != r x c, return mat unchanged'}}),
+    panels:[{lbl:'k', chips:[chip('-', 'empty')]}], line:col ? 6 : 3,
+    msg:col ? {zh:'同一個 reshape，但用 numpy 的 order="F"（Fortran／欄優先）：讀取和寫入都改成一欄一欄。結果還是一個 3 × 2 的矩陣，看起來完全正常。', en:'The same reshape, but with numpy\'s order="F" (Fortran, column-major): both reading and writing go column by column. The result is still a perfectly normal-looking 3 x 2 matrix.'}
+            : {zh:'LeetCode 566：照列優先的順序讀出 6 個數，再照列優先的順序填進 3 × 2。第 k 個數在舊矩陣的 [k // n][k % n]、新矩陣的 [k // c][k % c]——跟 strides 是同一套算術。', en:'LeetCode 566: read the 6 numbers in row-major order and fill them into 3 x 2 in row-major order. Number k sits at [k // n][k % n] in the old matrix and [k // c][k % c] in the new one - the same arithmetic as strides.'}});
+  const src = [[1, 2, 3], [4, 5, 6]];
+  for (let k = 1; k <= 6; k++){
+    const q = k - 1, [si, sj] = col ? [q % 2, Math.floor(q / 2)] : [Math.floor(q / 3), q % 3], [ri, rj] = col ? [q % 3, Math.floor(q / 3)] : [Math.floor(q / 2), q % 2];
+    F.push({shapes:rsStage(k, col, {side:[['k = ' + q + ':  mat[' + si + '][' + sj + '] = ' + src[si][sj] + '  ->  out[' + ri + '][' + rj + ']', COL.orangeL]],
+        cap:{zh:'第 ' + k + ' 個數：' + src[si][sj], en:'number ' + k + ': ' + src[si][sj]}}),
+      panels:[{lbl:'k', chips:[chip(String(q), 'hot')]}], line:7,
+      msg:col ? {zh:'欄優先：mat[' + si + '][' + sj + '] 放到 out[' + ri + '][' + rj + ']。', en:'Column-major: mat[' + si + '][' + sj + '] goes to out[' + ri + '][' + rj + '].'}
+              : {zh:'k = ' + q + '：舊位置 [' + q + ' // 3][' + q + ' % 3] = [' + si + '][' + sj + ']，新位置 [' + q + ' // 2][' + q + ' % 2] = [' + ri + '][' + rj + ']。', en:'k = ' + q + ': old position [' + q + ' // 3][' + q + ' % 3] = [' + si + '][' + sj + '], new position [' + q + ' // 2][' + q + ' % 2] = [' + ri + '][' + rj + '].'}});
+  }
+  const res = [[0, 0], [0, 0], [0, 0]];
+  for (let q = 0; q < 6; q++){ const [si, sj] = col ? [q % 2, Math.floor(q / 2)] : [Math.floor(q / 3), q % 3], [ri, rj] = col ? [q % 3, Math.floor(q / 3)] : [Math.floor(q / 2), q % 2]; res[ri][rj] = src[si][sj]; }
+  const resTxt = '[' + res.map(r => '[' + r.join(', ') + ']').join(', ') + ']';
+  F.push({shapes:rsStage(6, col, {side:[[resTxt, col ? COL.red : COL.tealL, .32]],
+      cap:col ? {zh:resTxt + '：看起來正常，但不是題目要的', en:resTxt + ': looks fine, but it is not what was asked'} : resTxt,
+      cap2:{zh:'np.array(mat).reshape(r, c) 預設就是列優先，輸入連續時還是 view', en:'np.array(mat).reshape(r, c) is row-major by default, and a view when the input is contiguous'}}),
+    panels:[{lbl:'result', chips:res.map(r => chip('[' + r.join(', ') + ']', col ? 'bad' : 'ok'))}], line:8,
+    msg:col ? {zh:'order="F" 得到 ' + resTxt + '。形狀對、數字也都在，只是位置錯了——沒有任何錯誤訊息。從 Fortran／MATLAB 搬過來的程式碼特別容易踩到。', en:'order="F" gives ' + resTxt + '. Right shape, every number present, wrong positions - and no error message. Code ported from Fortran or MATLAB walks into this easily.'}
+            : {zh:resTxt + '，跟 numpy 的 reshape(3, 2) 一樣。時間 O(m n)；numpy 版在輸入連續時連複製都不用，只換 shape 和 strides。', en:resTxt + ', the same as numpy\'s reshape(3, 2). O(m n) time; the numpy version does not even copy when the input is contiguous - it only changes the shape and strides.'}});
+  return F.list;
+}
+
+/* ================================================================ meta */
+const DAY_META = {
+  title:{zh:'Day 44 — NumPy 向量化與自動微分', en:'Day 44 - NumPy vectorisation and automatic differentiation'},
+  sub:{zh:'陣列是緩衝區加 shape 加 strides；broadcasting 的規則與它藏起來的 bug；三種求導；手寫 reverse-mode autograd 與它的三個無聲 bug。', en:'An array is a buffer plus a shape plus strides; broadcasting and the bug it hides; three ways to take a derivative; a hand-written reverse-mode autograd and its three silent bugs.'},
+  tabs:[
+    {
+      id:'strides', label:{zh:'shape 與 strides', en:'shape and strides'},
+      stage:{zh:'同一塊緩衝區，用不同的 strides 讀', en:'one buffer, read with different strides'},
+      view:VIEW,
+      variants:[{zh:'m', en:'m'}, {zh:'m.T', en:'m.T'}, {zh:'m[:, ::2]', en:'m[:, ::2]'}, {zh:'m.T.reshape(12)', en:'m.T.reshape(12)'}],
+      idea:{zh:'NumPy 陣列 = 一塊連續的原始數值 + shape + strides（沿每個軸走一步要跳幾個位元組）。這就是它快的原因：np.dot 對一百萬個數只是一個 C 迴圈，Python 迴圈約 41 毫秒、np.dot 約 0.1 毫秒（一次量測）。轉置只是把 strides 對調、slice 只是把 stride 放大，都不搬任何數字，結果是 view：寫進去會改到原陣列。把 m.T 攤平成一維時，跳躍距離不固定，沒有一個 stride 描述得出來，只好複製。陷阱：用 list 當索引（v[[0, 2]]）一定是複製，所以 v[[0, 2]][0] = 99 什麼都不會改。',
+            en:'A NumPy array is one contiguous block of raw numbers + a shape + strides (bytes to jump per step along each axis). That is why it is fast: np.dot over a million numbers is one C loop, about 41 ms for a Python loop against 0.1 ms for np.dot (one run). A transpose swaps the strides and a slice enlarges one; no number moves, and the result is a view - writing into it changes the original. Flattening m.T jumps by different amounts, no single stride describes it, so it copies. The trap: indexing with a list (v[[0, 2]]) always copies, so v[[0, 2]][0] = 99 changes nothing.'},
+      legend:[['#ff9736', {zh:'目前讀的這一格', en:'the cell being read'}], ['#3fe0dd', {zh:'已讀過（同一塊記憶體）', en:'already read (same memory)'}], ['#9d6bff', {zh:'複製出來的新緩衝區', en:'a copied new buffer'}], ['#8fa3ac', {zh:'位元組位移', en:'byte offset'}]],
+      get code(){ return CODE_STR; },
+      build:strFrames
+    },
+    {
+      id:'bcast', label:{zh:'broadcasting', en:'broadcasting'},
+      stage:{zh:'pred 減 y：shape 決定比了幾格', en:'pred minus y: the shapes decide how many cells are compared'},
+      view:VIEW,
+      variants:[{zh:'(5,) − (5,)', en:'(5,) - (5,)'}, {zh:'(5, 1) − (5,)', en:'(5, 1) - (5,)'}],
+      idea:{zh:'broadcasting：把 shape 靠右對齊，每一對要相等或其中一個是 1，1 會被拉伸。這讓「每一列加同一個 bias」寫成一行。也讓最常見的 bug 不會報錯：模型輸出 (n, 1)、目標是 (n,)，相減得到 (n, n)，均方誤差把每個預測跟每個目標都比了一次——0.0100 變成 4.0100。修法是 .ravel()，習慣是每個 loss 前 assert pred.shape == y.shape。',
+            en:'Broadcasting: align the shapes from the right; each pair must be equal or contain a 1, which is stretched. It makes "add one bias to every row" a one-liner. It also lets the most common bug pass silently: a model returns (n, 1), the targets are (n,), the difference is (n, n), and the mean squared error compares every prediction with every target - 0.0100 becomes 4.0100. The fix is .ravel(); the habit is assert pred.shape == y.shape before every loss.'},
+      legend:[['#3fe0dd', {zh:'想要的比較（對角線）', en:'the intended comparisons (diagonal)'}], ['#ff5c5c', {zh:'不該算進去的格子', en:'cells that should not count'}], ['#ff9736', {zh:'目前這一列', en:'the current row'}], ['#9d6bff', {zh:'目標 y', en:'targets y'}]],
+      get code(){ return CODE_BC; },
+      build:bcFrames
+    },
+    {
+      id:'diff', label:{zh:'差分求導', en:'difference quotients'},
+      stage:{zh:'d/dx sin(x) 在 x = 1：h 越小越準嗎？', en:'d/dx sin(x) at x = 1: is a smaller h always better?'},
+      view:VIEW,
+      variants:[{zh:'central', en:'central'}, {zh:'forward', en:'forward'}],
+      idea:{zh:'把輸入推一點點 h，看輸出變多少。central difference 的誤差跟 h² 成正比，forward 跟 h 成正比——所以 h 變小一開始會變準。但 double 只有大約 16 位有效數字，h 太小時 f(x+h) 和 f(x−h) 幾乎每一位都相同，相減只剩捨入雜訊，再除以很小的 h 就把雜訊放大：誤差曲線是一個 V。central 最好約在 h ≈ 1e-5（誤差約 1e-11）。差分很適合檢查梯度，但每個輸入要多算兩次整個函式，不能拿來訓練。',
+            en:'Nudge the input by a little h and see how much the output moves. The central difference\'s error is proportional to h², the forward difference\'s to h - so a smaller h helps at first. But a double has about 16 significant digits; with a tiny h, f(x+h) and f(x-h) agree in almost every digit, the difference is rounding noise, and dividing by a tiny h magnifies it: the error curve is a V. Central is best near h = 1e-5 (error about 1e-11). Differences are great for checking gradients, but cost two whole evaluations per input, so they cannot train a model.'},
+      legend:[['#ff9736', {zh:'這一個 h', en:'this h'}], ['#3fe0dd', {zh:'誤差曲線', en:'the error curve'}], ['#ff5c5c', {zh:'有效數字流失', en:'significant digits lost'}], ['#9d6bff', {zh:'真正的導數', en:'the true derivative'}]],
+      get code(){ return CODE_FD; },
+      build:fdFrames
+    },
+    {
+      id:'graph', label:{zh:'forward 與 backward', en:'forward and backward'},
+      stage:'L = (a * b + c) * f',
+      view:VIEW,
+      idea:{zh:'reverse-mode autograd：每個 Value 記得自己由哪些值算出來，並帶著一個依局部規則把梯度送回去的小函式（乘法：送給一邊的是另一邊的值 × 自己的梯度；加法：原封不動）。backward 先排出拓樸順序（Day 13），再倒著呼叫每個 _backward：每個節點都在它所有的使用者之後才往下傳。一趟 forward、一趟 backward 就得到對所有輸入的導數，這就是 PyTorch 訓練時在做的事。a=2, b=−3, c=10, f=−2：L = −8，dL/da = 6、dL/db = −4、dL/dc = −2、dL/df = 4。',
+            en:'Reverse-mode autograd: every Value remembers what it was made from and carries a small function that sends its gradient back by the local rule (product: each side gets the other side\'s value x my gradient; sum: unchanged). backward first builds the topological order (Day 13), then calls each _backward in reverse: every node passes its gradient on only after all of its users have. One forward and one backward pass give the derivative for every input - what PyTorch does while training. With a=2, b=-3, c=10, f=-2: L = -8, dL/da = 6, dL/db = -4, dL/dc = -2, dL/df = 4.'},
+      legend:[['#ff9736', {zh:'目前這個節點', en:'the node running now'}], ['#9d6bff', {zh:'收到梯度的輸入', en:'inputs receiving a gradient'}], ['#3fe0dd', {zh:'梯度已算好', en:'gradient done'}], ['#0a6b74', {zh:'只算了值', en:'value only'}]],
+      get code(){ return CODE_AG; },
+      build:agFrames
+    },
+    {
+      id:'bugs', label:{zh:'autograd 的 bug', en:'autograd bugs'},
+      stage:{zh:'節點被重複使用時，兩個寫法會出錯', en:'when a node is reused, two ways of writing it go wrong'},
+      view:VIEW,
+      variants:[{zh:'x*x：+=', en:'x*x: +='}, {zh:'x*x：=', en:'x*x: ='}, {zh:'(2x)²：拓樸順序', en:'(2x)^2: topological'}, {zh:'(2x)²：天真遞迴', en:'(2x)^2: naive recursion'}],
+      idea:{zh:'兩個 bug 都只在「一個節點被用到不只一次」時出現，所以簡單的測試全過。一、把 grad += 寫成 grad =：x * x 的兩份梯度只留下後寫的那份，導數算出 3 而不是 6。二、不照拓樸順序、直接「跑自己再遞迴每個輸入」：q = 2x 被 y = q * q 用了兩次，q 的 _backward 跑兩次，x.grad 變成 48 而不是 24，走訪 7 次而不是 4 次。共用的子圖越多，重複得越多。',
+            en:'Both bugs appear only when a node is used more than once, so simple tests pass. One: writing grad = instead of grad +=: of the two contributions to x in x * x only the later one survives, and the derivative comes out 3 instead of 6. Two: skipping the topological order and just "run myself, then recurse into each input": q = 2x is used twice by y = q * q, q\'s _backward runs twice, and x.grad becomes 48 instead of 24, with 7 visits instead of 4. The more shared subgraphs, the more repetition.'},
+      legend:[['#ff9736', {zh:'正在送梯度的節點', en:'the node sending a gradient'}], ['#9d6bff', {zh:'收到梯度', en:'receiving a gradient'}], ['#3fe0dd', {zh:'梯度已算好', en:'gradient done'}], ['#ff5c5c', {zh:'算錯了', en:'gone wrong'}]],
+      get code(){ return CODE_BUG; },
+      build:bugFrames
+    },
+    {
+      id:'train', label:{zh:'zero_grad', en:'zero_grad'},
+      stage:{zh:'梯度下降擬合一條直線，每一步要不要先歸零？', en:'gradient descent fits a line: reset the gradient each step or not?'},
+      view:VIEW,
+      variants:[{zh:'每一步歸零', en:'zero every step'}, {zh:'從不歸零', en:'never zero'}],
+      idea:{zh:'backward 用 += 把梯度加進 .grad——節點被重複使用時這是對的，但也代表每一步訓練前必須把梯度歸零（PyTorch 的 optimizer.zero_grad()）。忘了歸零，每一步用的就是過去所有梯度的總和：權重衝過頭、又被拉回來，在答案附近一直擺盪。Python 版 60 步後：歸零的 w = 3.020、loss 0.0083；沒歸零的 w = 6.089、loss 3.0924。沒有錯誤，也沒有爆掉，只是一直練不好。這一頁的 20 個資料點和 Python 版完全相同。',
+            en:'backward adds into .grad with += - right for reused nodes, but it means the gradient must be reset before every training step (optimizer.zero_grad() in PyTorch). Forget it and each step uses the sum of all past gradients: the weights overshoot, get pulled back, and swing around the answer. After 60 steps in Python: zeroed, w = 3.020 and loss 0.0083; not zeroed, w = 6.089 and loss 3.0924. No error, no blow-up, it just never trains. The 20 data points here are the same as in the Python version.'},
+      legend:[['#3fe0dd', {zh:'正常收斂', en:'converging normally'}], ['#ff5c5c', {zh:'梯度累積造成擺盪', en:'swinging from accumulated gradients'}], ['#9d6bff', {zh:'資料點', en:'data points'}], ['#ff9736', {zh:'目前的權重', en:'current weights'}]],
+      get code(){ return CODE_TRAIN; },
+      build:trainFrames
+    },
+    {
+      id:'lc150', label:{zh:'逆波蘭（LC 150）', en:'RPN (LC 150)'},
+      stage:'10 6 9 3 + -11 * / * 17 + 5 +',
+      view:VIEW,
+      variants:[{zh:'int(a / b)', en:'int(a / b)'}, {zh:'a // b', en:'a // b'}],
+      idea:{zh:'LeetCode 150：數字推進 stack（Day 02），運算子彈出兩個、算完推回去，先彈出的是右邊的運算元。陷阱：題目要「往零捨去」，Python 的 // 卻是往下取整，6 // −132 是 −1 而不是 0；只有正數的範例怎麼寫都過，這個範例用 // 得到 12 而不是 22。把 stack 裡的整數換成 Value，同一台 stack 機器在求值時就會記下每一個運算——這就是 autograd 的 tape。',
+            en:'LeetCode 150: numbers go on the stack (Day 02); an operator pops two, computes and pushes the result, the first pop being the right operand. The trap: the task wants truncation toward zero but Python\'s // floors, so 6 // -132 is -1 instead of 0; all-positive examples pass either way, and this one gives 12 instead of 22 with //. Put Values on the stack instead of ints and the same stack machine records every operation while evaluating - which is what an autograd tape is.'},
+      legend:[['#ff9736', {zh:'目前的 token', en:'the current token'}], ['#9d6bff', {zh:'stack 裡的值', en:'values on the stack'}], ['#3fe0dd', {zh:'兩種除法一致', en:'both divisions agree'}], ['#ff5c5c', {zh:'兩種除法不同', en:'the divisions differ'}]],
+      get code(){ return CODE_RPN; },
+      build:rpnFrames
+    },
+    {
+      id:'lc566', label:{zh:'重塑矩陣（LC 566）', en:'reshape (LC 566)'},
+      stage:{zh:'[[1, 2, 3], [4, 5, 6]] 變成 3 × 2', en:'[[1, 2, 3], [4, 5, 6]] into 3 x 2'},
+      view:VIEW,
+      variants:[{zh:'列優先（C）', en:'row-major (C)'}, {zh:'欄優先（F）', en:'column-major (F)'}],
+      idea:{zh:'LeetCode 566：m × n 不等於 r × c 就原樣回傳；否則第 k 個數從 [k // n][k % n] 搬到 [k // c][k % c]——跟 strides 是同一套算術。numpy 的 reshape 預設列優先，輸入連續時只換 shape 和 strides、不複製。陷阱是 order="F"：一欄一欄讀寫，得到 [[1, 5], [4, 3], [2, 6]]，形狀對、數字都在，只是位置錯了。',
+            en:'LeetCode 566: if m x n differs from r x c, return the matrix unchanged; otherwise number k moves from [k // n][k % n] to [k // c][k % c] - the same arithmetic as strides. numpy\'s reshape is row-major by default and, on contiguous input, only changes the shape and strides without copying. The trap is order="F": reading and writing column by column gives [[1, 5], [4, 3], [2, 6]] - right shape, every number there, wrong positions.'},
+      legend:[['#ff9736', {zh:'正在搬的數字', en:'the number being moved'}], ['#3fe0dd', {zh:'放對了', en:'placed right'}], ['#ff5c5c', {zh:'欄優先放的位置', en:'placed column-major'}], ['#2f5661', {zh:'已讀過', en:'already read'}]],
+      get code(){ return CODE_566; },
+      build:rsFrames
+    }
+  ]
+};

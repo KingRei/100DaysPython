@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 42 — 隨機化演算法與蒙地卡羅：用亂數做估計，以及怎麼測試用到亂數的程式</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 42 — 隨機化演算法與蒙地卡羅：用亂數做估計，以及怎麼測試用到亂數的程式</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2042%20-%20randomized%20algorithms%20and%20monte%20carlo">day 42 on GitHub</a></p>
+<p><em>100 Days of Python - day 42</em></p>
+<p>往一個正方形隨機丟一百萬個點，數一數有幾個落在從角落畫出的四分之一圓裡。這個比例乘以 4 得到 3.140828——圓周率準到小數點後三位，誤差 0.000765。想用同樣的方法準到小數點後六位，大約要丟十兆個點，因為蒙地卡羅（Monte Carlo）估計的誤差只會隨著工作量的「平方根」縮小：點數多一百倍，誤差才小十倍。</p>
+<img alt="day42_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2042%20-%20randomized%20algorithms%20and%20monte%20carlo/imgs/day42_1.png">
+<p>這是今天的一半。另一半是：用到亂數的程式有個很討厭的特性——寫錯的時候不會當掉。壞掉的洗牌照樣回傳一個看起來很亂的陣列；壞掉的抽樣照樣回傳一個合理的元素。只是它抽的分布是錯的，而題目給的每一個範例都照樣通過：</p>
+<ul><li>每個位置都跟「整個陣列裡任意一個位置」交換：三個元素的六種排列裡，有的出現 27 次中的 5 次，有的只有 4 次。</li><li>Fisher-Yates 裡把 <code>randrange(i + 1)</code> 寫成 <code>randrange(i)</code>：三個元素只會洗出 6 種排列裡的 2 種——沒有任何元素會留在原位。</li><li>蓄水池抽樣（reservoir sampling，LeetCode 382）犯同一個差一錯誤：第一個節點永遠不會被抽到。</li><li>用 <code>rand7</code> 湊 <code>rand10</code>（LeetCode 470）卻不做拒絕：數字 1 的機率是 4/49，其他九個數字是 5/49。</li><li>LeetCode 528 把 <code>randrange(total)</code> 寫成 <code>randint(0, total)</code>：權重 1 的元素擺在權重 99 的旁邊，被抽中的機率直接翻倍。</li></ul>
+<p>測試隨機性唯一的方法就是「數」。所以今天先做一個工具：把演算法對「每一種可能的亂數序列」各跑一次，再把每種結果的機率用分數精確加總——沒有抽樣雜訊，連 1/27 的偏差都藏不住。</p>
+<p>昨天的 <code>pow(a, e, m)</code> 和費馬小定理會在今天變成一個「允許答錯」的質數測試，而它多常答錯，是可以量出來的。</p>
+<h2>蒙地卡羅：用隨機點估計圓周率</h2>
+<p>在單位正方形裡均勻丟一個點，它落進四分之一圓 <code>x² + y² &lt; 1</code> 的機率等於這塊圓的面積 pi/4。丟 <code>n</code> 個點、數有幾個落在裡面，<code>4 * hits / n</code> 就是 pi 的估計值。</p>
+<pre><code>def estimate_pi(n, rng):
+    inside = 0
+    for _ in range(n):
+        x, y = rng.random(), rng.random()
+        if x * x + y * y &lt; 1.0:
+            inside += 1
+    return 4 * inside / n</code></pre>
+<p>用 <code>random.Random(42)</code>：</p>
+<pre><code>      100 points: pi ~ 3.120000   error 0.021593   one standard error = 0.164218
+   10,000 points: pi ~ 3.125200   error 0.016393   one standard error = 0.016422
+1,000,000 points: pi ~ 3.140828   error 0.000765   one standard error = 0.001642</code></pre>
+<p>單一個點貢獻的 <code>4 * [inside]</code> 不是 0 就是 4，它的離散程度（標準差）是 <code>4 * sqrt(p(1 - p))</code>，<code>p = pi/4</code> 代進去是 1.642。把 <code>n</code> 個獨立的點平均起來，標準差會除以 <code>sqrt(n)</code>，所以典型誤差是 <code>1.642 / sqrt(n)</code>。每種點數重複做很多次、量均方根誤差，結果吻合：</p>
+<pre><code>點數 N   重複次數  實測誤差  1.642 / sqrt(N)
+-------  --------  --------  ---------------
+100      400       0.16296   0.16422
+1,000    200       0.05454   0.05193
+10,000   100       0.01690   0.01642
+100,000  20        0.00389   0.00519</code></pre>
+<img alt="day42_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2042%20-%20randomized%20algorithms%20and%20monte%20carlo/imgs/day42_2.png">
+<p>最後一列只重複了 20 次，所以比較抖。重點是這條規律：多準一位小數要多一百倍的點，誤差 0.0000005（六位小數）需要 1.08 × 10¹³ 個點——大約十兆個。拿蒙地卡羅算 pi 是錯的用法；它真正派上用場的地方，是那些根本沒有公式的量：一個棋盤局面的勝率、一個策略的平均報酬、一百維空間裡的積分。這些估計的代價一樣是 <code>1 / sqrt(N)</code>，跟維度多少無關。</p>
+<p>還有一個實務細節：亂數產生器要給種子（seed）。兩個 <code>random.Random(7)</code> 會丟出同樣的點、得到同樣的估計（兩次都是 3.152），這樣隨機程式的 bug 才重現得出來。</p>
+<h2>Las Vegas 與 Monte Carlo</h2>
+<p>隨機化演算法分兩種，手上拿的是哪一種很重要。</p>
+<p><strong>Las Vegas：答案永遠對，執行時間是隨機的。</strong> quicksort 拿第一個元素當 pivot，遇到已經排好的陣列要做 <code>n(n-1)/2</code> 次比較——2,000 個元素就是 1,999,000 次。改成隨機挑 pivot，就沒有哪一種輸入是壞輸入了，只有運氣差的骰子，而那很少見：</p>
+<pre><code>random pivot, 200 runs: mean 24,795, min 22,449, max 31,811   exact mean 24,730</code></pre>
+<p>精確的平均值是 <code>2(n+1)H(n) - 4n</code>，其中 <code>H(n) = 1 + 1/2 + ... + 1/n</code>；<code>n</code> 很大時大約以 <code>1.39 n log₂ n</code> 成長。輸出每一次都是排好的。這就是 Day 20 的 quicksort 和 Day 21 的 quickselect。</p>
+<p><strong>Monte Carlo：執行時間固定，有小機率答錯。</strong> Day 41 的費馬小定理說：<code>n</code> 是質數時，<code>a^(n-1) mod n</code> 等於 1。所以如果它「不是」1，<code>n</code> 一定是合數。反過來就不成立了，碰到 Carmichael 數更是錯得離譜。561 = 3 × 11 × 17，在底數 2 到 559 之中：</p>
+<pre><code>Fermat says &quot;prime&quot; for 318 of 558 bases (57%)
+Miller-Rabin says &quot;prime&quot; for 8 of 558 (1.4%); the bound is 1/4</code></pre>
+<p>Miller-Rabin 把 <code>n - 1</code> 寫成 <code>d · 2^s</code>（<code>d</code> 是奇數），先算 <code>a^d mod n</code>，再連續平方 <code>s</code> 次。如果 <code>n</code> 是質數，平方之後等於 1（mod <code>n</code>）的數只有 1 和 <code>n - 1</code> 兩個，所以這條鏈在變成 1 的前一步一定是 <code>n - 1</code>（或是一開始就是 1）。只要冒出別的「1 的平方根」，就證明 <code>n</code> 是合數。</p>
+<pre><code>def miller_rabin_passes(n, a):
+    d, s = n - 1, 0
+    while d % 2 == 0:
+        d //= 2
+        s += 1
+    x = pow(a, d, n)
+    if x == 1 or x == n - 1:
+        return True
+    for _ in range(s - 1):
+        x = x * x % n
+        if x == n - 1:
+            return True
+    return False                 # a square root of 1 other than +-1: composite</code></pre>
+<p>Rabin 證明了：任何奇合數，會說謊的底數最多佔四分之一；2000 以下最糟的是 1891，有 23.7% 的底數說謊。所以隨機挑 <code>k</code> 個底數全被騙的機率最多是 <code>(1/4)^k</code>。100,000 以下有 78 個奇合數能用底數 2 騙過 Fermat（341、561、645、1105、1387……）；同一個範圍裡，Miller-Rabin 只用一個隨機底數錯了 38 次，用 5 個底數一次都沒錯。把 2 到 37 這十二個質數當固定底數，這個測試已經被驗證過：大約 3.18 × 10²³ 以下的每一個數都不會出錯，涵蓋所有 64 位元整數——<code>is_prime(2**61 - 1)</code> 對這個 19 位數回答 <code>True</code>，完全不需要試 37 以上的任何除數。</p>
+<h2>精確地測試隨機性</h2>
+<p>接下來整天都要靠這個工具。把演算法寫成「從傳進來的 <code>randrange(k)</code> 拿亂數」。測試時塞一個假的 <code>randrange</code> 進去：第一次全部回 0，接著像汽車的里程表一樣，把所有回答的組合一格一格往上撥，每一位到 <code>k</code> 就進位。每一次執行的權重是 <code>1/k₁ · 1/k₂ · ...</code>，用精確的 <code>Fraction</code> 加總。</p>
+<pre><code>def exact_distribution(run):
+    dist = defaultdict(Fraction)
+    prefix = []
+    while True:
+        radices = []
+
+        def randrange(k):
+            pos = len(radices)
+            radices.append(k)
+            if pos == len(prefix):
+                prefix.append(0)
+            return prefix[pos]
+
+        out = run(randrange)
+        p = Fraction(1)
+        for k in radices:
+            p /= k
+        dist[out] += p
+        del prefix[len(radices):]
+        while prefix and prefix[-1] + 1 == radices[len(prefix) - 1]:
+            prefix.pop()
+        if not prefix:
+            return dict(dist)
+        prefix[-1] += 1</code></pre>
+<p>丟兩次硬幣、數正面次數：<code>exact_distribution(lambda rr: rr(2) + rr(2))</code> 回傳 <code>{0: 1/4, 1: 1/2, 2: 1/4}</code>。因為每次執行用到的亂數個數可能不同（拒絕之後重抽的迴圈、提早結束的資料流），里程表只撥這一次真正用到的那幾位。只要選擇的數量不多，它都能用——而差一錯誤剛好就藏在這種地方。</p>
+<h2>洗牌：LeetCode 384</h2>
+<h3>LeetCode 384 - Shuffle an Array（打亂陣列）</h3>
+<p><strong>題目在問什麼。</strong> 包裝一個整數陣列做成類別：能回傳它的一個隨機排列，而且每一種排列出現的機率都要一樣；也能把陣列還原成原本的順序。</p>
+<p><strong>輸入／輸出。</strong> 建構子拿到 <code>nums</code>。<code>shuffle()</code> 回傳一個隨機排列；<code>reset()</code> 回傳原本的陣列。</p>
+<p><strong>範例。</strong> <code>nums = [1, 2, 3]</code> 時，<code>shuffle()</code> 可能回傳 <code>[3, 1, 2]</code>；六種順序都可以，但每一種的機率都必須是 1/6。接著 <code>reset()</code> 回傳 <code>[1, 2, 3]</code>，下一次 <code>shuffle()</code> 又是六種之一。</p>
+<p><strong>限制。</strong> 最多 50 個元素、彼此不同；總共最多 10,000 次呼叫。規模很小——真正的限制是「機率一樣」，而評測只能用統計方式檢查，所以稍微偏一點的洗牌是可能通過的。</p>
+<p><a href="https://leetcode.com/problems/shuffle-an-array/">leetcode.com/problems/shuffle-an-array</a></p>
+<p>三種寫法：</p>
+<pre><code>def shuffle_naive(a, randrange):       # swap with ANY slot
+    n = len(a)
+    for i in range(n):
+        j = randrange(n)
+        a[i], a[j] = a[j], a[i]
+
+def shuffle_off_by_one(a, randrange):  # Fisher-Yates, one character off
+    for i in range(len(a) - 1, 0, -1):
+        j = randrange(i)
+        a[i], a[j] = a[j], a[i]
+
+def fisher_yates(a, randrange):
+    for i in range(len(a) - 1, 0, -1):
+        j = randrange(i + 1)           # 0..i inclusive - i itself is allowed
+        a[i], a[j] = a[j], a[i]</code></pre>
+<p>在三個元素 <code>a b c</code> 上，把每一種可能的執行都精確數一遍：</p>
+<pre><code>寫法               執行數  abc  acb  bac  bca  cab  cba
+-----------------  ------  ---  ---  ---  ---  ---  ---
+跟任意位置交換     27      4    5    5    5    4    4
+randrange(i) 寫錯  2       0    0    0    1    1    0
+Fisher-Yates       6       1    1    1    1    1    1</code></pre>
+<img alt="day42_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2042%20-%20randomized%20algorithms%20and%20monte%20carlo/imgs/day42_3.png">
+<p>天真的洗牌會產生 <code>n^n</code> 種機率相同的執行——三個元素是 27 種——但它們得分配到 <code>n!</code> = 6 種順序上。27 不能被 6 整除，所以它不可能公平，迴圈多跑幾次也救不回來。四個元素時是 256 種執行分到 24 種順序，每種順序出現 8 到 15 次：最常見的是最少見的 1.88 倍。真的抽 60,000 次三個元素的天真洗牌，得到 <code>abc 8927, acb 11040, bac 11235, bca 10915, cab 8929, cba 8954</code>——你去看就看得到，只檢查「輸出是不是一個排列」就永遠看不到。</p>
+<p><code>randrange(i)</code> 這個錯比較隱晦。因為 <code>j &lt; i</code>，位置 <code>i</code> 上的元素一定會被換走，所以沒有任何元素會留在原位。這其實是另一個有名的演算法，用途不同：Sattolo 演算法。它只會產生 <code>(n-1)!</code> 種「整個排列是一個大循環」的順序——三個元素是 6 種中的 2 種，四個元素是 24 種中的 6 種。</p>
+<p>Fisher-Yates 從後面往前填。位置 <code>i</code> 從還沒放好的 <code>i + 1</code> 個元素裡均勻挑一個，所以剛好有 <code>n!</code> 種執行，每一種給出不同的順序。</p>
+<pre><code>class Solution:
+    def __init__(self, nums: list[int]):
+        self.original = list(nums)
+
+    def reset(self) -&gt; list[int]:
+        return list(self.original)
+
+    def shuffle(self) -&gt; list[int]:
+        a = list(self.original)
+        for i in range(len(a) - 1, 0, -1):
+            j = random.randrange(i + 1)
+            a[i], a[j] = a[j], a[i]
+        return a</code></pre>
+<p>（<code>random.shuffle</code> 就是 Fisher-Yates，真的寫程式時直接用它。）</p>
+<h2>蓄水池抽樣：LeetCode 382 與 LeetCode 398</h2>
+<h3>LeetCode 382 - Linked List Random Node（鏈結串列隨機節點）</h3>
+<p><strong>題目在問什麼。</strong> 給一條單向鏈結串列，做一個類別，<code>getRandom()</code> 要均勻隨機地回傳某個節點的值。</p>
+<p><strong>輸入／輸出。</strong> 建構子拿到串列的 head。<code>getRandom()</code> 回傳一個節點值；每個節點被選中的機率必須相同。</p>
+<p><strong>範例。</strong> 串列 <code>1 -&gt; 2 -&gt; 3</code>，每次呼叫 <code>getRandom()</code> 回傳 1、2 或 3，各 1/3 的機率。</p>
+<p><strong>限制。</strong> 1 到 10,000 個節點，最多 10,000 次呼叫。把串列複製成陣列再用索引取是可以過的。有意思的是延伸問題：如果串列長到存不下，或是根本不知道長度呢？那就只能走一遍、只用常數記憶體。</p>
+<p><a href="https://leetcode.com/problems/linked-list-random-node/">leetcode.com/problems/linked-list-random-node</a></p>
+<h3>LeetCode 398 - Random Pick Index（隨機數索引）</h3>
+<p><strong>題目在問什麼。</strong> 給一個可能有重複值的整數陣列，做一個類別，<code>pick(target)</code> 要隨機回傳一個滿足 <code>nums[i] == target</code> 的索引 <code>i</code>，每個符合的索引機率相同。</p>
+<p><strong>輸入／輸出。</strong> 建構子拿到 <code>nums</code>；<code>pick(target)</code> 回傳一個索引。保證 target 在陣列裡。</p>
+<p><strong>範例。</strong> <code>nums = [1, 2, 3, 3, 3]</code>，<code>pick(3)</code> 回傳 2、3 或 4，各 1/3；<code>pick(1)</code> 永遠回傳 0。</p>
+<p><strong>限制。</strong> 最多 20,000 個元素、最多 10,000 次呼叫。用 dict 記下每個值的索引清單是快的解法；只走一遍、不用額外記憶體的解法，就是對「符合的那些位置」做蓄水池抽樣。</p>
+<p><a href="https://leetcode.com/problems/random-pick-index/">leetcode.com/problems/random-pick-index</a></p>
+<p>把資料流走一遍，第 <code>i</code> 個元素（從 1 開始數）用 <code>1/i</code> 的機率留下來。第 <code>j</code> 個元素先以 <code>1/j</code> 被選上，之後每一步都要撐過去：<code>1/j · j/(j+1) · (j+1)/(j+2) · ... · (n-1)/n = 1/n</code>。全程不需要知道長度。</p>
+<pre><code>def reservoir_one(stream, randrange):
+    chosen = None
+    for i, x in enumerate(stream, 1):
+        if randrange(i) == 0:          # 1 chance in i
+            chosen = x
+    return chosen</code></pre>
+<p>把 <code>enumerate</code> 的 <code>1</code> 拿掉，第二個元素被留下的機率就變成 <code>1/1</code>。它一定會換掉第一個，所以第一個永遠回不來：</p>
+<pre><code>reservoir 1/i       a:1/5  b:1/5  c:1/5  d:1/5  e:1/5
+randrange(i) slip   a:0    b:1/4  c:1/4  d:1/4  e:1/4</code></pre>
+<img alt="day42_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2042%20-%20randomized%20algorithms%20and%20monte%20carlo/imgs/day42_4.png">
+<p>LeetCode 382 用 <code>[1, 2, 3]</code> 呼叫 30,000 次，正確版本得到 <code>{1: 9977, 2: 9958, 3: 10065}</code>；寫錯的版本得到 <code>{2: 15042, 3: 14958}</code>。注意寫錯的版本照樣符合範例「回傳 1、2 或 3」——它只會回 2 或 3，而任何單一次呼叫都證明不了它錯。要留下 <code>k</code> 個而不是一個（Algorithm R）時，第 <code>i</code> 個元素（從 0 數）以 <code>k/(i+1)</code> 的機率換掉隨機一格；從 5 個裡留 2 個，10 種組合每一種剛好都是 1/10。</p>
+<pre><code>class Solution:                      # LeetCode 382
+    def __init__(self, head: Optional[ListNode]):
+        self.head = head
+
+    def getRandom(self) -&gt; int:
+        chosen, i, node = 0, 0, self.head
+        while node:
+            i += 1
+            if random.randrange(i) == 0:
+                chosen = node.val
+            node = node.next
+        return chosen</code></pre>
+<p>LeetCode 398 是同一個迴圈，只數符合的位置：</p>
+<pre><code>class Solution:                      # LeetCode 398
+    def __init__(self, nums: list[int]):
+        self.nums = nums
+
+    def pick(self, target: int) -&gt; int:
+        chosen, seen = -1, 0
+        for i, v in enumerate(self.nums):
+            if v == target:
+                seen += 1
+                if random.randrange(seen) == 0:
+                    chosen = i
+        return chosen</code></pre>
+<p><code>[1, 2, 3, 3, 3]</code> 呼叫 <code>pick(3)</code> 30,000 次，得到 <code>{2: 9919, 3: 10010, 4: 10071}</code>。</p>
+<h2>拒絕抽樣：LeetCode 470</h2>
+<h3>LeetCode 470 - Implement Rand10() Using Rand7()（用 Rand7() 實作 Rand10()）</h3>
+<p><strong>題目在問什麼。</strong> 給你 <code>rand7()</code>，它均勻回傳 1 到 7 的整數。只能用它，寫出均勻回傳 1 到 10 的 <code>rand10()</code>。</p>
+<p><strong>輸入／輸出。</strong> 沒有參數；<code>rand10()</code> 回傳 1..10 的整數。不能呼叫其他任何亂數函式。</p>
+<p><strong>範例。</strong> 呼叫三次 <code>rand10()</code> 可能得到 <code>[2, 8, 10]</code>；評測只檢查範圍和整體分布。</p>
+<p><strong>限制。</strong> 最多 100,000 次呼叫。延伸問題問的是：每次 <code>rand10()</code> 平均要呼叫幾次 <code>rand7()</code>、怎麼把它壓低——這才是「對的答案」和「好的答案」的差別。</p>
+<p><a href="https://leetcode.com/problems/implement-rand10-using-rand7/">leetcode.com/problems/implement-rand10-using-rand7</a></p>
+<p>呼叫兩次 <code>rand7</code> 得到 7 × 7 = 49 個機率相同的格子，編號 1 到 49。49 不能被 10 整除，所以只用前 40 格——1..10 各四份——如果落在最後 9 格，就丟掉重抽。</p>
+<img alt="day42_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2042%20-%20randomized%20algorithms%20and%20monte%20carlo/imgs/day42_5.png">
+<pre><code>class Solution:
+    def rand10(self) -&gt; int:
+        while True:
+            idx = (rand7() - 1) * 7 + rand7()    # 1..49, uniform
+            if idx &lt;= 40:
+                return (idx - 1) % 10 + 1</code></pre>
+<p>一輪被接受的機率是 40/49，接受之後每個數字剛好 1/10。如果省掉拒絕、直接回傳 <code>idx % 10 + 1</code>，數字 1 只分到四格（4/49），其他每個數字分到五格（5/49）。期望成本是 <code>2 × 49/40 = 2.45</code> 次 <code>rand7</code>；實際跑 200,000 次量到 2.456。延伸問題的技巧是別把被拒絕的格子整個丟掉：落在 41..49 的 <code>idx</code> 本身就是一個均勻的 1 到 9，再配一次 <code>rand7</code> 就有 63 格，其中 60 格能用，依此類推。這樣降到 2.193 次。正常版本跑 100,000 次，每個數字出現的次數都在 9,882 到 10,254 之間。</p>
+<p>拒絕抽樣是一個通用工具：想從一個不好抽的形狀裡抽樣，就從一個蓋住它的簡單形狀抽，落在外面的丟掉。前面估計 pi 的丟點，用的就是同一招。</p>
+<h2>用前綴和做加權抽樣：LeetCode 528</h2>
+<h3>LeetCode 528 - Random Pick with Weight（按權重隨機選擇）</h3>
+<p><strong>題目在問什麼。</strong> 給一串正整數權重 <code>w</code>，做一個類別，<code>pickIndex()</code> 以 <code>w[i] / sum(w)</code> 的機率回傳索引 <code>i</code>。</p>
+<p><strong>輸入／輸出。</strong> 建構子拿到 <code>w</code>；<code>pickIndex()</code> 回傳一個索引。</p>
+<p><strong>範例。</strong> <code>w = [1, 3]</code>：<code>pickIndex()</code> 應該有四分之一的時間回傳 0、四分之三的時間回傳 1。</p>
+<p><strong>限制。</strong> 最多 10,000 個權重、每個最大 100,000，最多 10,000 次呼叫。呼叫次數這麼多，每次都把權重掃一遍會太慢；先建一次前綴和，每次抽樣用二分搜尋，<code>O(log n)</code>。</p>
+<p><a href="https://leetcode.com/problems/random-pick-with-weight/">leetcode.com/problems/random-pick-with-weight</a></p>
+<p>前綴和（Day 22）把整數 <code>0..total-1</code> 切成連續的區段，每個索引一段、寬度等於它的權重。<code>w = [1, 3]</code> 的前綴和是 <code>[1, 4]</code>：目標值 0 屬於索引 0，目標值 1、2、3 屬於索引 1。抽一個目標值，再用二分搜尋找第一個「大於」它的前綴和：</p>
+<pre><code>class Solution:
+    def __init__(self, w: list[int]):
+        self.prefix = list(accumulate(w))        # [1, 3] -&gt; [1, 4]
+
+    def pickIndex(self) -&gt; int:
+        target = random.randrange(self.prefix[-1])   # 0..total-1
+        return bisect_right(self.prefix, target)     # first prefix &gt; target</code></pre>
+<p>在 <code>[1, 3]</code> 上抽 40,000 次，得到 <code>{0: 10011, 1: 29989}</code>。</p>
+<img alt="day42_6" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2042%20-%20randomized%20algorithms%20and%20monte%20carlo/imgs/day42_6.png">
+<p>常見的 bug 是混用兩種慣例：<code>random.randint(0, total)</code>（包含 <code>total</code>，所以有 <code>total + 1</code> 個值）配上 <code>bisect_left</code>。目標值 1 也落到索引 0，於是索引 0 拿到五個值裡的兩個：</p>
+<pre><code>w        正確           randint(0, total) + bisectleft
+-------  -------------  ------------------------------
+[1, 3]   1/4, 3/4       2/5, 3/5
+[1, 99]  1/100, 99/100  2/101, 99/101</code></pre>
+<p>稀有的那一項機率翻倍了。<code>randrange(total)</code> 配 <code>bisect_right</code>，或 <code>randint(1, total)</code> 配 <code>bisect_left</code>，兩組都對，但不能混搭。</p>
+<p>語言模型挑下一個字，用的就是這一步。它先用 <code>softmax(logits / temperature)</code> 把每個字的分數（logits）轉成機率，再做上面這個「前綴和＋二分搜尋」的抽樣。三個字的 logits 是 <code>the 2.0, a 1.0, cat 0.1</code>：</p>
+<pre><code>temperature  the    a      cat
+-----------  -----  -----  -----
+0.5          0.864  0.117  0.019
+1.0          0.659  0.242  0.099
+2.0          0.502  0.304  0.194</code></pre>
+<p>溫度低，分布就往最高分的字集中；溫度高，分布就變平。上面那種 bug 會在沒人發現的情況下，讓一個罕見的字被選中的機率翻倍。</p>
+<h2>複雜度</h2>
+<pre><code>操作                                  時間                         空間
+------------------------------------  ---------------------------  -------------
+N 個樣本的蒙地卡羅估計                O(N)，誤差約 1/sqrt(N)       O(1)
+隨機 pivot 的 quicksort               期望 O(n log n)，最差 O(n²)  期望 O(log n)
+Miller-Rabin，k 個底數                O(k log n) 次乘法            O(1)
+抽樣器的精確分布                      每種亂數序列跑一次           O(選擇數)
+Fisher-Yates 洗牌（LeetCode 384）     O(n)                         複製用 O(n)
+蓄水池抽樣一個（LeetCode 382 / 398）  每次 O(n)，走一遍            O(1)
+Algorithm R，k 個                     O(n)                         O(k)
+用 rand7 做 rand10（LeetCode 470）    期望 2.45 次 rand7           O(1)
+加權抽樣（LeetCode 528）              建表 O(n)，每次 O(log n)     O(n)</code></pre>
+<h2>之後會在哪裡用到</h2>
+<p>這個系列後半段所有「從經驗中學習」的東西，幾乎都跑在今天這兩個想法上。多臂吃角子老虎機（multi-armed bandit）用抽樣決定下一台要試哪一台，並用同一條 <code>1 / sqrt(N)</code> 規律決定每台的平均值有多可信：試過 100 次的那台，比只試過一次的那台準十倍。強化學習用蒙地卡羅回報（Monte Carlo return）估計一個狀態的價值——把一局玩完、把獎勵加起來、對很多局取平均——而 AlphaGo 背後的蒙地卡羅樹搜尋（MCTS），是從每個候選步各下很多盤隨機棋來挑步。語言模型一次生成一個 token，用的正是 LeetCode 528 那個「softmax＋加權抽樣」。訓練時每個 epoch 用 Fisher-Yates 把資料洗一次，而隨機梯度下降（SGD）本身就是對真正梯度的一個蒙地卡羅估計。</p>
+<p>今天要帶走的習慣：一個用到亂數的函式，在你數過它的輸出之前都不算測過。選擇少的時候，精確地數；選擇多的時候，抽夠多次，讓 <code>1 / sqrt(N)</code> 的誤差小於你要找的偏差。</p>
+<p>明天：並行與平行——GIL、<code>multiprocessing</code>、<code>asyncio</code>、map-reduce，以及「work 與 depth」這個衡量一個演算法到底有多少能平行化的方法。</p>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2042%20-%20randomized%20algorithms%20and%20monte%20carlo">day 42 on GitHub</a></p>
+</body>
+</html>

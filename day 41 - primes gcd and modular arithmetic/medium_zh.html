@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 41 — 模運算、快速冪、GCD 與質數篩：計算大到寫不下的數字</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 41 — 模運算、快速冪、GCD 與質數篩：計算大到寫不下的數字</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2041%20-%20primes%20gcd%20and%20modular%20arithmetic">day 41 on GitHub</a></p>
+<p><em>100 Days of Python - day 41</em></p>
+<p><code>pow(3, 10**18, 10**9 + 7)</code> 把 3 自乘「十億的十億次」再取餘數，大約兩微秒就回來了，總共只做了 82 次乘法。換成計算 <code>3**1_000_000 % (10**9 + 7)</code>——指數小了一百萬的一百萬倍——Python 會先老老實實算出一個 158 萬個位元長的數字，花將近十分之一秒，慢了好幾萬倍。同一個工具箱裡，埃拉托斯特尼篩法（sieve of Eratosthenes）大約 13 毫秒就找出一百萬以下全部 78,498 個質數；輾轉相除法（Euclid&#x27;s algorithm）求兩個一千位數的最大公因數，不到兩千步。</p>
+<p>這些全都建立在同一個約定上：每做一次 <code>+</code>、<code>-</code>、<code>*</code> 就取一次 <code>% m</code>，最後剩下的餘數會跟用完整大數算出來的一模一樣。這個約定只有一個破洞——除法——而且從那個洞掉下去的每一種寫法都不會報錯：</p>
+<ul><li>階乘先取過 mod 1,000,000,007，再用 <code>fact[n] // (fact[k] * fact[n-k])</code> 算組合數：<code>n</code> 到 12 為止全對，從 13 開始全錯。</li><li>大家常抄的「模反元素」<code>pow(a, m - 2, m)</code> 只有在 <code>m</code> 是質數時才成立。<code>m = 10</code> 的時候，它說 3 的反元素是 1。</li><li>LeetCode 204 要算「小於」<code>n</code> 的質數。改成數「小於等於」<code>n</code> 的質數，三個範例全過，而只要 <code>n</code> 本身是質數就答錯。</li></ul>
+<p>昨天談的是整數的位元。今天會發現，快速冪的整個秘密，就是<strong>指數</strong>的位元。</p>
+<h2>哪些運算撐得過 %</h2>
+<p>取 <code>a = 123,456,789</code>、<code>b = 987,654,321</code>、<code>m = 1000</code>。先取餘數再算、或算完再取餘數，答案都一樣：</p>
+<pre><code>(a + b) % m = 110     (a % m + b % m) % m = 110
+(a - b) % m = 468     (a % m - b % m) % m = 468
+(a * b) % m = 269     (a % m) * (b % m) % m = 269</code></pre>
+<p>原因是 <code>a</code> 跟 <code>a % m</code> 只差一個 <code>m</code> 的倍數，而加、減、乘上一個 <code>m</code> 的倍數，只會多出更多 <code>m</code> 的倍數。除法沒有這個性質：<code>(12 // 4) % 5</code> 是 3，但 <code>(12 % 5) // (4 % 5)</code> 是 <code>2 // 4 = 0</code>。記住這個 <code>0</code>，等一下它會變成一個算錯的組合數。</p>
+<p>Python 特有的細節：<code>%</code> 的結果跟著 <code>m</code> 的正負號，所以 <code>-7 % 3</code> 是 2，C 跟 Java 則是 -1。因此 <code>(a - b) % m</code> 在 Python 裡永遠不會是負的，C 程式碼取餘數前習慣補上的 <code>+ m</code>，這裡用不到。</p>
+<h2>快速冪：square-and-multiply</h2>
+<img alt="day41_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2041%20-%20primes%20gcd%20and%20modular%20arithmetic/imgs/day41_1.png">
+<p>13 的二進位是 <code>1101</code>，也就是 8 + 4 + 1。所以 3¹³ = 3⁸ · 3⁴ · 3¹，而 3¹、3²、3⁴、3⁸ 每一個都是前一個的平方。從最低位開始走過指數的每一個位元：每個位元平方一次，只有遇到 1 的位元才乘進結果。</p>
+<pre><code>def power_mod(a, e, m):
+    result = 1 % m
+    a %= m
+    while e:
+        if e &amp; 1:                       # this bit is on: multiply its power in
+            result = result * a % m
+        a = a * a % m                   # a, a^2, a^4, a^8 ... one squaring per bit
+        e &gt;&gt;= 1
+    return result</code></pre>
+<p>拿 <code>3^13 mod 100</code> 來跑，迴圈只轉四圈：</p>
+<pre><code>bit k  bit  3^(2^k) mod 100  result
+    0    1                3       3   &lt;- multiply in
+    1    0                9       3
+    2    1               81      43   &lt;- multiply in
+    3    1               61      23   &lt;- multiply in</code></pre>
+<p>3¹³ 是 1,594,323，結尾確實是 23。乘法次數是「每個位元一次平方，加上每個 1 位元一次相乘」，再扣掉開頭那兩次不用做的：</p>
+<pre><code>exponent                          naive loop    square-and-multiply
+13                                        12                      5
+1,000,000,000                    999,999,999                     41
+1,000,000,000,000,000,000   999,999,999,999,999,999              82</code></pre>
+<p>Python 內建的 <code>pow(a, e, m)</code> 就是這個迴圈的 C 版本，實際寫程式請直接用它；上面那個函式只是讓你看清楚它在做什麼。千萬<strong>不要</strong>寫 <code>a ** e % m</code>：Python 會很樂意先把完整的大數算出來。</p>
+<h3>LeetCode 50 - Pow(x, n)（Pow(x, n)）</h3>
+<p><strong>題目要做什麼。</strong> 不呼叫函式庫的次方函式，算出一個浮點數的整數次方。</p>
+<p><strong>輸入／輸出。</strong> 浮點數 <code>x</code> 和整數 <code>n</code>；回傳 <code>x</code> 的 <code>n</code> 次方（浮點數）。</p>
+<p><strong>範例。</strong> <code>x = 2.0, n = 10</code> 得到 <code>1024.0</code>。<code>x = 2.0, n = -2</code> 得到 <code>0.25</code>：負次方就是正次方的倒數，<code>1 / 2² = 1/4</code>。</p>
+<p><strong>限制。</strong> <code>-100 &lt; x &lt; 100</code>，<code>n</code> 可以是 32 位元有號整數範圍內的任何值，從 -2,147,483,648 到 2,147,483,647。二十億次乘法太多了，所以這題其實就是在考 square-and-multiply。範圍最底端是 C 和 Java 的陷阱：<code>-(-2^31)</code> 放不進 32 位元。題目保證答案落在 -10,000 到 10,000 之間。</p>
+<p><a href="https://leetcode.com/problems/powx-n/">leetcode.com/problems/powx-n</a></p>
+<pre><code>class Solution:
+    def myPow(self, x: float, n: int) -&gt; float:
+        if n &lt; 0:
+            x, n = 1 / x, -n            # in Python -n never overflows
+        result = 1.0
+        while n:
+            if n &amp; 1:
+                result *= x
+            x *= x
+            n &gt;&gt;= 1
+        return result</code></pre>
+<p><code>n = -2**31</code> 時，這段只做 31 次平方，而不是 2,147,483,648 次乘法。Python 取負號是安全的；換成 C++ 就要先把 <code>n</code> 轉成 64 位元的 <code>long long</code>。</p>
+<p>同一個迴圈可以用在任何「能相乘」的東西上，包括矩陣。Day 33 爬樓梯的答案最後就是 Fibonacci 數列，當時是一次一個加法往後填。<code>[[1, 1], [1, 0]]</code> 的 <code>n</code> 次方，角落那一格就是 F(n)，所以在 2x2 矩陣上做 square-and-multiply，83 次矩陣乘法就得到 F(10¹⁸) mod 1,000,000,007 = 209,783,453。用迴圈的話，要做十億的十億次加法。</p>
+<h2>最大公因數：輾轉相除法</h2>
+<img alt="day41_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2041%20-%20primes%20gcd%20and%20modular%20arithmetic/imgs/day41_2.png">
+<p>任何同時整除 <code>a</code> 和 <code>b</code> 的數，也整除 <code>a - q·b</code>（不管 <code>q</code> 是多少），當然也就整除餘數 <code>a % b</code>；反過來也成立。所以 <code>gcd(a, b) = gcd(b, a % b)</code>，數字一路變小，直到餘數是 0：</p>
+<pre><code>252 = 2 x 105 + 42
+105 = 2 x 42  + 21
+ 42 = 2 x 21  + 0      -&gt; gcd = 21</code></pre>
+<p>圖上把它畫成鋪磁磚：從 252 × 105 的長方形切出最大的正方形，再從剩下的部分繼續切，最後那塊能剛好鋪滿剩餘空間的正方形，邊長是 21。</p>
+<pre><code>def gcd(a, b):
+    while b:
+        a, b = b, a % b
+    return abs(a)</code></pre>
+<p>「大的減小的」那個版本，是同一個想法的慢動作：<code>gcd(1,000,000, 1)</code> 要減 999,999 次，<code>%</code> 一步就完成。輾轉相除法最慢的輸入是相鄰的兩個 Fibonacci 數，因為每一步的商都是 1：1000 以內所有的數對中，最慢的是 <code>gcd(987, 610)</code>，14 步；<code>gcd(832,040, 514,229)</code> 要 28 步。步數跟著<strong>位數</strong>長，不是跟著數字大小長：兩個隨機的一千位數只花了 1,875 步。</p>
+<p><strong>擴展歐幾里得（extended Euclid）</strong> 多帶兩個數一起走，讓每一列都維持是兩個輸入的組合。在 <code>(240, 46)</code> 上，它讓 <code>a == 240·x + 46·y</code> 每一列都成立：</p>
+<pre><code>   a     b   q     x     y
+ 240    46         1     0
+  46    10   5     0     1
+  10     6   4     1    -5
+   6     4   1    -4    21
+   4     2   1     5   -26
+   2     0   2    -9    47</code></pre>
+<p>所以 <code>2 = 240·(-9) + 46·47</code>。這就是 Bézout 等式：最大公因數一定能寫成兩個輸入的整數組合，而用 <code>a</code> 和 <code>b</code> 湊得出來的量，剛好就是它們最大公因數的所有倍數。</p>
+<pre><code>def ext_gcd(a, b):
+    x0, y0, x1, y1 = 1, 0, 0, 1
+    while b:
+        q, a, b = a // b, b, a % b
+        x0, x1 = x1, x0 - q * x1
+        y0, y1 = y1, y0 - q * y1
+    return a, x0, y0                    # a*x0 + b*y0 == gcd</code></pre>
+<h3>LeetCode 365 - Water and Jug Problem（水壺問題）</h3>
+<p><strong>題目要做什麼。</strong> 你有兩個容量分別是 <code>x</code> 和 <code>y</code> 公升的水壺，水龍頭的水無限供應。每一步可以：把一個壺裝滿、把一個壺倒空、或把一個壺倒進另一個壺，直到前者空了或後者滿了。問最後能不能讓兩個壺裡的水<strong>加起來</strong>剛好是 <code>target</code> 公升。</p>
+<p><strong>輸入／輸出。</strong> 三個整數 <code>x</code>、<code>y</code>、<code>target</code>；回傳 <code>True</code> 或 <code>False</code>。</p>
+<p><strong>範例。</strong> <code>x = 3, y = 5, target = 4</code> 是 <code>True</code>：裝滿 5，倒進 3（5 裡剩 2），倒空 3，把那 2 公升倒過去，再裝滿 5，用 1 公升把 3 補滿，再倒空 3——剩下的剛好 4 公升，全在大壺裡。<code>x = 2, y = 6, target = 5</code> 是 <code>False</code>：能湊出來的量全是偶數。</p>
+<p><strong>限制。</strong> <code>1 &lt;= x, y, target &lt;= 1000</code>。對 (壺 1, 壺 2) 的狀態做廣度優先搜尋，最多大約一百萬個狀態，這個規模跑得動；Bézout 則只要一次 gcd。</p>
+<p><a href="https://leetcode.com/problems/water-and-jug-problem/">leetcode.com/problems/water-and-jug-problem</a></p>
+<pre><code>class Solution:
+    def canMeasureWater(self, x: int, y: int, target: int) -&gt; bool:
+        return target &lt;= x + y and target % math.gcd(x, y) == 0</code></pre>
+<p>最常被漏掉的是第一個條件。少了它，<code>(3, 5, 9)</code> 會回答 <code>True</code>——gcd 是 1，當然整除 9——但 3 公升和 5 公升兩個壺最多就裝 8 公升。repo 裡的 BFS 在四個範例上都跟這一行的答案一致。</p>
+<h2>模反元素，以及 Fermat 的捷徑</h2>
+<img alt="day41_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2041%20-%20primes%20gcd%20and%20modular%20arithmetic/imgs/day41_4.png">
+<p>在 <code>% m</code> 底下不能除，但可以乘上<strong>反元素</strong>：一個讓 <code>a·x % m == 1</code> 的數 <code>x</code>。3 在 mod 10 下的反元素是 7，因為 3 · 7 = 21。擴展歐幾里得可以找到它——對 <code>(a, m)</code> 跑一次，如果 gcd 是 1，就有 <code>a·x + m·y = 1</code>，所以 <code>a·x</code> 除以 <code>m</code> 餘 1。如果 gcd 不是 1，反元素就不存在；4 在 mod 10 下就沒有。</p>
+<pre><code>def inverse(a, m):
+    g, x, _ = ext_gcd(a % m, m)
+    if g != 1:
+        raise ValueError(f&#x27;{a} has no inverse mod {m}&#x27;)
+    return x % m</code></pre>
+<p>從 Python 3.8 開始，內建函式也能做這件事：<code>pow(3, -1, 10)</code> 是 7，<code>pow(4, -1, 10)</code> 則會丟出 <code>ValueError: base is not invertible for the given modulus</code>。</p>
+<p>競賽程式裡最常看到的捷徑是 <code>pow(a, m - 2, m)</code>。它來自 Fermat 小定理：當 <code>m</code> 是質數時 <code>a^(m-1) % m == 1</code>，所以 <code>a^(m-2)</code> 就是反元素。當 <code>m</code> 不是質數時，沒有任何東西會檢查，答案就直接錯了。<code>m = 10</code> 時它給出 <code>pow(3, 8, 10) = 1</code>，而 3 · 1 在 mod 10 下並不是 1。把每一個真的有反元素的數都算一遍：</p>
+<pre><code>m                 numbers with an inverse    Fermat wrong on
+10                                      4                  3
+12                                      4                  3
+1,337                               1,140              1,136
+1,000,000                         400,000            399,999
+1,000,000,007 (prime)    1,000 random a                    0</code></pre>
+<p>模數是質數時每次都對，其他情況幾乎每次都錯。<code>pow(4, 8, 10)</code> 一聲不吭地回傳 6，<code>pow(4, -1, 10)</code> 卻會拒絕。模數是 1,000,000,007 或 998,244,353 時，這個捷徑沒問題；其他模數，請用 <code>pow(a, -1, m)</code>。</p>
+<h2>nCk mod p：撐到 13 才壞的 //</h2>
+<img alt="day41_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2041%20-%20primes%20gcd%20and%20modular%20arithmetic/imgs/day41_5.png">
+<p>「答案很大，請對 10⁹ + 7 取餘數」的計數題，常常要用到組合數 <code>C(n, k) = n! / (k! (n-k)!)</code>。最直覺的第一版是先建一張 mod p 的階乘表，然後除：</p>
+<pre><code>f[n] // (f[k] * f[n - k] % p) % p      # the bug</code></pre>
+<p><code>n</code> 到 12 為止全部答對。第一個錯的是 <code>C(13, 1)</code>，回傳 0 而不是 13。原因只要一行算術：12! = 479,001,600 比 1,000,000,007 小，13! = 6,227,020,800 比它大。到 12 為止，「取過 mod p 的階乘」就是真正的階乘，所以 <code>//</code> 是真正的除法；從 13 開始，<code>f[n]</code> 只是一個餘數，而拿餘數相除，就是本文開頭那個 <code>2 // 4 = 0</code>。<code>n</code> 到 30 為止的 496 個答案裡錯了 369 個，<code>C(100, 50)</code> 回傳 0，正確答案是 538,992,043。自己手寫的小測資，全都會過。</p>
+<p>正確做法是乘上階乘的反元素。因為 1/(i-1)! = i · 1/i!，只要對最大的那個階乘呼叫一次 <code>pow</code>，其他的全部推得出來：</p>
+<pre><code>class Binomial:
+    def __init__(self, n, p=MOD):
+        self.p = p
+        self.f = factorials(n, p)
+        self.inv_f = [1] * (n + 1)
+        self.inv_f[n] = pow(self.f[n], p - 2, p)       # p is prime: Fermat is fine here
+        for i in range(n, 0, -1):                      # 1/(i-1)! = i * 1/i!
+            self.inv_f[i - 1] = self.inv_f[i] * i % p
+
+    def ncr(self, n, k):
+        if k &lt; 0 or k &gt; n:
+            return 0
+        return self.f[n] * self.inv_f[k] % self.p * self.inv_f[n - k] % self.p</code></pre>
+<p><code>C(1,000,000, 500,000) mod p</code> 是 996,692,777。一千筆 <code>n</code> 最大到 10,000 的隨機查詢，查表不到一毫秒；用 <code>math.comb(n, k) % p</code> 大約一秒半，因為它每次都把完整的大數算出來。</p>
+<h2>埃拉托斯特尼篩法</h2>
+<img alt="day41_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2041%20-%20primes%20gcd%20and%20modular%20arithmetic/imgs/day41_3.png">
+<p>與其一個一個數去試有沒有因數，不如讓每個質數去劃掉自己的倍數。在 50 以下：</p>
+<pre><code>p = 2 crosses out 4, 6, 8, ... 48     (23 numbers)
+p = 3 crosses out 9, 15, 21, 27, 33, 39, 45
+p = 5 crosses out 25, 35
+p = 7 crosses out 49</code></pre>
+<p>快的關鍵有兩個。每個質數從 <code>p·p</code> 開始劃，因為比它小的倍數（p = 5 時的 <code>3·5 = 15</code>）早就被更小的質數劃掉了。外層迴圈在 <code>p·p</code> 超過 <code>n</code> 時就停：8 · 8 = 64 已經超過 49，所以 7 之後的質數都沒事可做。最後還站著的 15 個數就是質數。n = 1,000,000 時，從 <code>p·p</code> 開始劃要 2,122,046 次，從 <code>2p</code> 開始要 2,197,837 次，讓 <code>n</code> 以下每一個質數都來篩則要 2,775,208 次。</p>
+<p>在 Python 裡更大的加速，是根本不要用 Python 跑內層迴圈。對 <code>bytearray</code> 的一個切片指派零，一次 C 層級的操作就劃掉全部倍數：</p>
+<pre><code>def sieve(n):
+    is_prime = bytearray([1]) * max(n, 2)
+    is_prime[0] = is_prime[1] = 0
+    for p in range(2, isqrt(n - 1) + 1 if n &gt; 1 else 2):
+        if is_prime[p]:
+            is_prime[p * p::p] = bytes(len(range(p * p, n, p)))
+    return is_prime[:n]</code></pre>
+<p>找出一百萬以下 78,498 個質數：試除法大約 4.6 秒，用迴圈寫的篩法大約四分之一秒，用切片大約 13 毫秒。一千萬以下有 664,579 個質數，大約三分之一秒。</p>
+<h3>LeetCode 204 - Count Primes（計數質數）</h3>
+<p><strong>題目要做什麼。</strong> 數一數有幾個質數<strong>嚴格小於</strong> <code>n</code>。</p>
+<p><strong>輸入／輸出。</strong> 一個整數 <code>n</code>；回傳個數。</p>
+<p><strong>範例。</strong> <code>n = 10</code> 得到 4：10 以下的質數是 2、3、5、7。<code>n = 0</code> 和 <code>n = 1</code> 都是 0。</p>
+<p><strong>限制。</strong> <code>0 &lt;= n &lt;= 5,000,000</code>。在 Python 裡對五百萬個數做試除法太慢，所以這是一題篩法題。「嚴格」兩個字才是重點。</p>
+<p><a href="https://leetcode.com/problems/count-primes/">leetcode.com/problems/count-primes</a></p>
+<pre><code>class Solution:
+    def countPrimes(self, n: int) -&gt; int:
+        return sum(sieve(n)) if n &gt; 2 else 0</code></pre>
+<p>寫成 <code>sieve(n + 1)</code>——「小於等於 n 的質數」——三個範例照樣全過，因為 10、0、1 都不是質數。它只在 <code>n</code> 本身是質數時答錯：<code>n</code> 從 0 到 5000，總共錯 669 次，而 5000 以內剛好有 669 個質數。</p>
+<h2>LeetCode 1922 與 LeetCode 372：大到不能用迴圈的指數</h2>
+<h3>LeetCode 1922 - Count Good Numbers（統計好數字的數目）</h3>
+<p><strong>題目要做什麼。</strong> 一個數字字串，如果每個偶數位置（從 0 開始數）的數字都是偶數，每個奇數位置的數字都是質數數字（2、3、5、7），就叫「好」字串。數出長度為 <code>n</code> 的好字串有幾個，答案對 1,000,000,007 取餘數。允許前導零。</p>
+<p><strong>輸入／輸出。</strong> 一個整數 <code>n</code>；回傳個數 mod 1,000,000,007。</p>
+<p><strong>範例。</strong> <code>n = 1</code> 得到 5：&quot;0&quot;、&quot;2&quot;、&quot;4&quot;、&quot;6&quot;、&quot;8&quot;。<code>n = 4</code> 得到 400：位置 0 和 2 各有 5 種選擇，位置 1 和 3 各有 4 種，5 · 4 · 5 · 4 = 400。</p>
+<p><strong>限制。</strong> <code>1 &lt;= n &lt;= 10^15</code>。一千兆個位置，任何逐位置的迴圈都跑不完，所以答案只能是兩次快速冪。</p>
+<p><a href="https://leetcode.com/problems/count-good-numbers/">leetcode.com/problems/count-good-numbers</a></p>
+<pre><code>class Solution:
+    def countGoodNumbers(self, n: int) -&gt; int:
+        even_slots, odd_slots = (n + 1) // 2, n // 2   # indices 0, 2, 4 ... / 1, 3, 5 ...
+        return pow(5, even_slots, MOD) * pow(4, odd_slots, MOD) % MOD</code></pre>
+<p><code>n = 50</code> 得到 564,908,303，<code>n = 10^15</code> 得到 711,414,395，都是微秒等級。</p>
+<h3>LeetCode 372 - Super Pow（超級次方）</h3>
+<p><strong>題目要做什麼。</strong> 算出 <code>a</code> 的 <code>b</code> 次方 mod 1337，其中 <code>b</code> 大到只能用十進位數字的串列給你。</p>
+<p><strong>輸入／輸出。</strong> 整數 <code>a</code> 和數字串列 <code>b</code>（最高位在前）；回傳 <code>a^b mod 1337</code>。</p>
+<p><strong>範例。</strong> <code>a = 2, b = [1, 0]</code> 代表 2¹⁰，答案 1024。<code>a = 2147483647, b = [2, 0, 0]</code> 代表這個數的 200 次方，答案 1198。</p>
+<p><strong>限制。</strong> <code>1 &lt;= a &lt;= 2^31 - 1</code>，<code>b</code> 最多 2000 位、沒有前導零。在 Python 裡你可以把數字串起來變成一個整數再呼叫 <code>pow</code>——兩千位數的指數，<code>pow</code> 輕鬆處理。下面逐位處理的版本，則是換成任何語言都能用的寫法。</p>
+<p><a href="https://leetcode.com/problems/super-pow/">leetcode.com/problems/super-pow</a></p>
+<pre><code>class Solution:
+    def superPow(self, a: int, b: list[int]) -&gt; int:
+        result = 1
+        for d in b:                      # a^(10*e + d) = (a^e)^10 * a^d
+            result = pow(result, 10, 1337) * pow(a, d, 1337) % 1337
+        return result</code></pre>
+<p>陷阱：有些解法會先把指數 <code>% 1336</code> 縮小，借用 Fermat 的「指數每 m - 1 步重複一次」。這需要 1337 是質數，但 1337 = 7 × 191。這個捷徑四個官方範例全過，在 2,000 筆隨機測試上錯了 961 次。</p>
+<h2>複雜度</h2>
+<pre><code>operation                                   time                        space
+pow(a, e, m)                                O(log e) multiplications    O(1)
+Fibonacci by 2x2 matrix power               O(log n) matrix products    O(1)
+gcd / extended gcd                          O(log min(a, b)) steps      O(1)
+modular inverse (ext gcd or pow(a,-1,m))    O(log m)                    O(1)
+Fermat inverse pow(a, m-2, m), m prime      O(log m)                    O(1)
+Binomial table up to n, then each query     O(n) once, O(1) per query   O(n)
+sieve of Eratosthenes below n               O(n log log n)              O(n) bytes
+Count Primes (204)                          O(n log log n)              O(n)
+Count Good Numbers (1922)                   O(log n)                    O(1)
+Super Pow (372), d digits                   O(d)                        O(1)</code></pre>
+<p>這些次數都假設數字放得進一個機器字組，而 <code>% m</code> 保證了這件事：每個中間值都小於 <code>m²</code>。</p>
+<h2>之後會在哪裡用到</h2>
+<p>模運算在這個系列裡其實已經出現過。Day 25 的 Rabin-Karp rolling hash，把每一段文字窗口看成一個 256 進位的數再對一個大質數取餘數，往右滑一格只用到 <code>+</code>、<code>-</code>、<code>*</code>——剛好就是撐得過 <code>%</code> 的那三個運算。最簡單的亂數產生器就是一直重複 <code>x = (a·x + c) % m</code>。RSA 加密是快速冪加上模反元素——公鑰指數走 <code>pow</code>，私鑰就是 <code>pow(e, -1, φ)</code>——Diffie-Hellman 金鑰交換則是兩次快速冪。數論轉換（number-theoretic transform，FFT 的精確整數版，用來乘超大多項式）整個在 mod 998,244,353 底下進行，選這個質數是因為 998,244,352 能被 2²³ 整除；又因為它是質數，Fermat 反元素在那裡是安全的。</p>
+<p>今天要帶走的習慣：在 <code>%</code> 底下做除法之前，先問兩件事——模數是不是質數？你要除的東西，還是不是那個真正的數？</p>
+<p>明天：隨機化演算法與蒙地卡羅——包括 Miller-Rabin 質數測試，它就是用隨機挑選的底數去做快速冪。</p>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2041%20-%20primes%20gcd%20and%20modular%20arithmetic">day 41 on GitHub</a></p>
+</body>
+</html>

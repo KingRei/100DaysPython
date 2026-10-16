@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Modular arithmetic, fast power, GCD and the prime sieve: computing with numbers too big to write down</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Modular arithmetic, fast power, GCD and the prime sieve: computing with numbers too big to write down</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2041%20-%20primes%20gcd%20and%20modular%20arithmetic">day 41 on GitHub</a></p>
+<p><em>100 Days of Python - day 41</em></p>
+<p><code>pow(3, 10**18, 10**9 + 7)</code> raises 3 to the power of a billion billion and hands back the remainder in about two microseconds. It needs 82 multiplications to do it. Asking instead for <code>3**1_000_000 % (10**9 + 7)</code> - an exponent a million million times <em>smaller</em> - first builds a number with 1.58 million bits and takes close to a tenth of a second, tens of thousands of times slower. In the same toolbox, the sieve of Eratosthenes finds all 78,498 primes below a million in about 13 milliseconds, and Euclid&#x27;s algorithm finds the greatest common divisor of two thousand-digit numbers in under two thousand steps.</p>
+<p>All of it rests on one deal: take <code>% m</code> after every <code>+</code>, <code>-</code> and <code>*</code>, and the remainder you end with is exactly the one the full-size number would have had. The deal has one hole, which is division, and none of the ways through that hole raise an error:</p>
+<ul><li><code>fact[n] // (fact[k] * fact[n-k])</code> on factorials already reduced mod 1,000,000,007 is right for every <code>n</code> up to 12 and wrong from 13 on.</li><li>The popular &quot;modular inverse&quot; <code>pow(a, m - 2, m)</code> only works when <code>m</code> is prime. For <code>m = 10</code> it says the inverse of 3 is 1.</li><li>LeetCode 204 asks for primes <em>below</em> <code>n</code>. Counting primes <em>up to</em> <code>n</code> passes all three examples and is wrong every time <code>n</code> is itself prime.</li></ul>
+<p>Yesterday was about the bits of an integer. Today the bits of the <em>exponent</em> turn out to be the whole trick behind fast power.</p>
+<h2>What survives %</h2>
+<p>Take <code>a = 123,456,789</code>, <code>b = 987,654,321</code>, <code>m = 1000</code>. Reduce first or reduce at the end - the answers agree:</p>
+<pre><code>(a + b) % m = 110     (a % m + b % m) % m = 110
+(a - b) % m = 468     (a % m - b % m) % m = 468
+(a * b) % m = 269     (a % m) * (b % m) % m = 269</code></pre>
+<p>The reason is that <code>a</code> and <code>a % m</code> differ by a multiple of <code>m</code>, and adding, subtracting or multiplying by a multiple of <code>m</code> only ever adds more multiples of <code>m</code>. Division does not have that property: <code>(12 // 4) % 5</code> is 3, but <code>(12 % 5) // (4 % 5)</code> is <code>2 // 4 = 0</code>. Remember that <code>0</code>; it comes back as a wrong binomial coefficient.</p>
+<p>One Python-specific detail: <code>%</code> takes the sign of <code>m</code>, so <code>-7 % 3</code> is 2 where C and Java give -1. <code>(a - b) % m</code> therefore never goes negative in Python, and the <code>+ m</code> that C code adds before reducing is unnecessary here.</p>
+<h2>Fast power: square-and-multiply</h2>
+<img alt="day41_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2041%20-%20primes%20gcd%20and%20modular%20arithmetic/imgs/day41_1.png">
+<p>13 in binary is <code>1101</code>, which is 8 + 4 + 1. So 3¹³ = 3⁸ · 3⁴ · 3¹, and 3¹, 3², 3⁴, 3⁸ are each the square of the one before. Walk the bits of the exponent from the lowest: square once per bit, and multiply into the result only on the bits that are 1.</p>
+<pre><code>def power_mod(a, e, m):
+    result = 1 % m
+    a %= m
+    while e:
+        if e &amp; 1:                       # this bit is on: multiply its power in
+            result = result * a % m
+        a = a * a % m                   # a, a^2, a^4, a^8 ... one squaring per bit
+        e &gt;&gt;= 1
+    return result</code></pre>
+<p>On <code>3^13 mod 100</code> the loop runs four times:</p>
+<pre><code>bit k  bit  3^(2^k) mod 100  result
+    0    1                3       3   &lt;- multiply in
+    1    0                9       3
+    2    1               81      43   &lt;- multiply in
+    3    1               61      23   &lt;- multiply in</code></pre>
+<p>And 3¹³ is 1,594,323, which does end in 23. The count of multiplications is one squaring per bit plus one multiply per 1 bit, minus the free ones at the start:</p>
+<pre><code>exponent                          naive loop    square-and-multiply
+13                                        12                      5
+1,000,000,000                    999,999,999                     41
+1,000,000,000,000,000,000   999,999,999,999,999,999              82</code></pre>
+<p>Python&#x27;s built-in <code>pow(a, e, m)</code> is this loop written in C. Use it; the function above is here so you can see what it does. What you should <em>not</em> do is <code>a ** e % m</code>: Python will happily compute the full-size power first.</p>
+<h3>LeetCode 50 - Pow(x, n)</h3>
+<p><strong>The task.</strong> Raise a floating-point number to a whole-number power, without calling the library&#x27;s power function.</p>
+<p><strong>Input / output.</strong> A float <code>x</code> and an integer <code>n</code>; return <code>x</code> to the power <code>n</code> as a float.</p>
+<p><strong>Example.</strong> <code>x = 2.0, n = 10</code> gives <code>1024.0</code>. <code>x = 2.0, n = -2</code> gives <code>0.25</code>: a negative power is one over the positive power, <code>1 / 2² = 1/4</code>.</p>
+<p><strong>Constraints.</strong> <code>-100 &lt; x &lt; 100</code>, and <code>n</code> can be anything in the signed 32-bit range, from -2,147,483,648 to 2,147,483,647. Two billion multiplications is far too many, so the problem is really asking for square-and-multiply. The bottom of the range is the trap in C and Java: <code>-(-2^31)</code> does not fit in 32 bits. The result is guaranteed to stay between -10,000 and 10,000.</p>
+<p><a href="https://leetcode.com/problems/powx-n/">leetcode.com/problems/powx-n</a></p>
+<pre><code>class Solution:
+    def myPow(self, x: float, n: int) -&gt; float:
+        if n &lt; 0:
+            x, n = 1 / x, -n            # in Python -n never overflows
+        result = 1.0
+        while n:
+            if n &amp; 1:
+                result *= x
+            x *= x
+            n &gt;&gt;= 1
+        return result</code></pre>
+<p>For <code>n = -2**31</code> this does 31 squarings instead of 2,147,483,648 multiplications. In Python the negation is safe; in C++ you would widen <code>n</code> to a 64-bit <code>long long</code> first.</p>
+<p>The same loop works on anything you can multiply, including matrices. Day 33&#x27;s climbing-stairs answer turned out to be the Fibonacci sequence, filled in one addition at a time. <code>[[1, 1], [1, 0]]</code> raised to the power <code>n</code> holds F(n) in its corner, so square-and-multiply on 2x2 matrices gives F(10¹⁸) mod 1,000,000,007 = 209,783,453 in 83 matrix multiplications. The loop would need a billion billion additions.</p>
+<h2>Euclid&#x27;s algorithm for the greatest common divisor</h2>
+<img alt="day41_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2041%20-%20primes%20gcd%20and%20modular%20arithmetic/imgs/day41_2.png">
+<p>Any number that divides both <code>a</code> and <code>b</code> also divides <code>a - q·b</code> for every <code>q</code>, and in particular divides the remainder <code>a % b</code>. The reverse is true as well. So <code>gcd(a, b) = gcd(b, a % b)</code>, and the numbers shrink until the remainder is 0:</p>
+<pre><code>252 = 2 x 105 + 42
+105 = 2 x 42  + 21
+ 42 = 2 x 21  + 0      -&gt; gcd = 21</code></pre>
+<p>The figure shows it as tiling: cut the largest squares you can from a 252 by 105 rectangle, then from what is left over, and the last square that tiles the rest exactly has side 21.</p>
+<pre><code>def gcd(a, b):
+    while b:
+        a, b = b, a % b
+    return abs(a)</code></pre>
+<p>The version that subtracts the smaller number from the larger one is the same idea done slowly: <code>gcd(1,000,000, 1)</code> takes 999,999 subtractions, while <code>%</code> does it in one step. The slowest input for Euclid is a pair of consecutive Fibonacci numbers, because every quotient is 1: among all pairs up to 1000, the worst is <code>gcd(987, 610)</code> at 14 steps, and <code>gcd(832,040, 514,229)</code> takes 28. The step count grows with the number of <em>digits</em>, not the size: two random thousand-digit numbers took 1,875 steps.</p>
+<p><strong>Extended Euclid</strong> carries two extra numbers along so that every row stays a combination of the two inputs. On <code>(240, 46)</code> it keeps <code>a == 240·x + 46·y</code> true on every row:</p>
+<pre><code>   a     b   q     x     y
+ 240    46         1     0
+  46    10   5     0     1
+  10     6   4     1    -5
+   6     4   1    -4    21
+   4     2   1     5   -26
+   2     0   2    -9    47</code></pre>
+<p>So <code>2 = 240·(-9) + 46·47</code>. This is Bezout&#x27;s identity: the gcd can always be written as a whole-number combination of the inputs, and the amounts you can build from <code>a</code> and <code>b</code> are exactly the multiples of their gcd.</p>
+<pre><code>def ext_gcd(a, b):
+    x0, y0, x1, y1 = 1, 0, 0, 1
+    while b:
+        q, a, b = a // b, b, a % b
+        x0, x1 = x1, x0 - q * x1
+        y0, y1 = y1, y0 - q * y1
+    return a, x0, y0                    # a*x0 + b*y0 == gcd</code></pre>
+<h3>LeetCode 365 - Water and Jug Problem</h3>
+<p><strong>The task.</strong> You have two jugs holding <code>x</code> and <code>y</code> litres and an unlimited tap. Each move fills one jug to the top, empties one jug, or pours one jug into the other until the first is empty or the second is full. Decide whether you can end up with exactly <code>target</code> litres in the two jugs together.</p>
+<p><strong>Input / output.</strong> Three integers <code>x</code>, <code>y</code>, <code>target</code>; return <code>True</code> or <code>False</code>.</p>
+<p><strong>Example.</strong> <code>x = 3, y = 5, target = 4</code> is <code>True</code>: fill the 5, pour it into the 3 (2 left), empty the 3, pour the 2 across, fill the 5 again, top up the 3 with one litre, and empty the 3 - exactly 4 litres are left, all in the big jug. <code>x = 2, y = 6, target = 5</code> is <code>False</code>: every amount you can make is even.</p>
+<p><strong>Constraints.</strong> <code>1 &lt;= x, y, target &lt;= 1000</code>. A breadth-first search over the (jug 1, jug 2) states visits at most about a million states and is fine at this size; Bezout answers it with one gcd.</p>
+<p><a href="https://leetcode.com/problems/water-and-jug-problem/">leetcode.com/problems/water-and-jug-problem</a></p>
+<pre><code>class Solution:
+    def canMeasureWater(self, x: int, y: int, target: int) -&gt; bool:
+        return target &lt;= x + y and target % math.gcd(x, y) == 0</code></pre>
+<p>The first condition is the one people drop. Without it, <code>(3, 5, 9)</code> says <code>True</code> - gcd 1 divides 9 - but two jugs of 3 and 5 hold 8 litres at most. The BFS in the repo agrees with this one-liner on all four examples.</p>
+<h2>The modular inverse, and Fermat&#x27;s shortcut</h2>
+<img alt="day41_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2041%20-%20primes%20gcd%20and%20modular%20arithmetic/imgs/day41_4.png">
+<p>You cannot divide under <code>% m</code>, but you can multiply by an <em>inverse</em>: a number <code>x</code> with <code>a·x % m == 1</code>. The inverse of 3 mod 10 is 7, because 3 · 7 = 21. Extended Euclid finds it - run it on <code>(a, m)</code>, and if the gcd is 1 then <code>a·x + m·y = 1</code>, so <code>a·x</code> leaves remainder 1. If the gcd is not 1, no inverse exists; 4 has none mod 10.</p>
+<pre><code>def inverse(a, m):
+    g, x, _ = ext_gcd(a % m, m)
+    if g != 1:
+        raise ValueError(f&#x27;{a} has no inverse mod {m}&#x27;)
+    return x % m</code></pre>
+<p>Since Python 3.8 the built-in does this too: <code>pow(3, -1, 10)</code> is 7, and <code>pow(4, -1, 10)</code> raises <code>ValueError: base is not invertible for the given modulus</code>.</p>
+<p>The shortcut you see in most competitive code is <code>pow(a, m - 2, m)</code>. It comes from Fermat&#x27;s little theorem: when <code>m</code> is a prime, <code>a^(m-1) % m == 1</code>, so <code>a^(m-2)</code> is the inverse. When <code>m</code> is not a prime, nothing checks, and the answer is simply wrong. For <code>m = 10</code> it gives <code>pow(3, 8, 10) = 1</code>, and 3 · 1 is not 1 mod 10. Counting every number that does have an inverse:</p>
+<pre><code>m                 numbers with an inverse    Fermat wrong on
+10                                      4                  3
+12                                      4                  3
+1,337                               1,140              1,136
+1,000,000                         400,000            399,999
+1,000,000,007 (prime)    1,000 random a                    0</code></pre>
+<p>For the prime it is right every time; for the others it is right almost never. <code>pow(4, 8, 10)</code> returns 6 without complaint, where <code>pow(4, -1, 10)</code> refuses. When the modulus is 1,000,000,007 or 998,244,353 the shortcut is fine. For any other modulus, use <code>pow(a, -1, m)</code>.</p>
+<h2>nCk mod p: the // that works until 13</h2>
+<img alt="day41_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2041%20-%20primes%20gcd%20and%20modular%20arithmetic/imgs/day41_5.png">
+<p>Problems that ask for &quot;the number of ways, modulo 10⁹ + 7&quot; usually need binomial coefficients <code>C(n, k) = n! / (k! (n-k)!)</code>. The natural first attempt builds a table of factorials mod p and divides:</p>
+<pre><code>f[n] // (f[k] * f[n - k] % p) % p      # the bug</code></pre>
+<p>It gives the right answer for every <code>n</code> up to 12. The first wrong one is <code>C(13, 1)</code>, which comes back as 0 instead of 13. The reason is one line of arithmetic: 12! = 479,001,600 is smaller than 1,000,000,007 and 13! = 6,227,020,800 is larger. Up to 12 the &quot;factorials mod p&quot; are the real factorials, so <code>//</code> is real division. From 13 on, <code>f[n]</code> is a remainder, and dividing remainders is the <code>2 // 4 = 0</code> from the start of this article. For <code>n</code> up to 30, 369 of the 496 answers are wrong, and <code>C(100, 50)</code> comes back as 0 instead of 538,992,043. Small hand-made tests all pass.</p>
+<p>The fix is to multiply by inverse factorials. Because 1/(i-1)! = i · 1/i!, one <code>pow</code> call for the largest factorial gives all the others:</p>
+<pre><code>class Binomial:
+    def __init__(self, n, p=MOD):
+        self.p = p
+        self.f = factorials(n, p)
+        self.inv_f = [1] * (n + 1)
+        self.inv_f[n] = pow(self.f[n], p - 2, p)       # p is prime: Fermat is fine here
+        for i in range(n, 0, -1):                      # 1/(i-1)! = i * 1/i!
+            self.inv_f[i - 1] = self.inv_f[i] * i % p
+
+    def ncr(self, n, k):
+        if k &lt; 0 or k &gt; n:
+            return 0
+        return self.f[n] * self.inv_f[k] % self.p * self.inv_f[n - k] % self.p</code></pre>
+<p><code>C(1,000,000, 500,000) mod p</code> is 996,692,777. A thousand random queries with <code>n</code> up to 10,000 take under a millisecond with the table and around one and a half seconds with <code>math.comb(n, k) % p</code>, which builds the full-size number each time.</p>
+<h2>The sieve of Eratosthenes</h2>
+<img alt="day41_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2041%20-%20primes%20gcd%20and%20modular%20arithmetic/imgs/day41_3.png">
+<p>Instead of testing each number for divisors, let each prime cross out its own multiples. On the numbers below 50:</p>
+<pre><code>p = 2 crosses out 4, 6, 8, ... 48     (23 numbers)
+p = 3 crosses out 9, 15, 21, 27, 33, 39, 45
+p = 5 crosses out 25, 35
+p = 7 crosses out 49</code></pre>
+<p>Two details make it fast. Each prime starts at <code>p·p</code>, because the smaller multiples (<code>3·5 = 15</code> for p = 5) have already been crossed out by a smaller prime. And the outer loop stops once <code>p·p</code> passes <code>n</code>: 8 · 8 = 64 is past 49, so nothing after 7 has anything left to do. The 15 numbers still standing are the primes. For n = 1,000,000, starting at <code>p·p</code> does 2,122,046 crossings, starting at <code>2p</code> does 2,197,837, and letting every prime up to <code>n</code> sieve does 2,775,208.</p>
+<p>The bigger speed-up in Python is not doing the inner loop in Python at all. Assigning zeros to a slice of a <code>bytearray</code> crosses out every multiple in one C-level operation:</p>
+<pre><code>def sieve(n):
+    is_prime = bytearray([1]) * max(n, 2)
+    is_prime[0] = is_prime[1] = 0
+    for p in range(2, isqrt(n - 1) + 1 if n &gt; 1 else 2):
+        if is_prime[p]:
+            is_prime[p * p::p] = bytes(len(range(p * p, n, p)))
+    return is_prime[:n]</code></pre>
+<p>Finding the 78,498 primes below a million took about 4.6 seconds by trial division, a quarter of a second with the sieve written as loops, and about 13 milliseconds with slices. Below ten million there are 664,579 primes, found in about a third of a second.</p>
+<h3>LeetCode 204 - Count Primes</h3>
+<p><strong>The task.</strong> Count how many prime numbers are strictly smaller than <code>n</code>.</p>
+<p><strong>Input / output.</strong> One integer <code>n</code>; return the count.</p>
+<p><strong>Example.</strong> <code>n = 10</code> gives 4: the primes below 10 are 2, 3, 5 and 7. <code>n = 0</code> and <code>n = 1</code> both give 0.</p>
+<p><strong>Constraints.</strong> <code>0 &lt;= n &lt;= 5,000,000</code>. Testing each number by trial division is too slow at five million in Python, which is why this is a sieve problem. The word &quot;strictly&quot; is the part that matters.</p>
+<p><a href="https://leetcode.com/problems/count-primes/">leetcode.com/problems/count-primes</a></p>
+<pre><code>class Solution:
+    def countPrimes(self, n: int) -&gt; int:
+        return sum(sieve(n)) if n &gt; 2 else 0</code></pre>
+<p>Write <code>sieve(n + 1)</code> - &quot;primes up to n&quot; - and all three examples still pass, because 10, 0 and 1 are not prime. It is wrong exactly when <code>n</code> itself is prime: for every <code>n</code> from 0 to 5000 it is wrong 669 times, and there are exactly 669 primes up to 5000.</p>
+<h2>LeetCode 1922 and LeetCode 372: exponents too large to loop over</h2>
+<h3>LeetCode 1922 - Count Good Numbers</h3>
+<p><strong>The task.</strong> A string of digits is &quot;good&quot; when every digit at an even position (counting from 0) is even and every digit at an odd position is a prime digit - 2, 3, 5 or 7. Count the good strings of length <code>n</code>, modulo 1,000,000,007. Leading zeros are allowed.</p>
+<p><strong>Input / output.</strong> One integer <code>n</code>; return the count mod 1,000,000,007.</p>
+<p><strong>Example.</strong> <code>n = 1</code> gives 5: the strings &quot;0&quot;, &quot;2&quot;, &quot;4&quot;, &quot;6&quot;, &quot;8&quot;. <code>n = 4</code> gives 400: positions 0 and 2 have 5 choices each, positions 1 and 3 have 4 each, and 5 · 4 · 5 · 4 = 400.</p>
+<p><strong>Constraints.</strong> <code>1 &lt;= n &lt;= 10^15</code>. A thousand million million positions: no loop over them can finish, so the answer has to be two calls to fast power.</p>
+<p><a href="https://leetcode.com/problems/count-good-numbers/">leetcode.com/problems/count-good-numbers</a></p>
+<pre><code>class Solution:
+    def countGoodNumbers(self, n: int) -&gt; int:
+        even_slots, odd_slots = (n + 1) // 2, n // 2   # indices 0, 2, 4 ... / 1, 3, 5 ...
+        return pow(5, even_slots, MOD) * pow(4, odd_slots, MOD) % MOD</code></pre>
+<p><code>n = 50</code> gives 564,908,303 and <code>n = 10^15</code> gives 711,414,395, each in microseconds.</p>
+<h3>LeetCode 372 - Super Pow</h3>
+<p><strong>The task.</strong> Compute <code>a</code> to the power <code>b</code>, modulo 1337, where <code>b</code> is so large that it is given as a list of its decimal digits.</p>
+<p><strong>Input / output.</strong> An integer <code>a</code> and a list of digits <code>b</code>, most significant first; return <code>a^b mod 1337</code>.</p>
+<p><strong>Example.</strong> <code>a = 2, b = [1, 0]</code> means 2¹⁰ and gives 1024. <code>a = 2147483647, b = [2, 0, 0]</code> means that number to the 200th power and gives 1198.</p>
+<p><strong>Constraints.</strong> <code>1 &lt;= a &lt;= 2^31 - 1</code>, <code>b</code> has up to 2000 digits and no leading zeros. In Python you can join the digits into one integer and call <code>pow</code> - it is a 2000-digit exponent, which <code>pow</code> handles easily. The digit-by-digit version below is the one that works in any language.</p>
+<p><a href="https://leetcode.com/problems/super-pow/">leetcode.com/problems/super-pow</a></p>
+<pre><code>class Solution:
+    def superPow(self, a: int, b: list[int]) -&gt; int:
+        result = 1
+        for d in b:                      # a^(10*e + d) = (a^e)^10 * a^d
+            result = pow(result, 10, 1337) * pow(a, d, 1337) % 1337
+        return result</code></pre>
+<p>The trap: some solutions shrink the exponent with <code>% 1336</code> first, borrowing Fermat&#x27;s &quot;the exponent repeats every m - 1 steps&quot;. That needs 1337 to be prime, and 1337 = 7 × 191. The shortcut passes all four official examples, and on 2,000 random tests it was wrong 961 times.</p>
+<h2>Complexity</h2>
+<pre><code>operation                                   time                        space
+pow(a, e, m)                                O(log e) multiplications    O(1)
+Fibonacci by 2x2 matrix power               O(log n) matrix products    O(1)
+gcd / extended gcd                          O(log min(a, b)) steps      O(1)
+modular inverse (ext gcd or pow(a,-1,m))    O(log m)                    O(1)
+Fermat inverse pow(a, m-2, m), m prime      O(log m)                    O(1)
+Binomial table up to n, then each query     O(n) once, O(1) per query   O(n)
+sieve of Eratosthenes below n               O(n log log n)              O(n) bytes
+Count Primes (204)                          O(n log log n)              O(n)
+Count Good Numbers (1922)                   O(log n)                    O(1)
+Super Pow (372), d digits                   O(d)                        O(1)</code></pre>
+<p>These counts assume numbers that fit in a machine word, which is what <code>% m</code> guarantees: every intermediate value stays below <code>m²</code>.</p>
+<h2>Why this matters later</h2>
+<p>Modular arithmetic has been in the series already. Day 25&#x27;s Rabin-Karp rolling hash reads each window of text as a base-256 number modulo a large prime, and slides it one character with nothing but <code>+</code>, <code>-</code> and <code>*</code> - exactly the operations that survive <code>%</code>. Random number generators of the simplest kind are <code>x = (a·x + c) % m</code> on repeat. RSA encryption is fast power plus a modular inverse - the public exponent goes through <code>pow</code>, and the private key is <code>pow(e, -1, φ)</code> - and Diffie-Hellman key exchange is two fast powers. Number-theoretic transforms, the exact-integer cousin of the FFT used to multiply huge polynomials, run entirely mod 998,244,353, a prime chosen because 998,244,352 is divisible by 2²³ - and because it is prime, the Fermat inverse is safe there.</p>
+<p>The habit to keep from today: before you divide under <code>%</code>, ask whether the modulus is prime and whether the thing you are dividing is still the real number.</p>
+<p>Tomorrow: randomized algorithms and Monte Carlo - including the Miller-Rabin primality test, which is fast power with randomly chosen bases.</p>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2041%20-%20primes%20gcd%20and%20modular%20arithmetic">day 41 on GitHub</a></p>
+</body>
+</html>

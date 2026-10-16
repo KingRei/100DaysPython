@@ -1,0 +1,1105 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 46 - Backpropagation in pure NumPy: a two-layer network, the three lines that train it, and five ways to get them wrong without an error / 用純 NumPy 寫反向傳播：一個兩層網路、訓練它的那三行，以及五種寫錯了也不會報錯的方式</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='2' y='2' width='28' height='28' rx='7' fill='%23062434'/><circle cx='11' cy='12' r='4' fill='%2312b3b8'/><circle cx='21' cy='12' r='4' fill='%239d6bff'/><circle cx='16' cy='22' r='4' fill='%23ff9736'/></svg>">
+<style>
+:root{
+  --bg0:#04121c; --bg1:#062434; --card:rgba(6,36,52,.72);
+  --teal:#12b3b8; --teal-d:#0a6b74; --teal-l:#3fe0dd;
+  --purple:#9d6bff; --purple-d:#241542; --purple-l:#c7a6ff;
+  --orange:#ff9736; --orange-d:#3a2109; --orange-l:#ffbe6b;
+  --red:#ff5c5c; --grey:#8fa3ac; --pale:#dff2f5; --white:#ffffff;
+  --serif:"Latin Modern Roman","Liberation Serif",Georgia,"Times New Roman",serif;
+  --mono:"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:
+    radial-gradient(900px 520px at 12% -8%,rgba(157,107,255,.20) 0%,rgba(157,107,255,0) 62%),
+    radial-gradient(900px 520px at 88% -4%,rgba(255,151,54,.16) 0%,rgba(255,151,54,0) 60%),
+    radial-gradient(1200px 800px at 50% 30%,#083041 0%,var(--bg1) 45%,var(--bg0) 100%);
+  color:var(--pale); font-family:var(--serif); min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--teal-l)}
+.wrap{max-width:1180px;margin:0 auto;padding:26px 20px 60px}
+header{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-bottom:6px}
+h1{font-size:30px;margin:0;color:var(--white);letter-spacing:.4px;
+   text-shadow:0 0 16px rgba(63,224,221,.35)}
+.day{font-size:13px;letter-spacing:2.4px;text-transform:uppercase;color:var(--orange-l);
+     border:1px solid var(--orange);border-radius:999px;padding:4px 12px;
+     background:rgba(255,151,54,.10)}
+.sub{color:var(--grey);font-size:15px;margin:8px 0 20px;max-width:72ch;line-height:1.6}
+.spacer{flex:1}
+.lang{display:flex;border:1px solid var(--teal-d);border-radius:999px;overflow:hidden}
+.lang button{background:transparent;color:var(--teal-l);border:0;padding:5px 14px;
+  font-family:var(--serif);font-size:14px;cursor:pointer}
+.lang button.on{background:var(--teal);color:#022}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
+.tabs button{
+  background:rgba(6,40,58,.75);border:1px solid rgba(18,179,184,.45);color:var(--pale);
+  padding:9px 16px;border-radius:9px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  transition:.18s}
+.tabs button:hover{border-color:var(--teal-l);color:var(--white)}
+.tabs button.on{background:linear-gradient(135deg,var(--teal) 0%,var(--purple) 140%);
+  border-color:var(--teal-l);color:#03222a;box-shadow:0 0 18px rgba(18,179,184,.30)}
+.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:18px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid rgba(18,179,184,.28);border-radius:13px;
+      padding:14px 16px}
+.card h3{margin:0 0 10px;font-size:14px;letter-spacing:2px;text-transform:uppercase;
+         color:var(--teal-l);font-weight:normal}
+svg.stage{width:100%;height:auto;display:block;touch-action:none}
+svg.stage text{font-family:var(--serif);user-select:none}
+.narr{min-height:52px;margin-top:10px;padding:10px 12px;border-left:3px solid var(--orange);
+      background:rgba(255,151,54,.07);font-size:16px;line-height:1.55;color:var(--white)}
+.narr code{font-family:var(--mono);font-size:14px;color:var(--orange-l)}
+.narr b{color:var(--orange-l);font-weight:normal}
+.ctrl{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
+.ctrl button{background:rgba(6,40,58,.9);border:1px solid var(--teal-d);color:var(--teal-l);
+  border-radius:8px;padding:7px 13px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  min-width:44px;transition:.15s}
+.ctrl button:hover:not(:disabled){background:var(--teal);color:#03222a}
+.ctrl button:disabled{opacity:.35;cursor:default}
+.ctrl .play{min-width:92px;font-weight:bold;border-color:var(--orange);color:var(--orange-l)}
+.ctrl .play:hover{background:var(--orange);color:#2a1400}
+.ctrl input[type=range]{width:120px;accent-color:var(--purple)}
+.stepno{color:var(--grey);font-size:14px;font-family:var(--mono)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;min-height:30px}
+.chip{border:1px solid var(--teal-d);border-radius:6px;padding:3px 9px;font-family:var(--mono);
+      font-size:14px;color:var(--pale);background:rgba(18,179,184,.10)}
+.chip.hot{border-color:var(--orange);color:var(--orange-l);background:rgba(255,151,54,.14)}
+.chip.act{border-color:var(--purple);color:var(--purple-l);background:rgba(157,107,255,.16)}
+.chip.ok{border-color:var(--teal-l);color:var(--teal-l);background:rgba(63,224,221,.12)}
+.chip.dim{border-color:#2f5661;color:var(--grey);background:transparent}
+.chip.bad{border-color:var(--red);color:#ff9a9a;background:rgba(255,92,92,.14)}
+.chip.empty{border-style:dashed;color:var(--grey);border-color:#2f5661}
+.panel+.panel{margin-top:12px}
+.panel .lbl{font-size:13px;letter-spacing:1.6px;text-transform:uppercase;color:var(--grey);
+  margin-bottom:5px}
+pre.code{margin:0;font-family:var(--mono);font-size:13.5px;line-height:1.72;overflow-x:auto;
+  color:#a8c8d0}
+pre.code .ln{display:block;padding:0 8px;border-left:3px solid transparent;white-space:pre}
+pre.code .ln.on{background:rgba(255,151,54,.12);border-left-color:var(--orange);color:var(--white)}
+pre.code .cm{color:#5f7b85;font-style:italic}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:13.5px;color:var(--grey)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;
+  vertical-align:-1px;border:1px solid rgba(255,255,255,.22)}
+.note{font-size:15px;line-height:1.65;color:var(--pale)}
+.note b{color:var(--purple-l);font-weight:normal}
+.note code{font-family:var(--mono);font-size:13.5px;color:var(--teal-l)}
+.toggle-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.toggle-row button{border:1px solid rgba(18,179,184,.45);border-radius:8px;padding:6px 13px;
+  cursor:pointer;font-family:var(--serif);font-size:14px;
+  background:rgba(6,40,58,.75);color:var(--pale)}
+.toggle-row button.on{background:var(--purple);border-color:var(--purple-l);color:#150a2b}
+footer{margin-top:32px;padding-top:16px;border-top:1px solid rgba(18,179,184,.25);
+  color:var(--grey);font-size:14px;display:flex;gap:18px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <span class="day">Day 46</span>
+  <h1 data-i18n="title">用純 NumPy 寫反向傳播：一個兩層網路、訓練它的那三行，以及五種寫錯了也不會報錯的方式</h1>
+  <span class="spacer"></span>
+  <div class="lang">
+    <button id="btn-zh" class="on" onclick="setLang('zh')">中文</button>
+    <button id="btn-en" onclick="setLang('en')">EN</button>
+  </div>
+</header>
+<p class="sub" data-i18n="sub">一個線性層的反向傳播只有三行，每一行都只是前向轉置一次：dW = xᵀ@dz、db = dz.sum(axis=0)、dx = dz@Wᵀ。難的是那些不會報錯的寫法：softmax 用錯軸照樣回傳 0 到 1 的數字、先算機率再取 log 會得到 inf、db 寫成純量會 broadcast、少了轉置只要 batch 等於輸入寬度就跑得過、全零初始化讓 64 個單元永遠表現得像一個。</p>
+
+<div class="tabs" id="tabs"></div>
+
+<div class="grid">
+  <div>
+    <div class="card">
+      <h3 id="stage-title"></h3>
+      <svg class="stage" id="stage" viewBox="0 0 10 6.4" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="legend" id="legend"></div>
+      <div class="narr" id="narr"></div>
+      <div class="ctrl">
+        <button onclick="reset()" title="reset">⟲</button>
+        <button id="prev" onclick="step(-1)">◀</button>
+        <button class="play" id="play" onclick="togglePlay()" data-i18n="play">▶ 播放</button>
+        <button id="next" onclick="step(1)">▶</button>
+        <span class="stepno" id="stepno">0 / 0</span>
+        <span class="spacer"></span>
+        <span style="font-size:13px;color:var(--grey)" data-i18n="speed">速度</span>
+        <input type="range" id="speed" min="180" max="1600" step="20" value="820">
+      </div>
+      <div class="toggle-row" id="extra"></div>
+    </div>
+  </div>
+  <div>
+    <div class="card" id="state-card">
+      <h3 data-i18n="state">演算法狀態</h3>
+      <div id="panels"></div>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="code">程式碼</h3>
+      <pre class="code" id="code"></pre>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="idea">重點</h3>
+      <div class="note" id="idea"></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <span>100 Days of Python — Day 46</span>
+  <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2046%20-%20backpropagation%20and%20a%20numpy%20mlp" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://medium.com/100-days-of-python" target="_blank" rel="noopener">Medium</a>
+</footer>
+</div>
+<script>
+// DAY: 46
+// TITLE_ZH: 用純 NumPy 寫反向傳播：一個兩層網路、訓練它的那三行，以及五種寫錯了也不會報錯的方式
+// TITLE_EN: Backpropagation in pure NumPy: a two-layer network, the three lines that train it, and five ways to get them wrong without an error
+// SUB_ZH: 一個線性層的反向傳播只有三行，每一行都只是前向轉置一次：dW = xᵀ@dz、db = dz.sum(axis=0)、dx = dz@Wᵀ。難的是那些不會報錯的寫法：softmax 用錯軸照樣回傳 0 到 1 的數字、先算機率再取 log 會得到 inf、db 寫成純量會 broadcast、少了轉置只要 batch 等於輸入寬度就跑得過、全零初始化讓 64 個單元永遠表現得像一個。
+// SUB_EN: Backpropagation through a linear layer is three lines, each a transpose away from the forward pass: dW = x.T @ dz, db = dz.sum(axis=0), dx = dz @ W.T. The hard part is the spellings that never raise: softmax on the wrong axis still returns numbers in [0, 1], a cross entropy that forms probabilities first returns inf, a scalar db broadcasts, a missing transpose runs whenever the batch equals the input width, and all-zero init leaves 64 hidden units behaving as one.
+// FOLDER: day%2046%20-%20backpropagation%20and%20a%20numpy%20mlp
+// MEDIUM: https://medium.com/100-days-of-python
+const VIEW = [9.8, 6.4];
+function chip(t, cls){ return {t:t, cls:cls || ''}; }
+const curV = () => (typeof varIx !== 'undefined' ? varIx : 0);
+
+const isCJK = ch => { const c = ch.codePointAt(0);
+  return (c >= 0x2e80 && c <= 0x9fff) || (c >= 0xff00 && c <= 0xff60) || (c >= 0x3000 && c <= 0x303f); };
+function tw(str, fs){ let w = 0;
+  for (const ch of String(str)) w += isCJK(ch) ? 1.0 : .55;
+  return w * fs; }
+function fitT(x, y, s, opt){
+  opt = Object.assign({}, opt || {});
+  const fs = opt.fs || .32, a = opt.anchor || 'middle', pad = .20;
+  const room = a === 'start' ? VIEW[0] - pad - x
+             : a === 'end'   ? x - pad
+             : 2 * Math.min(x - pad, VIEW[0] - pad - x);
+  const strs = (typeof s === 'string') ? [s] : [s.zh, s.en].filter(t => t != null);
+  const w = Math.max.apply(null, strs.map(t => tw(t, fs)));
+  if (w > room) opt.fs = fs * room / w;
+  return S.t(x, y, s, opt);
+}
+function fitFs(lab, w, fs){
+  const strs = (typeof lab === 'string') ? [lab] : [lab.zh, lab.en];
+  const need = Math.max.apply(null, strs.map(t => tw(t, fs)));
+  return need > w - .08 ? fs * (w - .08) / need : fs;
+}
+const box = (x, y, w, h, s, lab, fs) => S.r(x, y, w, h, s, lab, {fs:fitFs(lab, w, fs || h * .5)});
+const fmt = n => { const s = String(n), neg = s[0] === '-', d = neg ? s.slice(1) : s;
+  return (neg ? '-' : '') + d.replace(/\B(?=(\d{3})+(?!\d))/g, ','); };
+function caps(sh, o){
+  if (o.cap) sh.push(fitT(4.9, 5.62, o.cap, {c:o.capc || COL.pale, fs:.30}));
+  if (o.cap2) sh.push(fitT(4.9, 6.06, o.cap2, {c:COL.grey, fs:.26}));
+  return sh;
+}
+const side = (sh, x, y0, lines, dy) => (lines || []).forEach((l, k) =>
+  sh.push(fitT(x, y0 + k * (dy || .5), l[0], {anchor:'start', c:l[1] || COL.pale, fs:l[2] || .30})));
+
+/* ================================================================ shared maths */
+const fmtN = x => !isFinite(x) ? (x > 0 ? 'inf' : (Number.isNaN(x) ? 'nan' : '-inf'))
+  : (Math.abs(x) >= 1e5 || (Math.abs(x) < 1e-3 && x !== 0) ? x.toExponential(2)
+     : String(Math.round(x * 1e4) / 1e4));
+function softmaxRow(z, stable){
+  const m = stable ? Math.max.apply(null, z) : 0;
+  const e = z.map(v => Math.exp(v - m));
+  const s = e.reduce((a, b) => a + b, 0);
+  return {e:e, sum:s, p:e.map(v => v / s), max:m};
+}
+
+/* ================================================================ tab 1: softmax */
+const CODE_SM = [
+  'def softmax(z, axis=-1):',
+  '    z = z - np.max(z, axis=axis, keepdims=True)   # changes nothing in the ratio',
+  '    e = np.exp(z)',
+  '    return e / np.sum(e, axis=axis, keepdims=True)',
+  '',
+  '# the batch axis is NOT the class axis:',
+  '#   logits have shape (n_examples, n_classes)',
+  '#   softmax must run across the classes, axis=1'
+];
+const SM_Z = [1000, 1001, 1002];
+const AX_Z = [[2.0, 1.0, 0.1], [0.5, 2.5, 0.2]];
+function smStage(o){
+  const sh = [], X0 = 1.55, BW = 2.1;
+  (o.rows || []).forEach((r, i) => {
+    const y = 1.0 + i * .95;
+    sh.push(fitT(X0 - .15, y + .33, r.lab, {anchor:'end', c:r.c || COL.purpleL, fs:.24}));
+    r.vals.forEach((v, j) => {
+      const bad = !isFinite(v) || Number.isNaN(v);
+      sh.push(box(X0 + j * BW, y, BW - .12, .6, bad ? 'bad' : (r.st || 'idle'), fmtN(v), .26));
+    });
+    if (r.note) sh.push(fitT(X0 + 3 * BW + .15, y + .33, r.note, {anchor:'start', c:r.nc || COL.grey, fs:.22}));
+  });
+  side(sh, .5, 4.5, o.side, .42);
+  return caps(sh, o);
+}
+function smFrames(v){
+  const F = new Frames();
+  if (v < 2){
+    const stable = v === 0, r = softmaxRow(SM_Z, stable);
+    const steps = [
+      {rows:[{lab:'z', vals:SM_Z, st:'act'}],
+       cap:{zh:'logits [1000, 1001, 1002]', en:'logits [1000, 1001, 1002]'},
+       cap2:stable ? {zh:'先減掉這一列的最大值 1002', en:'first subtract the row maximum, 1002'}
+                   : {zh:'直接取 exp', en:'take exp straight away'},
+       msg:stable ? {zh:'減掉最大值在數學上什麼都沒改：分子分母同乘一個常數，在比值裡會消掉。但它保證 exp 看到的參數永遠 ≤ 0。',
+                     en:'Subtracting the maximum changes nothing mathematically: the constant multiplies both numerator and denominator and cancels in the ratio. What it buys is that exp never sees a positive argument.'}
+                  : {zh:'教科書寫法：exp(z) / exp(z).sum()。看起來沒問題——直到某個 logit 變大。',
+                     en:'The textbook spelling: exp(z) / exp(z).sum(). It looks fine - until a logit grows.'}},
+      {rows:[{lab:'z', vals:SM_Z, st:'done'},
+             ...(stable ? [{lab:'z − max', vals:SM_Z.map(x => x - r.max), st:'act'}] : []),
+             {lab:'exp(·)', vals:r.e, st:'hot'}],
+       cap:stable ? {zh:'exp(−2), exp(−1), exp(0)：全都安全', en:'exp(-2), exp(-1), exp(0): all safe'}
+                  : {zh:'exp(1000) 以上在 double 裡放不下', en:'exp(1000) and up do not fit in a double'},
+       cap2:{zh:'double 的上限約 1.8e308，exp(710) 就溢位了', en:'a double tops out near 1.8e308, and exp(710) already overflows'},
+       msg:stable ? {zh:'最大的那一項變成 exp(0) = 1，其餘都比它小。任何 logit 都不會讓這一步溢位。',
+                     en:'The largest term becomes exp(0) = 1 and everything else is smaller. No logit can make this step overflow.'}
+                  : {zh:'三個都變成 inf。注意這裡沒有任何例外被丟出來——numpy 只會發一個 RuntimeWarning，而大部分訓練腳本把 warning 關掉了。',
+                     en:'All three become inf. Note that nothing is raised - numpy emits a RuntimeWarning, and most training scripts have warnings turned off.'}},
+      {rows:[{lab:'exp(·)', vals:r.e, st:'done'}, {lab:'sum', vals:[r.sum, r.sum, r.sum], st:'soft'},
+             {lab:'p', vals:r.p, st:stable ? 'ok' : 'bad'}],
+       cap:stable ? {zh:'p = [0.090031, 0.244728, 0.665241]', en:'p = [0.090031, 0.244728, 0.665241]'}
+                  : {zh:'inf / inf = nan', en:'inf / inf = nan'},
+       cap2:stable ? {zh:'加起來剛好 1', en:'they sum to exactly 1'} : {zh:'三個類別的機率全是 nan', en:'every class probability is nan'},
+       msg:stable ? {zh:'正確答案。在一般大小的 logit 上，這個版本和天真版只差 1.1e-16——所以這個 bug 在測試裡永遠看不到，它只會在某個 logit 變大的那天出現。',
+                     en:'The right answer. On ordinary logits this version and the naive one agree to 1.1e-16 - which is why the bug is invisible in testing and appears the day a logit grows.'}
+                  : {zh:'nan 會在下一次反向傳播時擴散到每一個權重，而且 nan 不等於自己，所以連「loss 有沒有變大」這種檢查都不會響。',
+                     en:'The nan spreads into every weight on the next backward pass, and since nan does not equal itself, even a "did the loss get worse" check stays quiet.'}}
+    ];
+    steps.forEach((s, i) => F.push({shapes:smStage({rows:s.rows, cap:s.cap, cap2:s.cap2,
+        side:[[{zh:'步驟 ' + (i + 1) + ' / ' + steps.length, en:'step ' + (i + 1) + ' of ' + steps.length}, COL.grey, .24]]}),
+      panels:[{lbl:stable ? 'stable' : 'naive', chips:[chip(stable ? 'softmax' : 'exp(z)/sum', stable ? 'ok' : 'bad')]}],
+      line:stable ? [1, 2, 3][i] : [2, 2, 3][i], msg:s.msg}));
+    return F.list;
+  }
+  /* the axis bug */
+  const byRow = AX_Z.map(r => softmaxRow(r, true).p);
+  const cols = [0, 1, 2].map(j => softmaxRow(AX_Z.map(r => r[j]), true).p);
+  const byCol = AX_Z.map((r, i) => [0, 1, 2].map(j => cols[j][i]));
+  const grid = (sh, M, hl, st) => {
+    for (let i = 0; i < 2; i++) for (let j = 0; j < 3; j++){
+      const on = hl && hl(i, j);
+      sh.push(box(1.5 + j * 1.9, 1.3 + i * .95, 1.75, .7, on ? 'hot' : st, fmtN(Math.round(M[i][j] * 1e4) / 1e4), .28));
+    }
+    sh.push(S.t(1.3, 1.65, 'ex 0', {anchor:'end', c:COL.purpleL, fs:.24}));
+    sh.push(S.t(1.3, 2.6, 'ex 1', {anchor:'end', c:COL.purpleL, fs:.24}));
+    [0, 1, 2].forEach(j => sh.push(S.t(1.5 + j * 1.9 + .87, 1.1, 'class ' + j, {c:COL.purpleL, fs:.24})));
+  };
+  const mk = (M, hl, st, cap, cap2, sideL, line, msg, panels) => {
+    const sh = []; grid(sh, M, hl, st); side(sh, .5, 3.6, sideL, .42);
+    F.push({shapes:caps(sh, {cap:cap, cap2:cap2}), panels:panels, line:line, msg:msg});
+  };
+  mk(AX_Z, null, 'act', {zh:'兩個樣本 × 三個類別的 logits', en:'logits for 2 examples x 3 classes'},
+     {zh:'softmax 要沿著哪一軸做？', en:'which axis should the softmax run along?'},
+     [[{zh:'形狀 (n_examples, n_classes) = (2, 3)', en:'shape (n_examples, n_classes) = (2, 3)'}, COL.grey, .26]], 6,
+     {zh:'一批 logits 的形狀是（樣本數, 類別數）。softmax 必須沿著「類別」那一軸做，讓每個樣本自己的三個機率加起來等於 1。',
+      en:'A batch of logits has shape (examples, classes). The softmax has to run along the class axis, so that each example\'s own three probabilities sum to 1.'},
+     [{lbl:'shape', chips:[chip('(2, 3)', 'act')]}]);
+  mk(byRow, (i, j) => true, 'ok', {zh:'softmax(axis=1)：每一列自己正規化', en:'softmax(axis=1): each row normalises itself'},
+     {zh:'列和 [1, 1]——這才是我們要的', en:'row sums [1, 1] - what we want'},
+     [[{zh:'每個樣本的三個機率加起來 = 1', en:'each example\'s three probabilities sum to 1'}, COL.tealL, .26]], 7,
+     {zh:'正確的那一個：第 0 個樣本有 66% 的機率是 class 0，而這三個數字是它自己的分布。',
+      en:'The right one: example 0 puts 66% on class 0, and those three numbers are its own distribution.'},
+     [{lbl:'row sums', chips:[chip('1.0', 'ok'), chip('1.0', 'ok')]}]);
+  mk(byCol, (i, j) => true, 'bad', {zh:'softmax(axis=0)：每一欄自己正規化', en:'softmax(axis=0): each column normalises itself'},
+     {zh:'欄和 [1, 1, 1]，列和 [1.475, 1.525]', en:'column sums [1, 1, 1], row sums [1.475, 1.525]'},
+     [[{zh:'每個元素還是在 0 和 1 之間', en:'every entry is still between 0 and 1'}, COL.pale, .26],
+      [{zh:'還是有東西加起來等於 1——只是加錯方向', en:'something still sums to 1 - just in the wrong direction'}, COL.red, .26],
+      [{zh:'每列的 argmax 都沒變：[0, 1] 對 [0, 1]', en:'the argmax of each row is unchanged: [0, 1] vs [0, 1]'}, COL.orangeL, .26]], 7,
+     {zh:'這就是整天最隱形的 bug。沒有 assertion 會響：值域對、而且「有東西」加起來等於 1。模型被告知的是「樣本之間要互相搶同一個類別」——一個自洽、但完全不同的問題。連預測都還是對的，先壞掉的是 loss。',
+      en:'This is the most invisible bug of the day. No assertion fires: the range is right and something does sum to 1. The model is being told that examples compete with each other for a class - a coherent but completely different problem. Even the predictions still look right; it is the loss that goes wrong first.'},
+     [{lbl:'row sums', chips:[chip('1.475', 'bad'), chip('1.525', 'bad')]}, {lbl:'col sums', chips:[chip('1.0', 'dim'), chip('1.0', 'dim'), chip('1.0', 'dim')]}]);
+  return F.list;
+}
+
+/* ================================================================ tab 2: p − y */
+const CODE_PY = [
+  'def softmax_ce_grad(logits, y, mean=True):',
+  '    n = len(y)',
+  '    p = softmax(logits)',
+  '    p[np.arange(n), y] -= 1.0      # the whole derivative',
+  '    return p / n if mean else p',
+  '',
+  '# differentiate softmax and cross entropy separately and you need',
+  '# a k x k Jacobian per example, plus a division by p from the log;',
+  '# compose them and all of it cancels'
+];
+const PY_Z = [2.0, 0.5, -1.0, 0.2], PY_LABEL = 2;
+function pyFrames(){
+  const F = new Frames();
+  const p = softmaxRow(PY_Z, true).p;
+  const yv = [0, 0, 1, 0].map((v, i) => (i === PY_LABEL ? 1 : 0));
+  const g = p.map((v, i) => v - yv[i]);
+  const draw = (show, hl) => {
+    const sh = [], X0 = 1.25, GW = 2.05, BASE = 3.3, SC = 1.35, BW = .44;
+    sh.push(S.e(.9, BASE, 9.4, BASE, {s:'idle', w:.02, arrow:false}));
+    for (let i = 0; i < 4; i++){
+      const gx = X0 + i * GW;
+      [['z', PY_Z[i] / 4, COL.grey, 0], ['p', p[i], COL.tealL, 1], ['y', yv[i], COL.grey, 2],
+       ['p−y', g[i], COL.purpleL, 3]].forEach(([lab, val, col, k]) => {
+        if (k >= show) return;
+        const x = gx + (k - 1.5) * (BW + .08) - BW / 2, h = Math.abs(val) * SC;
+        const on = hl === i && k === 3;
+        sh.push(S.r(x, val >= 0 ? BASE - h : BASE, BW, Math.max(h, .012),
+                    on ? 'hot' : (k === 3 ? 'act' : k === 2 ? 'done' : 'soft'), '', {rx:.03}));
+        sh.push(S.t(x + BW / 2, val >= 0 ? BASE - h - .14 : BASE + h + .3,
+                    (k === 0 ? PY_Z[i] : Math.round(val * 100) / 100).toFixed(2), {c:col, fs:.2}));
+      });
+      sh.push(S.t(gx, BASE + 1.35, 'class ' + i + (i === PY_LABEL ? ' ←' : ''),
+                  {c:i === PY_LABEL ? COL.tealL : COL.grey, fs:.24}));
+    }
+    [['z (logits)', COL.grey], ['p = softmax(z)', COL.tealL], ['y (one-hot)', COL.grey],
+     ['p − y', COL.purpleL]].slice(0, show).forEach(([lab, col], k) =>
+      sh.push(S.t(.5 + k * 2.5, .85, lab, {anchor:'start', c:col, fs:.24})));
+    return sh;
+  };
+  const msgs = [
+    {zh:'從四個 logit 開始。它們是任意的實數，沒有「機率」的意思。', en:'Start from four logits. They are arbitrary real numbers with no probabilistic meaning yet.'},
+    {zh:'softmax 把它們變成一個分布：全部為正、加起來等於 1。模型認為這個樣本有 70% 的機率是 class 0。', en:'The softmax turns them into a distribution: all positive, summing to 1. The model gives this example a 70% chance of being class 0.'},
+    {zh:'真正的標籤是 class 2，寫成 one-hot 就是 [0, 0, 1, 0]。cross entropy 只看 p 在那一格的值。', en:'The true label is class 2, written one-hot as [0, 0, 1, 0]. The cross entropy looks only at p in that slot.'},
+    {zh:'loss 對 logits 的梯度，就是這兩列相減。softmax 的 Jacobian 和 log 的倒數在合成時互相消掉，什麼都沒留下。', en:'The gradient of the loss with respect to the logits is those two rows subtracted. The softmax Jacobian and the reciprocal from the log cancel when composed, leaving nothing behind.'}
+  ];
+  msgs.forEach((m, k) => F.push({shapes:caps(draw(k + 1), {
+      cap:[{zh:'logits', en:'logits'}, {zh:'p = softmax(logits)', en:'p = softmax(logits)'},
+           {zh:'y：正確答案是 class ' + PY_LABEL, en:'y: the true class is ' + PY_LABEL},
+           {zh:'梯度 = p − y', en:'the gradient is p − y'}][k],
+      cap2:k === 3 ? {zh:'對正確類別減 1，其餘不動', en:'subtract 1 at the true class, leave the rest'} : null}),
+    panels:[{lbl:'step', chips:[chip(String(k + 1), 'hot')]}], line:[0, 2, 3, 3][k], msg:m}));
+  [0, 1, 2, 3].forEach(i => {
+    F.push({shapes:caps(draw(4, i), {cap:{zh:'class ' + i + '：' + fmtN(Math.round(p[i] * 100) / 100) + ' − ' + yv[i] + ' = ' + fmtN(Math.round(g[i] * 100) / 100), en:'class ' + i + ': ' + fmtN(Math.round(p[i] * 100) / 100) + ' − ' + yv[i] + ' = ' + fmtN(Math.round(g[i] * 100) / 100)},
+        cap2:i === PY_LABEL ? {zh:'只有正確類別那一格是負的：把 logit 往上推', en:'only the true class is negative: push that logit up'}
+                            : {zh:'正的：把這個 logit 往下壓', en:'positive: push this logit down'}}),
+      panels:[{lbl:'p − y', chips:g.map((x, j) => chip((Math.round(x * 100) / 100).toFixed(2), j === i ? 'hot' : 'dim'))}], line:3,
+      msg:i === PY_LABEL ? {zh:'正確類別的梯度是負的，梯度下降會往反方向走，也就是把這個 logit 推高。模型越有信心（p 越接近 1），這一格就越接近 0——幾乎不用再修。',
+                            en:'The gradient at the true class is negative, and gradient descent moves against it, pushing that logit up. The more confident the model (p closer to 1), the closer this entry is to 0 - almost nothing left to fix.'}
+                         : {zh:'其他類別的梯度等於它們的機率：模型分給錯誤答案多少信心，就被扣掉多少。', en:'Every other class gets a gradient equal to its own probability: exactly as much as the model spent believing the wrong answer.'}});
+  });
+  F.push({shapes:caps(draw(4), {cap:{zh:'跟 central difference 比對，最大差距 2.47e-11', en:'against central differences, largest difference 2.47e-11'},
+      cap2:{zh:'這就是每個框架都提供融合版 cross_entropy(logits, labels) 的原因', en:'this is why every framework ships a fused cross_entropy(logits, labels)'}}),
+    panels:[{lbl:'check', chips:[chip('2.47e-11', 'ok')]}], line:4,
+    msg:{zh:'也是為什麼「傳機率進去而不是傳 logit」被文件列為錯誤：等你手上拿到機率，那個能消掉的結構已經被丟掉了，剩下的只能靠一個會除以 p 的公式硬算，而 p 可能是 0。',
+         en:'It is also why passing probabilities instead of logits is a documented mistake: by the time you hold the probabilities, the structure that cancels has been thrown away, and what remains is a formula that divides by p - which may be zero.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 3: forward and backward */
+const CODE_BP = [
+  'def forward(self, x):',
+  '    self.x = x                      # cache what backward will need',
+  '    return x @ self.W + self.b',
+  '',
+  'def backward(self, dz):',
+  '    self.dW = self.x.T @ dz         # outer product, summed over the batch',
+  '    self.db = dz.sum(axis=0)        # undo the broadcast',
+  '    return dz @ self.W.T            # hand this to the layer below',
+  '',
+  'for layer in reversed(self.layers):',
+  '    dlogits = layer.backward(dlogits)'
+];
+const BP_NODES = [
+  {id:'x', lab:'x', shape:'(n, 2)', x:1.0},
+  {id:'z1', lab:'z1 = x@W1+b1', shape:'(n, 64)', x:3.0},
+  {id:'h', lab:'h = relu(z1)', shape:'(n, 64)', x:5.0},
+  {id:'z2', lab:'z2 = h@W2+b2', shape:'(n, 3)', x:7.0},
+  {id:'L', lab:'loss', shape:'scalar', x:8.9}
+];
+function bpFrames(v){
+  const F = new Frames(), back = v === 1;
+  const Y = 2.2;
+  const draw = (upto, note) => {
+    const sh = [];
+    BP_NODES.forEach((n, i) => {
+      const done = back ? i >= BP_NODES.length - upto : i < upto;
+      const cur = back ? i === BP_NODES.length - upto : i === upto - 1;
+      sh.push(box(n.x - .82, Y, 1.64, .62, cur ? 'hot' : done ? (back ? 'act' : 'ok') : 'ghost', n.lab, .2));
+      sh.push(S.t(n.x, Y + .92, n.shape, {c:COL.grey, fs:.2}));
+    });
+    for (let i = 0; i < BP_NODES.length - 1; i++){
+      const a = BP_NODES[i].x + .84, b = BP_NODES[i + 1].x - .84;
+      if (!back) sh.push(S.e(a, Y + .31, b, Y + .31, {s:'ok', w:.035}));
+      else sh.push(S.e(b, Y + .31, a, Y + .31, {s:'act', w:.035}));
+    }
+    side(sh, .5, 3.7, note, .42);
+    return sh;
+  };
+  if (!back){
+    const notes = [
+      [[{zh:'輸入：n 個樣本、2 個特徵', en:'input: n examples, 2 features'}, COL.grey, .26]],
+      [[{zh:'self.x = x —— 快取起來，反向會用到', en:'self.x = x - cached, backward will need it'}, COL.orangeL, .26]],
+      [[{zh:'ReLU 快取的是 mask = x > 0', en:'ReLU caches mask = x > 0'}, COL.orangeL, .26]],
+      [[{zh:'self.x = h —— 第二層也快取它的輸入', en:'self.x = h - the second layer caches its input too'}, COL.orangeL, .26]],
+      [[{zh:'cross_entropy(z2, y)，一個純量', en:'cross_entropy(z2, y), a single scalar'}, COL.tealL, .26]]
+    ];
+    const msgs = [
+      {zh:'前向傳播從輸入開始。這一頁要注意的不是算出什麼值，而是「哪些東西被留下來了」。', en:'The forward pass starts from the input. What matters on this page is not the values but which of them get kept.'},
+      {zh:'線性層算出 z1，同時把 x 存進 self.x。這一行看起來多餘，但反向傳播的 dW = x.T @ dz 需要它——前向不存，反向就得重算一次。', en:'The linear layer computes z1 and stores x in self.x. That line looks redundant, but backward needs it for dW = x.T @ dz - if forward does not keep it, backward has to recompute it.'},
+      {zh:'ReLU 只需要記住哪些位置是正的。它存的是一個布林 mask，不是輸出值。', en:'ReLU only needs to remember which positions were positive. It caches a boolean mask, not the output values.'},
+      {zh:'第二層同樣把它的輸入 h 存起來。每一層都留一份 activation——這就是訓練比推論吃記憶體的原因。', en:'The second layer caches its input h in the same way. Every layer keeps one activation array - which is why training costs far more memory than inference.'},
+      {zh:'最後是一個純量 loss。整個前向過程留下了 x、mask、h 三份快取，接下來反向傳播會把它們一一用掉。', en:'The end is a single scalar loss. The forward pass left behind three caches - x, mask and h - and the backward pass is about to spend them all.'}
+    ];
+    for (let k = 1; k <= 5; k++)
+      F.push({shapes:caps(draw(k, notes[k - 1]), {cap:{zh:'前向：第 ' + k + ' 步', en:'forward: step ' + k},
+          cap2:{zh:'青色箭頭＝前向，橘色方框＝被快取下來的東西', en:'teal arrows: forward; the boxes in orange are what gets cached'}}),
+        panels:[{lbl:'cached', chips:[chip(['-', 'x', 'x, mask', 'x, mask, h', 'x, mask, h'][k - 1], k > 1 ? 'hot' : 'empty')]}],
+        line:[0, 1, 1, 1, 2][k - 1], msg:msgs[k - 1]});
+    return F.list;
+  }
+  const notes = [
+    [['dz2 = (p − y) / n', COL.orangeL, .3]],
+    [['dW2 = h.T @ dz2', COL.orangeL, .3], [{zh:'用的是前向存下來的 h', en:'uses the h cached on the way forward'}, COL.grey, .24],
+     ['db2 = dz2.sum(axis=0)', COL.orangeL, .3], ['dh = dz2 @ W2.T', COL.orangeL, .3]],
+    [['dz1 = dh * mask', COL.orangeL, .3], [{zh:'ReLU：擋掉當初是負的那些位置', en:'ReLU: block the positions that were negative'}, COL.grey, .24]],
+    [['dW1 = x.T @ dz1', COL.orangeL, .3], ['db1 = dz1.sum(axis=0)', COL.orangeL, .3],
+     [{zh:'dx 算得出來，但沒有人要——x 不是參數', en:'dx exists but nobody wants it - x is not a parameter'}, COL.grey, .24]],
+    [[{zh:'四個梯度都有了：dW1, db1, dW2, db2', en:'all four gradients exist: dW1, db1, dW2, db2'}, COL.tealL, .28],
+     [{zh:'梯度檢查：7.85e-09', en:'gradient check: 7.85e-09'}, COL.tealL, .26]]
+  ];
+  const msgs = [
+    {zh:'反向傳播從 loss 開始，第一個梯度就是 Day 46 前半講的那個：p − y 再除以 n。', en:'The backward pass starts at the loss, and the first gradient is the one from the first half of this day: p − y, divided by n.'},
+    {zh:'三行規則第一次登場。dW2 = h.T @ dz2 把「進來的東西」和「出去那邊的梯度」的外積沿著 batch 加起來；db2 把 bias 當初被 broadcast 到每一列的量收回來；dh 則是同一個 W2 轉置之後，把梯度交給下面一層。',
+     en:'The three rules, for the first time. dW2 = h.T @ dz2 sums, over the batch, the outer product of what came in with the gradient of what went out. db2 collects back the amount the bias was broadcast to every row. dh is the same W2, transposed, handing the gradient down.'},
+    {zh:'ReLU 的反向只是乘上當初存下來的 mask：前向被壓成 0 的位置，梯度也過不去。這就是「死掉的 ReLU」字面上的意思。',
+     en:'ReLU\'s backward is just a multiply by the cached mask: wherever the forward pass clipped to zero, no gradient gets through. That is literally what a dead ReLU is.'},
+    {zh:'第一層用的是前向存下來的 x。注意 dx 也被算出來了，但沒有人用它——x 是資料不是參數。如果下面還有一層，dx 就是那一層的 dz。',
+     en:'The first layer uses the x it cached. Note that dx is computed and then dropped: x is data, not a parameter. If there were another layer below, dx would be its dz.'},
+    {zh:'一次前向、一次反向，四個參數陣列的梯度全部到齊，而且反向的成本跟前向差不多——因為用的是同一批矩陣乘法，只是換了轉置。這就是為什麼不用對每個參數各跑一次。',
+     en:'One forward pass, one backward pass, and every one of the four parameter arrays has its gradient - at roughly the cost of the forward pass, because it is the same matrix products with different transposes. That is why you never run one pass per parameter.'}
+  ];
+  for (let k = 1; k <= 5; k++)
+    F.push({shapes:caps(draw(k, notes[k - 1]), {cap:{zh:'反向：第 ' + k + ' 步', en:'backward: step ' + k},
+        cap2:{zh:'走的是同一串 layer，只是倒過來（Day 13 的逆拓樸順序）', en:'the same list of layers, reversed - Day 13\'s reverse topological order'}}),
+      panels:[{lbl:'grads', chips:[chip(['-', 'dW2, db2', 'dW2, db2', 'all four', 'all four'][k - 1], k > 1 ? 'ok' : 'empty')]}],
+      line:[0, 5, 9, 6, 10][k - 1], msg:msgs[k - 1]});
+  return F.list;
+}
+
+/* ================================================================ tab 4: the bugs */
+const CODE_BUG = [
+  'self.dW = self.x.T @ dz        # right',
+  'self.dW = self.x   @ dz        # runs whenever n == d_in',
+  '',
+  'self.db = dz.sum(axis=0)       # right: one entry per output unit',
+  'self.db = dz.sum()             # a scalar, and a scalar broadcasts',
+  '',
+  'return p / n                   # gradient of the MEAN loss',
+  'return p                       # gradient of the SUM: every step n times too big',
+  '',
+  'self.W = np.zeros((d_in, d_out))   # every hidden unit stays identical'
+];
+const BUGS = [
+  {id:'bias', line:4, err:'1.00e+00', title:{zh:'db = dz.sum()', en:'db = dz.sum()'},
+   rows:[[{zh:'正確的 db 形狀', en:'the right db shape'}, '(64,)', 'ok'],
+         [{zh:'dz.sum() 的形狀', en:'the shape of dz.sum()'}, 'scalar', 'bad'],
+         [{zh:'b -= lr * scalar', en:'b -= lr * scalar'}, 'broadcasts', 'bad']],
+   msg:{zh:'正確的梯度每個輸出單元一格。dz.sum() 把它壓成一個純量，而 b -= lr * 純量 會毫無怨言地 broadcast：每個 bias 都被移動同樣的量。形狀沒錯、程式沒錯，只是每個 bias 都在抄別人的答案。',
+        en:'The correct gradient has one entry per output unit. dz.sum() collapses it to a scalar, and b -= lr * scalar broadcasts without complaint, moving every bias by the same amount. No shape error, no exception - every bias is just copying everybody else\'s answer.'}},
+  {id:'mean', line:7, err:'8.46e-01', title:{zh:'忘了除以 n', en:'forgot the division by n'},
+   rows:[[{zh:'回報的 loss', en:'the loss reported'}, 'mean', 'ok'],
+         [{zh:'算出來的梯度是', en:'the gradient computed'}, 'of the sum', 'bad'],
+         [{zh:'實際效果', en:'the effect'}, 'lr x n', 'bad']],
+   msg:{zh:'回報的 loss 是整個 batch 的平均，但梯度算的是總和的梯度，於是每一步都比你以為的大 n 倍。表面上什麼都沒壞——它看起來只像「學習率突然太高」，而那是最難歸因的一種 bug：你會去調 lr，然後在換 batch size 的那天又壞一次。',
+        en:'The loss you report is the mean over the batch, but the gradient is the gradient of the sum, so every step is n times larger than intended. Nothing breaks visibly - it looks like a learning rate that is suddenly too high, which is the hardest kind of bug to attribute: you tune the lr, and it breaks again the day the batch size changes.'}},
+  {id:'transpose', line:1, err:'1.00e+00', title:{zh:'dW = x @ dz（少了轉置）', en:'dW = x @ dz (no transpose)'},
+   rows:[[{zh:'x 的形狀', en:'x is'}, '(n, d_in)', 'act'],
+         [{zh:'dz 的形狀', en:'dz is'}, '(n, d_out)', 'act'],
+         [{zh:'n = 8, d_in = 8 時', en:'with n = 8, d_in = 8'}, 'runs!', 'bad'],
+         [{zh:'n ≠ d_in 時', en:'with n != d_in'}, 'ValueError', 'ok']],
+   msg:{zh:'x 是 (n, d_in)、dz 是 (n, d_out)，所以 x @ dz 本該是形狀錯誤——除非 n 剛好等於 d_in。那時它會跑過去，交出一個形狀正確、內容全錯的陣列。一個取決於 batch size 的 bug，就是一個會出現在正式環境、不會出現在你測試裡的 bug。',
+        en:'x is (n, d_in) and dz is (n, d_out), so x @ dz should be a shape error - unless n happens to equal d_in. Then it runs and produces an array of exactly the right shape full of wrong numbers. A bug that depends on the batch size is a bug that shows up in production and not in your test.'}},
+  {id:'zero', line:9, err:'0.333', title:{zh:'全零初始化', en:'all-zero initialisation'},
+   rows:[[{zh:'256 個隱藏值裡的相異值', en:'distinct hidden values out of 256'}, '1', 'bad'],
+         [{zh:'400 步後的準確率', en:'accuracy after 400 steps'}, '0.333', 'bad'],
+         [{zh:'隨機初始化', en:'random initialisation'}, '1.000', 'ok']],
+   msg:{zh:'如果每個權重都一樣，每個隱藏單元算的就是同一件事、收到同一個梯度、走同一步——而且永遠如此。64 個單元表現得像一個，三個類別的 0.333 就是亂猜。對稱必須由初始化打破；這就是「隨機初始化不是實作細節」的原因。bias 可以從零開始，因為權重已經把對稱打破了。',
+        en:'If every weight is identical, every hidden unit computes the same thing, receives the same gradient and takes the same step - forever. Sixty-four units behave as one, and 0.333 on three classes is chance. Symmetry has to be broken by the initialisation; this is why random init is not an implementation detail. Biases can start at zero because the weights already break the symmetry.'}}
+];
+function bugFrames(v){
+  const F = new Frames(), B = BUGS[v];
+  const draw = k => {
+    const sh = [];
+    sh.push(fitT(4.9, 1.0, B.title, {c:COL.red, fs:.4}));
+    B.rows.forEach((r, i) => {
+      if (i >= k) return;
+      const y = 1.6 + i * .78, on = i === k - 1;
+      sh.push(fitT(4.5, y + .35, r[0], {anchor:'end', c:COL.pale, fs:.26}));
+      sh.push(box(4.75, y, 2.5, .6, on ? 'hot' : r[2], r[1], .28));
+    });
+    if (k > B.rows.length)
+      sh.push(S.t(4.9, 1.75 + B.rows.length * .78,
+                  (B.id === 'zero' ? 'accuracy ' : 'gradcheck ') + B.err,
+                  {c:COL.red, fs:.42}));
+    return sh;
+  };
+  F.push({shapes:caps(draw(0), {cap:{zh:'正確的那一行只差一個字元', en:'the correct line is one character away'},
+      cap2:{zh:'而錯的那一行照樣跑完、照樣交出一個模型', en:'and the wrong one still runs to completion and hands you a model'}}),
+    panels:[{lbl:'bug', chips:[chip(String(v + 1) + ' / 4', 'act')]}], line:B.line, msg:B.msg});
+  for (let k = 1; k <= B.rows.length + 1; k++)
+    F.push({shapes:caps(draw(k), {cap:k > B.rows.length
+        ? (B.id === 'zero' ? {zh:'準確率 ' + B.err + '（三個類別的亂猜）', en:'accuracy ' + B.err + ' - chance on three classes'}
+                           : {zh:'梯度檢查：' + B.err, en:'gradient check: ' + B.err})
+        : B.rows[k - 1][0],
+        cap2:k > B.rows.length ? {zh:'梯度檢查是這一頁唯一會響的東西', en:'the gradient check is the only thing on this page that complains'} : null}),
+      panels:[{lbl:'bug', chips:[chip(String(v + 1) + ' / 4', 'act')]},
+              ...(k > B.rows.length ? [{lbl:'check', chips:[chip(B.err, 'bad')]}] : [])],
+      line:B.line,
+      msg:k > B.rows.length ? {zh:'這就是為什麼手寫的反向傳播一定要先做一次梯度檢查：它是上面這四個 bug 裡，唯一一個會主動告訴你出事的東西。',
+                               en:'This is why a hand-written backward pass gets a gradient check first: of everything on this page, it is the only thing that volunteers the news.'}
+                            : B.msg});
+  return F.list;
+}
+
+/* ================================================================ tab 5: the ReLU kink */
+const CODE_KINK = [
+  'def backward(self, dz):',
+  '    return dz * self.mask          # mask = x > 0, so x == 0 gives 0',
+  '',
+  '# central differences average both sides:',
+  '#   (relu(0 + h) - relu(0 - h)) / 2h  =  (h - 0) / 2h  =  0.5',
+  '',
+  '# both are defensible; relu simply has no derivative at 0'
+];
+function kinkFrames(){
+  const F = new Frames();
+  const KX = 3.3, KY = 3.3, SLOPE = 1.15;
+  const draw = (showH, showNums) => {
+    const sh = [];
+    sh.push(S.e(KX - 1.9, KY, KX + 1.9, KY, {s:'idle', w:.025, arrow:false}));
+    sh.push(S.e(KX, KY + .45, KX, KY - 2.1, {s:'idle', w:.025, arrow:false}));
+    sh.push(S.e(KX - 1.75, KY, KX, KY, {s:'ok', w:.06, arrow:false}));
+    sh.push(S.e(KX, KY, KX + 1.75, KY - 1.75 * SLOPE / 1.6, {s:'ok', w:.06, arrow:false}));
+    sh.push(S.c(KX, KY, .1, 'hot', ''));
+    sh.push(S.t(KX + 1.55, KY - 1.9, 'relu(x)', {c:COL.tealL, fs:.26}));
+    sh.push(S.t(KX, KY + .8, {zh:'x = 0：沒有導數', en:'x = 0: no derivative here'}, {c:COL.orangeL, fs:.26}));
+    if (showH){
+      [-1, 1].forEach(sg => {
+        const hx = KX + sg * .85;
+        sh.push(S.e(hx, KY + .1, hx, KY - (sg > 0 ? .85 * SLOPE / 1.6 : 0), {s:'act', w:.035, arrow:false, dash:'.08 .07'}));
+        sh.push(S.t(hx, KY + .35, sg > 0 ? 'x + h' : 'x − h', {c:COL.purpleL, fs:.24}));
+      });
+    }
+    side(sh, 5.75, 1.3, showNums || [], .46);
+    return sh;
+  };
+  F.push({shapes:caps(draw(false), {cap:{zh:'ReLU 在剛好 0 的地方有一個角', en:'ReLU has a corner at exactly 0'},
+      cap2:{zh:'左邊斜率 0、右邊斜率 1，中間沒有定義', en:'slope 0 on the left, 1 on the right, undefined in between'}}),
+    panels:[{lbl:'x', chips:[chip('0', 'hot')]}], line:6,
+    msg:{zh:'這一頁的失敗不是 bug。ReLU 在 0 沒有導數——左邊是 0、右邊是 1，中間沒有一個「正確答案」。問題是反向傳播和梯度檢查各自挑了不同的一邊。',
+         en:'The failure on this page is not a bug. ReLU has no derivative at 0 - the slope is 0 on the left and 1 on the right, and there is no correct answer in between. The problem is that backpropagation and the gradient check each pick a different side.'}});
+  F.push({shapes:caps(draw(false, [[{zh:'反向傳播挑一邊：', en:'backprop picks a side:'}, COL.tealL, .28],
+        ['mask = x > 0  →  0', COL.tealL, .3]]),
+      {cap:{zh:'反向傳播回報 0', en:'backpropagation reports 0'},
+       cap2:{zh:'mask = x > 0 在 x = 0 時是 False', en:'mask = x > 0 is False at x = 0'}}),
+    panels:[{lbl:'backprop', chips:[chip('0', 'ok')]}], line:1,
+    msg:{zh:'`mask = x > 0` 用的是嚴格大於，所以 x = 0 被歸到「關閉」那一側，梯度是 0。寫成 `x >= 0` 就會得到 1。兩種都說得通，框架各自有自己的選擇。',
+         en:'`mask = x > 0` uses a strict comparison, so x = 0 falls on the "off" side and the gradient is 0. Writing `x >= 0` would give 1 instead. Both are defensible, and frameworks make their own choice.'}});
+  F.push({shapes:caps(draw(true, [[{zh:'反向傳播：0', en:'backprop: 0'}, COL.tealL, .28],
+        [{zh:'central difference 兩邊平均：', en:'central differences, both sides:'}, COL.purpleL, .26],
+        ['(h − 0) / 2h  =  0.5', COL.purpleL, .3]]),
+      {cap:{zh:'梯度檢查回報 0.5', en:'the gradient check reports 0.5'},
+       cap2:{zh:'兩邊都量，所以拿到的是平均斜率', en:'it measures both sides, so it gets the average slope'}}),
+    panels:[{lbl:'backprop', chips:[chip('0', 'ok')]}, {lbl:'numeric', chips:[chip('0.5', 'act')]}], line:4,
+    msg:{zh:'central difference 的定義就是 (f(x+h) − f(x−h)) / 2h。右邊抬高了 h、左邊沒動，所以它回報 0.5——左右斜率的平均。它沒有算錯，它只是量了一個不存在的東西。',
+         en:'A central difference is (f(x+h) - f(x-h)) / 2h by definition. The right side rose by h and the left did not move, so it reports 0.5 - the average of the two slopes. It is not computing anything incorrectly; it is measuring something that does not exist.'}});
+  F.push({shapes:caps(draw(true, [[{zh:'一列全零的輸入，', en:'a row of zeros,'}, COL.pale, .26],
+        [{zh:'bias 又從 0 開始：', en:'with biases starting at 0:'}, COL.pale, .26],
+        [{zh:'8 個中有 4 個剛好是 0', en:'4 of 8 land on the corner'}, COL.red, .26],
+        ['ReLU gradcheck  1.00', COL.red, .32],
+        [{zh:'換成 tanh：3.4e-10', en:'with tanh: 3.4e-10'}, COL.tealL, .28]]),
+      {cap:{zh:'於是一份正確的實作沒通過自己的檢查', en:'so a correct implementation fails its own check'},
+       cap2:{zh:'梯度檢查請用平滑的激活函數', en:'gradient-check with a smooth activation instead'}}),
+    panels:[{lbl:'ReLU', chips:[chip('1.00', 'bad')]}, {lbl:'tanh', chips:[chip('3.4e-10', 'ok')]}], line:6,
+    msg:{zh:'我是用最誠實的方式發現這件事的：第一版的螺旋資料每條臂都從半徑 0 出發，三個類別共用了原點，就是那一個點讓一份正確的實作在梯度檢查上失敗。兩個教訓——梯度檢查用平滑的激活函數；還有，檢查失敗時先去看你的資料，不要一開始就假設是梯度寫錯了。',
+         en:'I found this the honest way: my first spiral started every arm at radius 0, so all three classes shared the origin, and that one point made the gradient check fail on a correct implementation. Two lessons - gradient-check with a smooth activation, and when a check fails, look at your data before assuming the gradient is wrong.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 6: LC 867 and LC 48 */
+const CODE_MAT = [
+  'class Solution:                                   # LeetCode 867',
+  '    def transpose(self, matrix):',
+  '        out = [[0] * len(matrix) for _ in matrix[0]]',
+  '        for i in range(len(matrix)):',
+  '            for j in range(len(matrix[0])):',
+  '                out[j][i] = matrix[i][j]',
+  '        return out',
+  '',
+  'class Solution:                                   # LeetCode 48',
+  '    def rotate(self, matrix):',
+  '        n = len(matrix)',
+  '        for i in range(n):',
+  '            for j in range(i + 1, n):     # j > i, or every pair swaps twice',
+  '                matrix[i][j], matrix[j][i] = matrix[j][i], matrix[i][j]',
+  '        for row in matrix:',
+  '            row.reverse()'
+];
+const M23 = [[1, 2, 3], [4, 5, 6]];
+const M33 = [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
+function matGrid(sh, M, x0, y0, cw, hl, st){
+  M.forEach((row, i) => row.forEach((v, j) => {
+    const on = hl && hl(i, j);
+    sh.push(box(x0 + j * cw, y0 + i * cw, cw - .08, cw - .08, on ? 'hot' : (st || 'idle'), String(v), .3));
+  }));
+}
+function matFrames(v){
+  const F = new Frames();
+  if (v === 0){
+    const out = [[0, 0], [0, 0], [0, 0]];
+    const draw = k => {
+      const sh = [];
+      matGrid(sh, M23, 1.0, 1.5, .85, (i, j) => i * 3 + j === k - 1, 'act');
+      sh.push(S.t(2.3, 1.25, 'matrix (2 × 3)', {c:COL.purpleL, fs:.26}));
+      matGrid(sh, out.map(r => r.map(x => x || '')), 6.3, 1.5, .85,
+              (i, j) => k > 0 && i === (k - 1) % 3 && j === Math.floor((k - 1) / 3), 'ok');
+      sh.push(S.t(7.15, 1.25, 'out (3 × 2)', {c:COL.tealL, fs:.26}));
+      sh.push(S.e(4.1, 2.6, 5.9, 2.6, {s:'idle', w:.04}));
+      return sh;
+    };
+    F.push({shapes:caps(draw(0), {cap:{zh:'轉置：out[j][i] = matrix[i][j]', en:'transpose: out[j][i] = matrix[i][j]'},
+        cap2:{zh:'矩陣不一定是方陣，所以不能原地做', en:'the matrix need not be square, so this cannot be done in place'}}),
+      panels:[{lbl:'moved', chips:[chip('0', 'empty')]}], line:1,
+      msg:{zh:'這就是上面每一條反向規則所依賴的那個操作。二維 list 的版本必須把每一個元素搬一次。',
+           en:'This is the operation every backward rule above is built on. The list-of-lists version has to move every element exactly once.'}});
+    for (let k = 1; k <= 6; k++){
+      const i = Math.floor((k - 1) / 3), j = (k - 1) % 3;
+      out[j][i] = M23[i][j];
+      F.push({shapes:caps(draw(k), {cap:{zh:'matrix[' + i + '][' + j + '] = ' + M23[i][j] + '  →  out[' + j + '][' + i + ']',
+            en:'matrix[' + i + '][' + j + '] = ' + M23[i][j] + '  ->  out[' + j + '][' + i + ']'},
+          cap2:{zh:'搬了 ' + k + ' / 6 個元素', en:k + ' of 6 elements moved'}}),
+        panels:[{lbl:'moved', chips:[chip(String(k), 'hot')]}], line:5,
+        msg:k === 6 ? {zh:'六個元素全部搬完，O(m·n)。對照之下，NumPy 的 a.T 一個都不搬：它回傳一個把 strides 從 (24, 8) 對調成 (8, 24) 的 view，跟原陣列共用記憶體。這就是為什麼 x.T @ dz 不比 x @ dz 貴，也是為什麼反向傳播的成本大約等於前向。',
+                       en:'All six moved, O(m·n). By contrast NumPy\'s a.T moves nothing: it returns a view with the strides swapped from (24, 8) to (8, 24), sharing memory with the original. That is why x.T @ dz costs no more than x @ dz, and why a backward pass costs about what a forward pass costs.'}
+                    : {zh:'索引交換，值照搬。每個元素剛好被碰一次。', en:'The indices swap and the value is copied. Every element is touched exactly once.'}});
+    }
+    return F.list;
+  }
+  /* LC 48, correct and buggy */
+  const buggy = v === 2;
+  const M = M33.map(r => r.slice());
+  const pairs = [];
+  for (let i = 0; i < 3; i++) for (let j = buggy ? 0 : i + 1; j < 3; j++) if (buggy ? i !== j : true) pairs.push([i, j]);
+  const draw = (k, phase) => {
+    const sh = [];
+    matGrid(sh, M, 3.3, 0.95, 1.1, (i, j) => k > 0 && k <= pairs.length &&
+            ((i === pairs[k - 1][0] && j === pairs[k - 1][1]) || (i === pairs[k - 1][1] && j === pairs[k - 1][0])),
+            phase === 'done' ? 'ok' : 'idle');
+    side(sh, .4, 4.8, [[phase === 'rev' ? {zh:'第二階段：每一列反過來', en:'phase 2: reverse each row'}
+                                        : {zh:'第一階段：轉置（交換 [i][j] 和 [j][i]）', en:'phase 1: transpose (swap [i][j] with [j][i])'},
+                        buggy ? COL.red : COL.tealL, .28],
+                       [buggy ? {zh:'j 跑完整列 → 每一對會被交換兩次', en:'j runs over the whole row -> every pair swaps twice'}
+                              : {zh:'j > i → 每一對只被交換一次', en:'j > i -> every pair swaps exactly once'}, COL.grey, .24]], .42);
+    return sh;
+  };
+  F.push({shapes:caps(draw(0), {cap:{zh:'順時針旋轉 90 度 = 轉置 + 每列反轉', en:'rotate 90 degrees clockwise = transpose, then reverse each row'},
+      cap2:buggy ? {zh:'這次內層迴圈寫成 for j in range(n)', en:'this time the inner loop is for j in range(n)'}
+                 : {zh:'內層迴圈 for j in range(i + 1, n)', en:'the inner loop is for j in range(i + 1, n)'}}),
+    panels:[{lbl:'swaps', chips:[chip('0', 'empty')]}], line:12,
+    msg:buggy ? {zh:'只改一個起始索引：內層從 0 開始而不是 i + 1。看看會發生什麼。', en:'One starting index changed: the inner loop begins at 0 instead of i + 1. Watch what happens.'}
+              : {zh:'題目要求原地旋轉，不能另外配一個 n × n 矩陣。轉置加上反轉每一列就是順時針 90 度。', en:'The problem asks for an in-place rotation, with no second n x n matrix allowed. A transpose followed by reversing each row is a 90-degree clockwise turn.'}});
+  pairs.forEach(([i, j], k) => {
+    const t = M[i][j]; M[i][j] = M[j][i]; M[j][i] = t;
+    const show = k < 4 || k >= pairs.length - 2;
+    if (!show) return;
+    F.push({shapes:caps(draw(k + 1), {cap:{zh:'交換 [' + i + '][' + j + '] 和 [' + j + '][' + i + ']', en:'swap [' + i + '][' + j + '] with [' + j + '][' + i + ']'},
+        cap2:{zh:'第 ' + (k + 1) + ' / ' + pairs.length + ' 次交換', en:'swap ' + (k + 1) + ' of ' + pairs.length}}),
+      panels:[{lbl:'swaps', chips:[chip(String(k + 1), 'hot')]}], line:13,
+      msg:buggy && k >= pairs.length - 2
+        ? {zh:'注意這一對之前已經被交換過一次了（以 [' + j + '][' + i + '] 的身分）。交換兩次 = 沒有交換。', en:'Note this pair was already swapped once, as [' + j + '][' + i + ']. Swapping twice is the same as not swapping.'}
+        : {zh:'兩個對稱位置互換。' + (buggy ? '' : '只走上三角，所以每一對剛好一次。'), en:'The two mirrored positions exchange values.' + (buggy ? '' : ' Only the upper triangle is visited, so each pair is hit exactly once.')}});
+  });
+  F.push({shapes:caps(draw(pairs.length + 1, 'rev'), {cap:buggy ? {zh:'轉置完成——但矩陣跟原來一模一樣', en:'transpose finished - and the matrix is exactly as it started'}
+        : {zh:'轉置完成', en:'transpose finished'},
+      cap2:{zh:'接下來把每一列反過來', en:'now reverse each row'}}),
+    panels:[{lbl:'state', chips:M.map(r => chip(r.join(','), buggy ? 'bad' : 'ok'))}], line:14,
+    msg:buggy ? {zh:'每一對都被交換了兩次，所以矩陣原封不動地回到起點。沒有例外、沒有警告——轉置這一步就這樣悄悄什麼都沒做。',
+                 en:'Every pair was swapped twice, so the matrix came back exactly as it started. No exception, no warning - the transpose step silently did nothing at all.'}
+              : {zh:'上三角的三對交換完畢，矩陣已經轉置好了。剩下把每列反轉。', en:'The three upper-triangle pairs are done and the matrix is transposed. What remains is reversing each row.'}});
+  const fin = M.map(r => r.slice().reverse());
+  F.push({shapes:caps((() => { const sh = []; matGrid(sh, fin, 3.3, 0.95, 1.1, null, buggy ? 'bad' : 'ok');
+      side(sh, .4, 4.8, [[buggy ? {zh:'得到的是「每列反轉」，不是旋轉', en:'what came out is the rows reversed, not a rotation'}
+                                : {zh:'順時針 90 度，原地完成', en:'rotated 90 degrees clockwise, in place'}, buggy ? COL.red : COL.tealL, .28]], .42);
+      return sh; })(),
+      {cap:'[' + fin.map(r => '[' + r.join(', ') + ']').join(', ') + ']',
+       cap2:buggy ? {zh:'正解是 [[7, 4, 1], [8, 5, 2], [9, 6, 3]]', en:'the right answer is [[7, 4, 1], [8, 5, 2], [9, 6, 3]]'}
+                  : {zh:'第一欄由下往上讀，變成第一列', en:'the first column, read bottom to top, became the first row'}}),
+    panels:[{lbl:'result', chips:fin.map(r => chip(r.join(','), buggy ? 'bad' : 'ok'))}], line:15,
+    msg:buggy ? {zh:'函式照樣回傳、照樣修改了矩陣、照樣交出一個由同樣數字組成的方陣——只是那是「把每一列反過來」的輸入。這跟今天其他所有失敗是同一種味道：一個迴圈邊界的差一錯誤，形狀全對、每個值都看起來合理。',
+                 en:'The function still returns, still modifies the matrix, and still produces a square matrix of the same numbers - just the input with its rows reversed. Same flavour as every other failure today: an off-by-one in a loop bound that leaves every shape intact and every value plausible.'}
+              : {zh:'O(n²) 時間、O(1) 額外空間。注意這跟 LeetCode 867 的差別：那題的矩陣不一定是方陣，所以沒辦法原地交換，一定要配一個新的。', en:'O(n²) time and O(1) extra space. Note the contrast with LeetCode 867: there the matrix need not be square, so there is no pair to swap in place and a new array is unavoidable.'}});
+  return F.list;
+}
+
+/* ================================================================ meta */
+const DAY_META = {
+  title:{zh:'Day 46 — 反向傳播與一個純 NumPy 的 MLP', en:'Day 46 - Backpropagation and a multilayer perceptron in pure NumPy'},
+  sub:{zh:'三行反向規則、softmax 與 cross entropy 的消去，以及四個不會報錯的 bug 加一個不是 bug 的失敗。', en:'Three backward rules, the cancellation that fuses softmax with cross entropy, four bugs that never raise, and one failure that is not a bug.'},
+  tabs:[
+    {
+      id:'softmax', label:{zh:'softmax 的兩個坑', en:'two softmax traps'},
+      stage:{zh:'exp() 很容易溢位，而 softmax 的軸很容易選錯', en:'exp() overflows easily, and the softmax axis is easy to get wrong'},
+      view:VIEW,
+      variants:[{zh:'穩定版', en:'stable'}, {zh:'天真版（溢位）', en:'naive (overflows)'}, {zh:'用錯軸', en:'the wrong axis'}],
+      idea:{zh:'先減掉每一列的最大值，在數學上什麼都沒改（常數在比值裡消掉），但它保證 exp 看到的參數永遠 ≤ 0。logits [1000, 1001, 1002] 時天真版三個都是 nan，穩定版給 [0.090031, 0.244728, 0.665241]；而在正常大小的 logit 上兩者只差 1.1e-16——這正是它在測試裡永遠看不到的原因。第二個坑更隱形：一批 logits 的形狀是 (樣本數, 類別數)，softmax 必須沿類別那一軸做。用 axis=0 的話，每個元素照樣在 [0, 1]、欄和照樣是 1，只是列和變成 1.475 和 1.525，連每列的 argmax 都沒變——沒有任何 assertion 會響，先壞掉的是 loss 不是預測。',
+            en:'Subtracting the row maximum changes nothing mathematically (the constant cancels in the ratio) but guarantees exp never sees a positive argument. On logits [1000, 1001, 1002] the naive version returns three nans while the stable one gives [0.090031, 0.244728, 0.665241] - and on ordinary logits the two agree to 1.1e-16, which is exactly why this is invisible in testing. The second trap is subtler: a batch of logits has shape (examples, classes) and the softmax must run along the class axis. With axis=0 every entry is still in [0, 1] and the column sums are still 1; only the row sums become 1.475 and 1.525, and even the per-row argmax is unchanged. No assertion fires, and the loss goes wrong before the predictions do.'},
+      legend:[['#ff9736', {zh:'這一步', en:'the current step'}], ['#3fe0dd', {zh:'正確的結果', en:'the right result'}], ['#ff5c5c', {zh:'nan / 錯的軸', en:'nan, or the wrong axis'}], ['#9d6bff', {zh:'輸入的 logits', en:'the input logits'}]],
+      get code(){ return CODE_SM; },
+      build:smFrames
+    },
+    {
+      id:'pminusy', label:{zh:'梯度就是 p − y', en:'the gradient is p − y'},
+      stage:{zh:'softmax 和 cross entropy 合起來微分，幾乎所有東西都消掉', en:'differentiate softmax and cross entropy together and almost everything cancels'},
+      view:VIEW,
+      idea:{zh:'分開微分的話，你需要 softmax 的 Jacobian（每個樣本一個 k × k 矩陣），再加上 log 帶來的除以 p。合起來之後只剩一個減法：loss 對 logits 的梯度就是「預測的分布減掉 one-hot 標籤」，再除以 n。拿去跟 central difference 比對，最大差距 2.47e-11。這個恆等式就是每個框架都提供融合版 cross_entropy(logits, labels) 的原因，也是「傳機率進去而不是傳 logit」被文件列為錯誤的原因——等你拿到機率，能消掉的結構已經被丟掉，剩下的公式要除以 p，而 p 可能是 0。正確類別那一格是負的（把它的 logit 推高），其餘每一格等於模型分給錯誤答案的信心。',
+            en:'Differentiated separately you need the softmax Jacobian - a k x k matrix per example - plus a division by p from the log. Composed, all of it cancels and one subtraction remains: the gradient of the loss with respect to the logits is the predicted distribution minus the one-hot label, divided by n. Against central differences the largest difference is 2.47e-11. That identity is why every framework ships a fused cross_entropy(logits, labels), and why passing probabilities instead of logits is a documented mistake - once you hold the probabilities the cancelling structure is gone, and what is left divides by p, which may be zero. The true class entry is negative (push that logit up); every other entry equals the confidence the model spent on a wrong answer.'},
+      legend:[['#3fe0dd', {zh:'p = softmax(logits)', en:'p = softmax(logits)'}], ['#9d6bff', {zh:'梯度 p − y', en:'the gradient p − y'}], ['#ff9736', {zh:'目前這一格', en:'the entry being explained'}], ['#8fa3ac', {zh:'logits 與 one-hot 標籤', en:'the logits and the one-hot label'}]],
+      get code(){ return CODE_PY; },
+      build:pyFrames
+    },
+    {
+      id:'backprop', label:{zh:'前向與反向', en:'forward and backward'},
+      stage:{zh:'一次前向、一次反向，四個參數的梯度全部到齊', en:'one forward pass, one backward pass, every parameter gets its gradient'},
+      view:VIEW,
+      variants:[{zh:'前向（快取）', en:'forward (caching)'}, {zh:'反向（三行規則）', en:'backward (the three rules)'}],
+      idea:{zh:'反向傳播就三行，每一行都只是前向轉置一次：dW = x.T @ dz 把「進來的東西」和「出去那邊的梯度」的外積沿 batch 加起來；db = dz.sum(axis=0) 還原 bias 被 broadcast 到每一列的那次；dx = dz @ W.T 用同一個矩陣的轉置把梯度交給下一層。前向要負責快取（Linear 存 x、ReLU 存 mask），這也是訓練比推論吃記憶體的原因——那些 activation 正是 gradient checkpointing 拿去交換再重算的東西。整個網路的反向就是 for layer in reversed(self.layers)：這是 Day 13 的逆拓樸順序，只不過前饋網路是一條直線，倒著走 list 就夠了；一旦有了 skip connection 或共用的 layer，就得換成真正的拓樸排序。梯度檢查 7.85e-09。',
+            en:'Backpropagation is three lines, each a transpose away from the forward pass: dW = x.T @ dz sums, over the batch, the outer product of what came in with the gradient of what went out; db = dz.sum(axis=0) undoes the broadcast the bias got on every row; dx = dz @ W.T uses the same matrix transposed to hand the gradient down. The forward pass has to cache (Linear keeps x, ReLU keeps the mask), which is also why training costs far more memory than inference - those activations are exactly what gradient checkpointing trades away and recomputes. The whole network\'s backward is for layer in reversed(self.layers): Day 13\'s reverse topological order, except a feed-forward net is a straight line so reversing a list is enough. Add a skip connection or share a layer and a real topological sort becomes necessary. Gradient check: 7.85e-09.'},
+      legend:[['#ff9736', {zh:'目前這一步', en:'the current step'}], ['#3fe0dd', {zh:'前向已算過', en:'computed on the way forward'}], ['#9d6bff', {zh:'反向已算過', en:'computed on the way back'}], ['#0a6b74', {zh:'還沒輪到', en:'not reached yet'}]],
+      get code(){ return CODE_BP; },
+      build:bpFrames
+    },
+    {
+      id:'bugs', label:{zh:'四個不報錯的 bug', en:'four silent bugs'},
+      stage:{zh:'每一個都只差一個字元，每一個都跑得完', en:'each is one character away, and each runs to completion'},
+      view:VIEW,
+      variants:[{zh:'db 變成純量', en:'db is a scalar'}, {zh:'忘了除以 n', en:'no division by n'},
+                {zh:'少了轉置', en:'missing transpose'}, {zh:'全零初始化', en:'all-zero init'}],
+      idea:{zh:'四個都不會丟例外。(1) db = dz.sum() 得到純量，而 b -= lr * 純量 會 broadcast，每個 bias 被移動同樣的量（梯度檢查 1.00）。(2) 回報的 loss 是平均、算的梯度卻是總和，每一步大 n 倍，看起來只像「學習率突然太高」，而且換 batch size 又會壞一次（0.846）。(3) dW = x @ dz 少了轉置本該是形狀錯誤——除非 batch size 剛好等於輸入寬度，那它就跑得過去並交出形狀正確、內容全錯的陣列；一個取決於 batch size 的 bug，就是一個會出現在正式環境、不會出現在測試裡的 bug。(4) 全零初始化讓 64 個隱藏單元收到同樣的梯度、走同樣的步，256 個 activation 值只有 1 個相異值，400 步後準確率 0.333（三類亂猜），對照隨機初始化的 1.000。梯度檢查是這四個裡唯一會主動告訴你出事的東西。',
+            en:'None of the four raises. (1) db = dz.sum() gives a scalar, and b -= lr * scalar broadcasts, moving every bias by the same amount (gradient check 1.00). (2) The reported loss is the mean while the gradient is of the sum, so every step is n times too large - it looks like a learning rate that is suddenly too high, and it breaks again the day the batch size changes (0.846). (3) dW = x @ dz without the transpose should be a shape error, unless the batch size happens to equal the input width, in which case it runs and returns an array of exactly the right shape full of wrong numbers; a bug that depends on the batch size shows up in production and not in your test. (4) All-zero init gives all 64 hidden units the same gradient and the same step: 1 distinct value among 256 activations, and accuracy 0.333 after 400 steps - chance on three classes - against 1.000 for random init. The gradient check is the only one of the four that volunteers the news.'},
+      legend:[['#ff9736', {zh:'目前這一列', en:'the current row'}], ['#ff5c5c', {zh:'壞掉的地方', en:'what goes wrong'}], ['#3fe0dd', {zh:'正確的值', en:'the right value'}], ['#9d6bff', {zh:'形狀', en:'shapes'}]],
+      get code(){ return CODE_BUG; },
+      build:bugFrames
+    },
+    {
+      id:'kink', label:{zh:'不是 bug 的失敗', en:'a failure that is not a bug'},
+      stage:{zh:'ReLU 在 0 沒有導數，於是梯度檢查對正確的程式回報 1.00', en:'ReLU has no derivative at 0, so the gradient check reports 1.00 on correct code'},
+      view:VIEW,
+      idea:{zh:'ReLU 在剛好 0 的地方沒有導數：左邊斜率 0、右邊 1。反向傳播用 mask = x > 0 挑了「關閉」那一側，回報 0（寫成 x >= 0 就會是 1，兩種都說得通）。central difference 的定義是 (f(x+h) − f(x−h)) / 2h，右邊抬高 h、左邊沒動，所以它回報 0.5——左右斜率的平均。餵一列全零進去而 bias 又從零開始，8 個 pre-activation 裡有 4 個剛好落在那個角上，於是一份完全正確的實作在自己的梯度檢查上拿到 1.00，同一個網路換成 tanh 是 3.4e-10。我是用最誠實的方式發現這件事的：第一版螺旋資料每條臂都從半徑 0 出發，三個類別共用原點。兩個教訓——梯度檢查用平滑的激活函數；檢查失敗時先看資料，不要一開始就假設梯度寫錯。',
+            en:'ReLU has no derivative at exactly 0: slope 0 on the left, 1 on the right. Backpropagation uses mask = x > 0, picking the "off" side and reporting 0 (writing x >= 0 would give 1; both are defensible). A central difference is (f(x+h) - f(x-h)) / 2h by definition - the right side rose by h and the left did not move - so it reports 0.5, the average of the two slopes. Feed in a row of zeros with biases starting at zero and 4 of 8 pre-activations land exactly on the corner, so a perfectly correct implementation scores 1.00 on its own gradient check while the same network with tanh scores 3.4e-10. I found this the honest way: my first spiral started every arm at radius 0, so all three classes shared the origin. Two lessons - gradient-check with a smooth activation, and when a check fails, look at the data before assuming the gradient is wrong.'},
+      legend:[['#3fe0dd', {zh:'relu(x) 與反向傳播的答案', en:'relu(x), and what backprop reports'}], ['#9d6bff', {zh:'central difference 量的兩邊', en:'the two sides a central difference measures'}], ['#ff9736', {zh:'x = 0 這個角', en:'the corner at x = 0'}], ['#ff5c5c', {zh:'檢查失敗，但程式是對的', en:'the check fails on correct code'}]],
+      get code(){ return CODE_KINK; },
+      build:kinkFrames
+    },
+    {
+      id:'matrix', label:{zh:'轉置與旋轉（LC 867 / 48）', en:'transpose and rotate (LC 867 / 48)'},
+      stage:{zh:'反向規則靠的那個操作，以及它的原地版本', en:'the operation every backward rule leans on, and its in-place cousin'},
+      view:VIEW,
+      variants:[{zh:'LC 867 轉置', en:'LC 867 transpose'}, {zh:'LC 48 旋轉', en:'LC 48 rotate'},
+                {zh:'LC 48 的差一錯誤', en:'LC 48 off-by-one'}],
+      idea:{zh:'LeetCode 867 是 out[j][i] = matrix[i][j]，矩陣不一定是方陣所以沒辦法原地做，六個元素各搬一次、O(m·n)。對照之下 NumPy 的 a.T 一個都不搬：它回傳一個把 strides 從 (24, 8) 對調成 (8, 24) 的 view，跟原陣列共用記憶體（Day 44 的結論）——這就是 x.T @ dz 不比 x @ dz 貴、反向成本約等於前向的原因。LeetCode 48 要原地順時針旋轉 90 度 = 轉置再把每列反轉，O(1) 額外空間，而「是方陣」正是原地交換之所以可能的前提。陷阱在內層迴圈：寫成 for j in range(n) 的話每一對 (i, j) 會以 (i, j) 和 (j, i) 各交換一次，矩陣原封不動回到起點，轉置悄悄什麼都沒做，最後交出的是「每列反轉」的輸入——形狀全對、每個值都合理，跟今天其他所有失敗同一種味道。',
+            en:'LeetCode 867 is out[j][i] = matrix[i][j]; the matrix need not be square so it cannot be done in place, and all six elements move once each, O(m·n). By contrast NumPy\'s a.T moves nothing: it returns a view with the strides swapped from (24, 8) to (8, 24), sharing memory with the original (the Day 44 result) - which is why x.T @ dz costs no more than x @ dz and a backward pass costs about what a forward pass costs. LeetCode 48 wants an in-place 90-degree clockwise rotation: transpose, then reverse each row, in O(1) extra space, and being square is exactly what makes the in-place swap possible. The trap is the inner loop: with for j in range(n) every pair (i, j) is swapped once as (i, j) and once as (j, i), so the matrix returns to its starting state, the transpose silently does nothing, and the output is the input with its rows reversed - every shape intact, every value plausible, the same flavour as every other failure today.'},
+      legend:[['#ff9736', {zh:'正在搬／交換的格子', en:'the cells being moved or swapped'}], ['#3fe0dd', {zh:'已放好', en:'placed'}], ['#ff5c5c', {zh:'被交換兩次而回到原狀', en:'swapped twice, back where it started'}], ['#9d6bff', {zh:'來源矩陣', en:'the source matrix'}]],
+      get code(){ return CODE_MAT; },
+      build:matFrames
+    }
+  ]
+};
+
+</script>
+<script>
+/* =========================================================================
+   100 Days of Python - shared demo engine
+   palette: teal/blue-green base, purple pointers, orange "current step"
+   ========================================================================= */
+const T = {
+  title:{zh:DAY_META.title.zh, en:DAY_META.title.en},
+  sub:{zh:DAY_META.sub.zh, en:DAY_META.sub.en},
+  play:{zh:'▶ 播放', en:'▶ Play'}, pause:{zh:'❚❚ 暫停', en:'❚❚ Pause'},
+  speed:{zh:'速度', en:'Speed'}, state:{zh:'演算法狀態', en:'Algorithm state'},
+  code:{zh:'程式碼', en:'Code'}, idea:{zh:'重點', en:'The idea'}
+};
+let LANG = 'zh';
+const tr = o => (o == null ? '' : (typeof o === 'string' ? o : (o[LANG] != null ? o[LANG] : o.en)));
+const $ = id => document.getElementById(id);
+
+function setLang(l){
+  LANG = l;
+  document.documentElement.lang = l === 'zh' ? 'zh-Hant' : 'en';
+  $('btn-zh').classList.toggle('on', l === 'zh');
+  $('btn-en').classList.toggle('on', l === 'en');
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.getAttribute('data-i18n');
+    if (T[k]) el.textContent = tr(T[k]);
+  });
+  buildTabs(); render();
+}
+
+/* --------------------------------------------------------------- palette */
+const STY = {
+  idle :{fill:'#07293a', stroke:'#0a6b74', text:'#dff2f5', w:.045, glow:0},
+  soft :{fill:'#052330', stroke:'#0a6b74', text:'#a8c8d0', w:.035, glow:0},
+  hot  :{fill:'#3a2109', stroke:'#ff9736', text:'#ffbe6b', w:.075, glow:.65},
+  act  :{fill:'#241542', stroke:'#9d6bff', text:'#c7a6ff', w:.070, glow:.55},
+  ok   :{fill:'#08414a', stroke:'#3fe0dd', text:'#d9ffff', w:.070, glow:.5},
+  done :{fill:'#062430', stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0},
+  bad  :{fill:'#3a0d0d', stroke:'#ff5c5c', text:'#ff9a9a', w:.070, glow:.4},
+  ghost:{fill:'none',    stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0, dash:'.12 .10'}
+};
+const COL = {teal:'#12b3b8', tealL:'#3fe0dd', purple:'#9d6bff', purpleL:'#c7a6ff',
+             orange:'#ff9736', orangeL:'#ffbe6b', red:'#ff5c5c', grey:'#8fa3ac',
+             pale:'#dff2f5', white:'#ffffff'};
+const LEGEND = {
+  hot:[COL.orange, {zh:'目前這一步', en:'current step'}],
+  act:[COL.purple, {zh:'指標 / 走訪位置', en:'pointer / cursor'}],
+  ok:[COL.tealL,  {zh:'完成 / 結果', en:'done / result'}],
+  bad:[COL.red,   {zh:'失敗 / 要避開的寫法', en:'failure / the wrong way'}],
+  done:['#2f5661', {zh:'已處理完', en:'already done'}],
+  soft:['#0a6b74', {zh:'其他元素', en:'other items'}],
+  idle:['#0a6b74', {zh:'尚未處理', en:'untouched'}],
+  ghost:['#123f4d', {zh:'尚未處理', en:'not yet reached'}]
+};
+const leg = (...keys) => keys.map(k => LEGEND[k]);
+
+/* ---------------------------------------------------------- frame buffer */
+function Frames(){
+  this.list = [];
+  this.push = (o) => this.list.push({
+    shapes:JSON.parse(JSON.stringify(o.shapes || [])),
+    panels:JSON.parse(JSON.stringify(o.panels || [])),
+    view:(o.view || null), line:(o.line == null ? 0 : o.line), msg:o.msg
+  });
+}
+/* shape helpers - engines call these, the renderer just draws */
+const S = {
+  r:(x, y, w, h, s, lab, o) => Object.assign({t:'r', x:x, y:y, w:w, h:h, s:s || 'idle', lab:lab}, o || {}),
+  c:(x, y, r, s, lab, o) => Object.assign({t:'c', x:x, y:y, r:r, s:s || 'idle', lab:lab}, o || {}),
+  e:(x1, y1, x2, y2, o) => Object.assign({t:'e', x1:x1, y1:y1, x2:x2, y2:y2}, o || {}),
+  t:(x, y, s, o) => Object.assign({t:'t', x:x, y:y, s:s}, o || {})
+};
+/* a labelled row of array cells; returns shapes */
+function cellRow(vals, x0, y, w, h, opt){
+  opt = opt || {};
+  const out = [], st = opt.states || {};
+  vals.forEach((v, i) => {
+    out.push(S.r(x0 + i * w, y, w - (opt.gap == null ? .06 : opt.gap), h, st[i] || 'idle',
+                 v == null ? '' : String(v), {fs:opt.fs || h * .52}));
+    if (opt.index !== false)
+      out.push(S.t(x0 + i * w + (w - .06) / 2, y + h + (opt.ilift || .34),
+                   opt.labels ? opt.labels[i] : String(i),
+                   {c:st[i] && st[i] !== 'idle' ? COL.orangeL : COL.grey, fs:opt.ifs || .30}));
+  });
+  if (opt.title) out.push(S.t(x0 - .22, y + h * .62, opt.title, {c:COL.tealL, fs:.32, anchor:'end'}));
+  return out;
+}
+/* binary-tree layout from a heap-style array (index 0 = root, 2i+1 / 2i+2) */
+function heapTreeShapes(arr, x0, y0, w, rowH, states, opt){
+  opt = opt || {};
+  const n = arr.length, out = [], R = opt.r || .34;
+  const depth = i => Math.floor(Math.log2(i + 1));
+  const maxD = n ? depth(n - 1) : 0;
+  const px = i => {
+    const d = depth(i), first = Math.pow(2, d) - 1, k = i - first;
+    const slots = Math.pow(2, d), span = w;
+    return x0 + span * (k + .5) / slots;
+  };
+  const py = i => y0 + depth(i) * rowH;
+  for (let i = 1; i < n; i++){
+    if (arr[i] == null) continue;
+    const p = Math.floor((i - 1) / 2);
+    out.push(S.e(px(p), py(p), px(i), py(i), {pad:R + .04,
+      s:(states && (states[i] === 'hot' || states[i] === 'act')) ? states[i] : 'idle'}));
+  }
+  for (let i = 0; i < n; i++){
+    if (arr[i] == null) continue;
+    out.push(S.c(px(i), py(i), R, (states && states[i]) || 'idle', String(arr[i]), {fs:R * .95}));
+    if (opt.showIndex)
+      out.push(S.t(px(i), py(i) + R + .34, String(i), {c:COL.grey, fs:.26}));
+  }
+  return out;
+}
+
+/* -------------------------------------------------------------- renderer */
+const svgNS = 'http://www.w3.org/2000/svg';
+const mk = (tag, a) => { const e = document.createElementNS(svgNS, tag);
+  for (const k in a) e.setAttribute(k, a[k]); return e; };
+const clear = svg => { while (svg.firstChild) svg.removeChild(svg.firstChild); };
+
+function defs(svg){
+  const d = mk('defs', {});
+  const f = mk('filter', {id:'glow', x:'-70%', y:'-70%', width:'240%', height:'240%'});
+  f.appendChild(mk('feGaussianBlur', {stdDeviation:'.055', result:'b'}));
+  const m = mk('feMerge', {});
+  m.appendChild(mk('feMergeNode', {in:'b'}));
+  m.appendChild(mk('feMergeNode', {in:'SourceGraphic'}));
+  f.appendChild(m); d.appendChild(f);
+  Object.keys(STY).forEach(k => {
+    const mk2 = mk('marker', {id:'ar-' + k, viewBox:'0 0 10 10', refX:'8.5', refY:'5',
+      markerWidth:'5.2', markerHeight:'5.2', orient:'auto-start-reverse'});
+    mk2.appendChild(mk('path', {d:'M 0 1 L 9 5 L 0 9 z', fill:STY[k].stroke}));
+    d.appendChild(mk2);
+  });
+  svg.appendChild(d);
+}
+
+function drawShape(svg, sh){
+  const st = STY[sh.s || 'idle'];
+  if (sh.t === 'e'){
+    let {x1, y1, x2, y2} = sh;
+    if (sh.pad){
+      const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+      x1 += dx / L * sh.pad; y1 += dy / L * sh.pad;
+      x2 -= dx / L * sh.pad; y2 -= dy / L * sh.pad;
+    }
+    const a = {x1:x1.toFixed(3), y1:y1.toFixed(3), x2:x2.toFixed(3), y2:y2.toFixed(3),
+      stroke:st.stroke, 'stroke-width':(sh.w || st.w || .05), 'stroke-linecap':'round',
+      opacity:(sh.o == null ? (sh.s && sh.s !== 'idle' ? 1 : .75) : sh.o)};
+    if (sh.dash || st.dash) a['stroke-dasharray'] = sh.dash || st.dash;
+    if (sh.arrow !== false) a['marker-end'] = 'url(#ar-' + (sh.s || 'idle') + ')';
+    svg.appendChild(mk('line', a));
+    if (sh.lab != null)
+      svg.appendChild(txt((x1 + x2) / 2 + (sh.lx || 0), (y1 + y2) / 2 + (sh.ly || -.16),
+        tr(sh.lab), st.stroke, sh.fs || .30, 'middle'));
+    return;
+  }
+  if (sh.t === 't'){
+    svg.appendChild(txt(sh.x, sh.y, tr(sh.s), sh.c || COL.pale, sh.fs || .32,
+      sh.anchor || 'middle', sh.o));
+    return;
+  }
+  let node;
+  if (sh.t === 'c'){
+    node = mk('circle', {cx:sh.x.toFixed(3), cy:sh.y.toFixed(3), r:sh.r.toFixed(3),
+      fill:st.fill, stroke:st.stroke, 'stroke-width':st.w});
+  } else {
+    node = mk('rect', {x:sh.x.toFixed(3), y:sh.y.toFixed(3), width:sh.w.toFixed(3),
+      height:sh.h.toFixed(3), rx:(sh.rx == null ? .09 : sh.rx), fill:st.fill,
+      stroke:st.stroke, 'stroke-width':st.w});
+  }
+  if (st.dash || sh.dash) node.setAttribute('stroke-dasharray', sh.dash || st.dash);
+  if (st.glow) node.setAttribute('filter', 'url(#glow)');
+  if (sh.o != null) node.setAttribute('opacity', sh.o);
+  svg.appendChild(node);
+  const cx = sh.t === 'c' ? sh.x : sh.x + sh.w / 2;
+  const cy = sh.t === 'c' ? sh.y : sh.y + sh.h / 2;
+  if (sh.lab != null && sh.lab !== '')
+    svg.appendChild(txt(cx + (sh.dx || 0), cy + (sh.fs || .40) * .35, tr(sh.lab), st.text,
+      sh.fs || .40, 'middle'));
+  if (sh.sub != null)
+    svg.appendChild(txt(cx, cy + (sh.t === 'c' ? sh.r : sh.h) + .34, tr(sh.sub),
+      sh.subc || COL.grey, sh.subfs || .28, 'middle'));
+  if (sh.top != null)
+    svg.appendChild(txt(cx, cy - (sh.t === 'c' ? sh.r : sh.h / 2) - .22, tr(sh.top),
+      sh.topc || COL.purpleL, sh.topfs || .28, 'middle'));
+}
+function txt(x, y, s, c, fs, anchor, o){
+  const t = mk('text', {x:(+x).toFixed(3), y:(+y).toFixed(3), 'text-anchor':anchor || 'middle',
+    fill:c, 'font-size':(+fs).toFixed(3)});
+  if (o != null) t.setAttribute('opacity', o);
+  t.textContent = s;
+  return t;
+}
+
+function renderStage(frame){
+  const svg = $('stage');
+  clear(svg); defs(svg);
+  const v = frame.view || curTab().view || [10, 6.4];
+  svg.setAttribute('viewBox', '0 0 ' + v[0] + ' ' + v[1]);
+  (frame.shapes || []).forEach(sh => drawShape(svg, sh));
+}
+
+function drawPanels(frame){
+  const box = $('panels'); box.innerHTML = '';
+  (frame.panels || []).forEach(p => {
+    const d = document.createElement('div'); d.className = 'panel';
+    const l = document.createElement('div'); l.className = 'lbl'; l.textContent = tr(p.lbl);
+    const c = document.createElement('div'); c.className = 'chips';
+    (p.chips.length ? p.chips : [{t:'—', cls:'empty'}]).forEach(ch => {
+      const s = document.createElement('span');
+      s.className = 'chip ' + (ch.cls || ''); s.textContent = ch.t; c.appendChild(s);
+    });
+    d.appendChild(l); d.appendChild(c); box.appendChild(d);
+  });
+}
+function drawCode(frame){
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  $('code').innerHTML = curTab().code.map((ln, i) => {
+    const h = esc(ln).replace(/(#.*)$/, '<span class="cm">$1</span>');
+    return '<span class="ln' + (i === frame.line ? ' on' : '') + '">' + (h || ' ') + '</span>';
+  }).join('');
+}
+function drawLegend(){
+  const keys = curTab().legend || ['hot', 'act', 'ok', 'idle'];
+  $('legend').innerHTML = keys.map(k => {
+    const [c, txt] = Array.isArray(k) ? k : LEGEND[k];
+    return '<span><i style="background:' + c + '"></i>' + tr(txt) + '</span>';
+  }).join('');
+}
+
+let tabIx = 0, varIx = 0, frames = [], cur = 0, timer = null;
+const TABS = DAY_META.tabs;
+const curTab = () => TABS[tabIx];
+
+function render(){
+  if (!frames.length) return;
+  cur = Math.max(0, Math.min(cur, frames.length - 1));
+  const f = frames[cur];
+  $('stage-title').textContent = tr(curTab().stage);
+  renderStage(f); drawPanels(f); drawCode(f); drawLegend();
+  $('narr').innerHTML = tr(f.msg);
+  $('idea').innerHTML = tr(curTab().idea);
+  $('stepno').textContent = (cur + 1) + ' / ' + frames.length;
+  $('prev').disabled = cur === 0;
+  $('next').disabled = cur === frames.length - 1;
+}
+function buildTabs(){
+  $('tabs').innerHTML = '';
+  TABS.forEach((t, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(t.label);
+    if (i === tabIx) b.classList.add('on');
+    b.onclick = () => { tabIx = i; varIx = 0; load(); };
+    $('tabs').appendChild(b);
+  });
+  const ex = $('extra'); ex.innerHTML = '';
+  const vs = curTab().variants;
+  if (vs) vs.forEach((v, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(v);
+    if (i === varIx) b.classList.add('on');
+    b.onclick = () => { varIx = i; load(); };
+    ex.appendChild(b);
+  });
+}
+function load(){
+  stop();
+  frames = curTab().build(varIx) || [];
+  cur = 0; buildTabs(); render();
+}
+function step(d){ stop(); cur += d; render(); }
+function reset(){ stop(); cur = 0; render(); }
+function stop(){ if (timer){ clearInterval(timer); timer = null; $('play').textContent = tr(T.play); } }
+function togglePlay(){
+  if (timer){ stop(); return; }
+  if (cur >= frames.length - 1) cur = 0;
+  $('play').textContent = tr(T.pause);
+  timer = setInterval(() => {
+    if (cur >= frames.length - 1){ stop(); return; }
+    cur++; render();
+  }, Number($('speed').value));
+}
+$('speed').addEventListener('input', () => { if (timer){ stop(); togglePlay(); } });
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight'){ step(1); e.preventDefault(); }
+  else if (e.key === 'ArrowLeft'){ step(-1); e.preventDefault(); }
+  else if (e.key === ' '){ togglePlay(); e.preventDefault(); }
+});
+setLang('zh');
+load();
+
+</script>
+</body>
+</html>
