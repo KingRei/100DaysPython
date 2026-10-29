@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 47 — k-means 與 k-nearest neighbours：只靠一個距離函數分群與分類</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 47 — k-means 與 k-nearest neighbours：只靠一個距離函數分群與分類</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2047%20-%20k-means%20and%20knn">day 47 on GitHub</a></p>
+<p><em>100 Days of Python - day 47</em></p>
+<p>我拿 180 個均勻亂數點跑 k-means，跟它要三群。它給了我三群：大小 54、75、51，每一群都有一個看起來很合理的 centroid，幾輪就收斂，目標函數 449.0——跟我看過的每一個目標函數值長得一模一樣。那份資料裡面什麼結構都沒有，而輸出裡沒有任何一個欄位告訴我這件事。</p>
+<p>這就是今天的形狀。k-means 和 k-nearest neighbours 大概是每個人最早碰到的兩個機器學習演算法，而兩個加起來只有六行邏輯：</p>
+<pre><code>k-means   : 重複 { 每個點加入最近的 centroid
+                   每個 centroid 移到成員的平均 }
+k-nearest : 對一個查詢點，取最近的 k 個訓練點投票</code></pre>
+<p>這兩條規則都不是 bug 住的地方。兩個演算法都是<strong>一個距離函數加上一條規則</strong>，規則幾乎不可能寫錯，而距離函數從來不丟例外——它只是安靜地回答了另一個問題。</p>
+<img alt="day47_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2047%20-%20k-means%20and%20knn/imgs/day47_1.png">
+<h2>Lloyd 演算法，以及它會停下來的兩個理由</h2>
+<p>下面每一次執行用的都是同一個距離矩陣，做法跟 Day 44 一樣：<code>|x - c|² = |x|² - 2 x·c + |c|²</code> 把雙重迴圈換成一次矩陣乘法。</p>
+<pre><code>def sq_dists(X, C):
+    x2 = np.einsum(&#x27;ij,ij-&gt;i&#x27;, X, X)[:, None]
+    c2 = np.einsum(&#x27;ij,ij-&gt;i&#x27;, C, C)[None, :]
+    return np.maximum(x2 - 2.0 * X @ C.T + c2, 0.0)</code></pre>
+<p>那個 <code>np.maximum</code> 不是在收尾。這個展開式是兩個大數相減，所以對 <code>[1000000.5, 48000000.25]</code> 這個點來說，它算出的「自己到自己的距離」是 <strong>-1.0</strong>，再開根號就是 <code>nan</code>。夾到 0 是演算法的一部分。</p>
+<p>迴圈本身兩行：</p>
+<pre><code>labels = np.argmin(sq_dists(X, C), axis=1)                      # 分配
+C = np.array([X[labels == j].mean(axis=0) for j in range(k)])   # 更新</code></pre>
+<p>180 個點、三群，六輪收斂，而 inertia（每個點到自己 centroid 的平方距離總和）的軌跡是 1639.0、1158.5、1029.8、447.9、240.0、239.0。它從來不上升，而且這不是運氣。<strong>兩個半步讓它下降的理由完全不同。</strong> 分配會降是因為每個點自己挑了最便宜的 centroid，沒有人會變得更差；更新會降是因為平均數就是平方距離的最小值點。可能的分割方式是有限的，再加上一個只會往下走的目標函數，這個迴圈一定會停。</p>
+<p>請記住第二個理由，再過幾節它就會被拿掉。</p>
+<h2>目標函數沒有能力告訴你 k 是多少</h2>
+<p>每多一個 centroid，inertia 就下降一次，到 k = n 時剛好是 0。所以「最小化目標函數」永遠回答 k = n，它完全沒有能力告訴你資料裡有幾群。</p>
+<img alt="day47_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2047%20-%20k-means%20and%20knn/imgs/day47_2.png">
+<p>手肘法是通常的答案，而在真的有三群的資料上它確實有效：k=2 到 k=3 砍掉 78.7% 的 inertia，下一步只砍掉 9.3%，差了 8.4 倍。但看看第二條曲線。那就是開頭那 180 個均勻亂數點：32.7% 之後是 40.0%——降幅反而<strong>變大</strong>——哪裡都沒有手肘，因為根本沒有東西可以找。</p>
+<p>重點是手肘是你「看」出來的，不是演算法算出來的。常見的兩個回應都拒絕去問「inertia 有多小」。gap statistic 的做法很直接：拿這條 inertia 曲線去跟同一個演算法在沒有結構的資料上跑出來的曲線比。silhouette 分數走另一條路到達同樣的懷疑：它問每個點「離自己這群比離第二近的那群近多少」，而當分群是隨意切出來的時候，這個數字除了趨近 0 沒別的地方可去。</p>
+<h2>答案取決於隨機起點</h2>
+<p>Lloyd 收斂到的是<strong>一個</strong>局部最小值。在三群明顯分開的資料上——這是能構造出來最簡單的資料集了——200 個隨機起點裡有 23 個收斂到比最好的結果高 1% 以上，最差的一個給出 inertia 1742.1 對上 367.0，每群大小是 <code>[21, 120, 39]</code> 而不是 <code>[60, 60, 60]</code>。兩個 centroid 掉進同一群，所以那一群被切成兩半，另外兩群被黏成一團。</p>
+<p>兩次都是「k-means 的輸出」。兩次都不印任何警告。唯一能分辨它們的方法是比較 inertia，這就是為什麼標準做法是重跑好幾次挑最小的那次，也是 scikit-learn 會有 <code>n_init</code> 這個參數的理由。它的 <code>&#x27;auto&#x27;</code> 預設本身就在說下一段那個改良值多少：用 k-means++ 初始化時只跑一次，隨機初始化時跑十次。</p>
+<p>k-means++ 是那個便宜的改良：第一個中心均勻挑，之後每個中心以「到目前為止最近中心的平方距離」為權重挑。這就是 Day 42 的加權隨機抽樣，它把失敗率從 200 分之 23 壓到 200 分之 1。它還是隨機的，只是把壞籤變罕見了。</p>
+<h2>centroid 可能失去全部的成員</h2>
+<pre><code>C[j] = X[labels == j].mean(axis=0)   # 空的 -&gt; nan</code></pre>
+<p>空集合的平均是 <code>nan</code>，numpy 會發一個 <code>RuntimeWarning</code> 到 stderr。warning 本來就很容易錯過，但這還不是重點。</p>
+<p>重點是 <code>np.argmin([0.246, nan, 50.08])</code> 回傳的是 <strong>1</strong>。它不會跳過 <code>nan</code>，它回傳 nan 的位置。於是下一輪每個點到那個死掉的 centroid 的距離都是 <code>nan</code>，而 <code>nan</code> 贏了所有比較，分配結果變成 <code>[1, 1, 1, 1, 1]</code>：整份資料都加入了那個沒有位置的 centroid。再更新一次，模型就變成 <code>[[nan, nan], [2.36, 2.02], [nan, nan]]</code>——一群裝著全部的點，外加兩群根本不存在。</p>
+<p>交出去的是一個形狀完全正確的 <code>(k, 2)</code> 陣列，而且 <code>len(C)</code> 還是 <code>k</code>，所以任何「有幾群」的檢查都會過。改用 <code>np.nanargmin</code> 只是把問題往下藏一層。真正的修法就是 scikit-learn 做的事：把失去成員的 centroid 搬到離所有 centroid 最遠的那個點。</p>
+<h2>單位決定了分群結果</h2>
+<p>這是一份形狀像真實資料的資料集：360 筆請求、兩欄，<code>prompt_tokens</code> 在 200 到 4000 之間，cache 命中率在 0 到 1 之間。三個真實族群<strong>只差在命中率</strong>——0.15、0.50、0.85——而 token 數在三群裡都是從同樣的寬範圍抽出來的。</p>
+<img alt="day47_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2047%20-%20k-means%20and%20knn/imgs/day47_3.png">
+<pre><code>版本        purity  三個 centroid 學到的命中率
+----------  ------  --------------------------
+原始單位    0.358   0.487、0.492、0.509
+標準化      0.669   0.302、0.311、0.828
+只用命中率  1.000   0.143、0.492、0.854</code></pre>
+<p>purity 是「所屬群的多數標籤剛好是自己標籤」的點所佔的比例，亂猜是 0.333。原始單位那一列拿到 0.358，就是亂猜。token 軸的跨度大了約 4000 倍，平方之後在距離裡佔了約一千六百萬倍的份量，所以 k-means 切出三條垂直的 token 帶，從頭到尾沒有看過答案所在的那一欄。而它回報的 inertia 46140168 是一個完全正常的數字——對它實際回答的那個問題來說。</p>
+<p>標準化通常被當成修法。它不是修法，它是<strong>另一個同樣武斷的選擇</strong>：「每一欄一樣重要」。在這裡那代表一整欄純雜訊在每一次距離計算裡拿到和答案一樣多的票，所以 purity 停在 0.669 而不是 1.000。縮放決定了距離的意思，但沒有任何縮放法能告訴你哪些欄位相關——那是你對問題的知識，不是資料的性質。</p>
+<h2>update 規則必須配得上距離</h2>
+<p>Day 45 花了一整節在 LeetCode 462 上證明：<code>sum |x - c|</code> 的最小值點是中位數，而 <code>sum (x - c)²</code> 的最小值點是平均數。在 <code>[1, 2, 3, 100]</code> 上，平均數 26.5 的絕對距離成本是 147.0，中位數 2.5 是 100.0。</p>
+<p>這不是冷知識，這正是 Lloyd 的終止證明所依賴的那個事實。那麼如果你保留 Lloyd 的迴圈，把分配改成 L1 距離（因為你想要對離群值穩健一點），但 update 還是留著平均數，會發生什麼事？</p>
+<img alt="day47_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2047%20-%20k-means%20and%20knn/imgs/day47_4.png">
+<p>在 96 個點上——三群加六個散落的離群點——用平均數更新的版本，它的 L1 目標函數軌跡是 562.5、340.2、<strong>342.3</strong>、329.4、244.1、196.6、196.5、196.5。它在第 1 步<strong>上升</strong>了。update 這一步不再最小化分配這一步在量的東西，所以「它不可能讓事情變糟」這個論證沒有了，終止證明也就沒有了。在 600 組（資料集, 種子）上，150 次是非單調的，555 次比正確的中位數更新收得更差。</p>
+<p>它在這裡還是收斂了，而且它通常都會收斂——這才是麻煩的地方：一個靠運氣收斂的迴圈，和一個有證明保證會收斂的迴圈，長得一模一樣。</p>
+<h2>平方距離只認得一種形狀</h2>
+<p>到單一中心的平方距離，等高線是一圈一圈的圓，而每個點加入的是離它最近的那個中心，所以兩群之間的邊界是兩個 centroid 連線的垂直平分線。於是 k-means 能表達的每一群都是一個邊界筆直的凸區塊。</p>
+<pre><code>資料                      purity  每群大小
+------------------------  ------  --------
+兩條又長又細的帶狀        0.523   145、155
+兩彎月亮                  0.757   145、155
+一群 200 點 + 一群 20 點  0.909   105、115</code></pre>
+<p>最後一列才是要盯著看的。purity 0.909、兩群 105 和 115，看起來是個健康的結果。它不是：那 20 個點的小群被還原了 <strong>0 次，總共 20 個點一個都沒有</strong>。k-means 選擇把大的那群切成兩半，因為把 200 個點切半拿掉的平方距離遠多於把 20 個點獨立出來——而 0.909 剛好就是「把每個點都猜成多數類」會拿到的分數。</p>
+<h2>k-nearest neighbours：資料本身就是模型</h2>
+<p>它沒有訓練階段。你把資料存起來，成本全部搬到查詢時間。</p>
+<pre><code>d2 = ((Xtrain - q) ** 2).sum(axis=1)
+nn = np.argsort(d2)[:k]
+return np.bincount(ytrain[nn]).argmax()</code></pre>
+<p><code>k</code> 是平滑的旋鈕：k 太小會跟著每一顆雜訊走，<code>k = n</code> 會把模型壓平成一個常數。在兩彎重疊的月亮上取 240 個點，160 訓練、80 測試：</p>
+<pre><code>k    訓練準確率  訓練（排除自己）  測試準確率
+---  ----------  ----------------  ----------
+1    1.000       0.956             0.887
+3    0.981       0.981             0.938
+5    0.988       0.969             0.963
+11   0.975       0.969             0.975
+25   0.956       0.956             0.975
+61   0.875       0.869             0.912
+160  0.500       0.500             0.500</code></pre>
+<img alt="day47_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2047%20-%20k-means%20and%20knn/imgs/day47_5.png">
+<p>看第一欄的 k = 1。它是 1.000，而且只要資料集裡的點兩兩相異它就一定是 1.000，因為訓練點的最近鄰就是它自己。它什麼都沒有證明，而 1.000 剛好是大家會停止檢查的那個數字。（兩個座標相同、標籤不同的點是唯一的例外，而那是資料的問題不是模型的問題。）把自己排除掉之後掉到 0.956，而誠實的測試數字是 0.887。一個漏了一列的驗證切分，做的是同一件事，只是更安靜。</p>
+<p>測試準確率的高點在 k = 11，而且跟 k = 25 並列——這件事本身就值得注意：k 有用的範圍是一片高原而不是一個點，任何宣稱「最佳 k」的報告，講的都只是好幾個並列者裡的第一個。</p>
+<p>這裡還住著兩個小一點的坑。偶數的 <code>k</code> 會平手，而 <code>np.bincount([0, 1]).argmax()</code> 回傳 0——numpy 用最小的 index 打破平手，所以編號最小的類別贏下資料集裡的每一次平手，均勻而且看不見。另外 <code>k = 160</code> 就是整個訓練集，所以每個查詢都拿到全域多數標籤；在不平衡的資料上，那個常數模型看起來還會很準。</p>
+<h2>在高維度裡，沒有東西是近的</h2>
+<p>這兩個演算法整個建立在「最近」這個詞上，而這個詞會隨著欄位變多而失去意義。</p>
+<img alt="day47_6" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2047%20-%20k-means%20and%20knn/imgs/day47_6.png">
+<p>500 個均勻亂數點，<code>(最遠 − 最近) / 最近</code> 在兩維是 81.292，在 1024 維是 0.110：最遠的點從「遠 82 倍」變成「只遠 11%」。沒有任何東西壞掉。每多一維就多一項加總，距離變成在越來越多座標上取的平均，而平均會往中間集中。</p>
+<p>實務版本完全不像幾何問題。保留剛好兩欄有用的資料，其餘全部補上純雜訊：</p>
+<pre><code>維度  有用的欄位  k = 11 的測試準確率
+----  ----------  -------------------
+2     2           0.940
+4     2           0.940
+10    2           0.920
+30    2           0.860
+100   2           0.790
+400   2           0.720</code></pre>
+<p>那兩欄有用的資料從頭到尾沒有變過。準確率從 0.940 掉到 0.720，是因為距離函數把它們跟 398 欄雜訊一起平均掉了。沒有例外、沒有警告，只有一個安靜停止運作的模型——而這跟「單位決定分群」那一節是同一種病，只是換了一張臉。</p>
+<h2>懶惰的代價，以及三條出路</h2>
+<p>暴力法的 k-nearest 不管怎麼寫都是每次查詢 <code>O(n · d)</code>。模組會在 16 維、每次 100 個查詢的條件下把訓練集從 2,500 點放大到 40,000 點，並印出每次查詢的成本以及它對最小那一列的倍率。毫秒數看機器、每次跑也會浮動，所以這裡不引用；自己跑一次，看那一欄倍率就好。它會隨著 n 往上爬，而向量化攔不住它往上爬——向量化買到的是常數（Day 44），它不會把線掰彎。</p>
+<p>出路剛好三條，而且是照這個順序失效的：</p>
+<ul><li><strong>一維。</strong> 資料可以排序，所以直接二分它。那就是下面的 LeetCode 658，也是整天唯一一個「搜尋成本對 n 是對數而不是線性」的情況。</li><li><strong>n 裡面取 k。</strong> 你要的是一個集合而不是一個順序，所以用 quickselect 而不是排序。那就是下面的 LeetCode 973，也是 Day 21 的選擇問題。</li><li><strong>很多維。</strong> 沒有任何精確的空間索引撐得住；常見的經驗法則是 k-d tree 大概在幾十維就不再贏過暴力掃描，理由就是上兩節量的那件事。所以改成近似，代價是 recall 低於 1.0。那就是 Day 31 蓋的 HNSW 圖。</li></ul>
+<h2>LeetCode 973 - K Closest Points to Origin（最接近原點的 K 個點）</h2>
+<p><strong>題意。</strong> 給你平面上的一串點和一個數字 <code>k</code>，回傳離原點 <code>(0, 0)</code> 最近的 <code>k</code> 個點，距離用一般的直線距離。答案是一個集合：這 <code>k</code> 個點用任何順序回傳都可以，而題目保證答案唯一。</p>
+<p><strong>輸入輸出。</strong> <code>points</code> 是一串 <code>[x, y]</code> 整數對，<code>k</code> 是整數且 <code>1 &lt;= k &lt;= len(points)</code>。回傳其中 <code>k</code> 個點的串列。</p>
+<p><strong>範例。</strong> <code>points = [[3, 3], [5, -1], [-2, 4]]</code>、<code>k = 2</code> 時，三個點的平方距離是 <code>18</code>、<code>26</code>、<code>20</code>，最小的兩個是 18 和 20，所以答案是 <code>[[3, 3], [-2, 4]]</code>——而 <code>[[-2, 4], [3, 3]]</code> 一樣正確。</p>
+<p><strong>限制。</strong> 最多 10⁴ 個點，每個座標絕對值最多 10⁴。這個規模下整個排序也會過，所以有趣的問題不是「你的解跑不跑得完」，而是「你有沒有做比題目要求更多的事」。座標上限還有第二層意義：<code>x² + y²</code> 最大約 2 × 10⁸，遠在 float64 能精確表示整數的範圍之內，所以兩種比法都是精確的——開根號純粹是你本來就不需要做的工。</p>
+<p>有兩個細節值得留著。不要開根號：它是單調的，不可能改變排序，而它會無緣無故把一次整數比較換成浮點比較。另外，答案是一個集合這件事，就是你可以不排序的理由——大小為 k 的 max-heap 讓每一步是 <code>O(log k)</code> 而不是 <code>O(log n)</code>。</p>
+<pre><code>import heapq
+
+class Solution:
+    def kClosest(self, points: list[list[int]], k: int) -&gt; list[list[int]]:
+        heap: list[tuple[int, int, int]] = []
+        for x, y in points:
+            heapq.heappush(heap, (-(x * x + y * y), x, y))
+            if len(heap) &gt; k:
+                heapq.heappop(heap)
+        return [[x, y] for _, x, y in heap]</code></pre>
+<p>key 取負號是因為 Python 只有 min-heap，而要丟掉的是「目前最差」的那個候選。Day 21 的 quickselect 用期望 <code>O(n)</code> 拿到同樣的答案：繞著一個隨機 pivot 分割，然後只遞迴進還含有邊界的那一側。在 4,000 個隨機點、k = 50 上，三種做法回傳的集合完全相同。</p>
+<p><a href="https://leetcode.com/problems/k-closest-points-to-origin/">leetcode.com/problems/k-closest-points-to-origin</a></p>
+<h2>LeetCode 658 - Find K Closest Elements（找到 K 個最接近的元素）</h2>
+<p><strong>題意。</strong> 給一個由小到大排好序的整數陣列、一個整數 <code>k</code>、一個值 <code>x</code>，回傳陣列中離 <code>x</code> 最近的 <code>k</code> 個元素，而且結果本身也要由小到大排好。遠近的定義是 <code>|a - x|</code>，當兩個候選離 <code>x</code> 一樣遠時，比較小的那個算比較近。</p>
+<p><strong>輸入輸出。</strong> <code>arr</code> 已經排好序而且可能有重複值，<code>k</code> 滿足 <code>1 &lt;= k &lt;= len(arr)</code>，<code>x</code> 可以落在任何地方——包括完全在陣列的範圍之外。回傳一個排好序的 <code>k</code> 元素串列。</p>
+<p><strong>範例。</strong> <code>arr = [1, 2, 3, 4, 5]</code>、<code>k = 4</code>、<code>x = 3</code> 時，各元素的距離是 2、1、0、1、2。要取四個最近的，就是把距離 2 的那兩個丟掉一個，而平手規則說比較小的贏，所以丟掉 <code>5</code>，答案是 <code>[1, 2, 3, 4]</code>。<code>arr = [1, 1, 2, 3, 4, 5]</code>、<code>k = 4</code>、<code>x = -1</code> 時所有元素都在 <code>x</code> 右邊，所以答案就是前四個：<code>[1, 1, 2, 3]</code>。</p>
+<p><strong>限制。</strong> 最多 10⁴ 個元素，以及——這是會改變演算法的那一條——陣列已經排好序。這正是讓答案變成一段連續視窗的原因，也正是「照距離排序」那種解法浪費的地方：它把手上現成的順序丟掉，再花 <code>O(n log n)</code> 把它蓋回來。</p>
+<p>因為陣列排好序，離 <code>x</code> 最近的 <code>k</code> 個值一定是連續的，所以答案是一個視窗，要搜尋的是它的左緣。視窗 <code>[lo, lo+k)</code> 比 <code>[lo+1, lo+k+1)</code> 好，恰好發生在「丟掉 <code>arr[lo]</code> 要付的代價」大於「換到 <code>arr[lo+k]</code> 能省的量」的時候——而這兩個都只是到端點的距離，所以視窗裡面的值一個都不用看。</p>
+<pre><code>class Solution:
+    def findClosestElements(self, arr: list[int], k: int, x: int) -&gt; list[int]:
+        lo, hi = 0, len(arr) - k
+        while lo &lt; hi:
+            mid = (lo + hi) // 2
+            if x - arr[mid] &gt; arr[mid + k] - x:
+                lo = mid + 1
+            else:
+                hi = mid
+        return arr[lo:lo + k]</code></pre>
+<p>那個 <code>&gt;</code> 就是整條平手規則，而且不能寫成 <code>&gt;=</code>。平手的時候題目要的是比較小的值，也就是要留左邊的視窗。換掉那一個字元之後，三個範例全部照樣通過，而在 3,000 筆隨機輸入裡有 104 筆跟正解不同——3.5%。在 <code>arr = [1, 2, 3, 4, 5]</code>、<code>k = 2</code>、<code>x = 3</code> 上，2 和 4 都是距離 1，<code>&gt;</code> 給 <code>[2, 3]</code>，<code>&gt;=</code> 給 <code>[3, 4]</code>。</p>
+<p>這一題就是一維版本的 k-nearest，也是今天唯一一個逃得過 <code>O(n · d)</code> 的情況。而它能便宜，靠的完全是「一維可以排序」。二維沒有這種順序，而整個問題就是從那裡開始的。</p>
+<p><a href="https://leetcode.com/problems/find-k-closest-elements/">leetcode.com/problems/find-k-closest-elements</a></p>
+<h2>複雜度</h2>
+<pre><code>操作                                       時間                                                 空間
+-----------------------------------------  ---------------------------------------------------  ---------------------------------------
+k-means 一輪，n 個點、k 個 centroid、d 維  O(n · k · d)                                         資料 O((n + k) · d) + 距離矩陣 O(n · k)
+k-means，i 輪                              O(i · n · k · d)                                     同上一列
+k-means++ 初始化（本文的寫法）             O(n · k² · d)                                        O((n + k) · d)
+k-means++ 改成維護一個滾動最小值           O(n · k · d)                                         額外 O(n)
+k-nearest 單次查詢，暴力法                 排序 O(n · d + n log n)，用 heap O(n · d + n log k)  O(n)
+k-nearest 訓練                             O(1)——沒有訓練                                       存資料 O(n · d)
+LeetCode 973，heap                         O(n log k)                                           O(k)
+LeetCode 973，quickselect                  期望 O(n)，最壞 O(n²)                                O(n)
+LeetCode 658                               O(log(n − k) + k)                                    輸出 O(k)
+LeetCode 658，照距離排序                   O(n log n)                                           O(n)</code></pre>
+<h2>為什麼這件事重要</h2>
+<p>這兩個演算法墊在很多看起來跟它們不像的東西底下。向量搜尋就是 k-nearest 加上一個近似索引，而每一份 ANN benchmark 上的 recall 數字，就是在為上面那個維度問題付帳。product quantisation 存在的理由是「距離函數會隨著欄位變多而退化」，不是因為誰想要壓縮——而 quantiser 裡面那個把向量指派給 centroid 的 k-means，就是這個迴圈本人，連「對初始化很敏感」這件事都一模一樣。</p>
+<p>值得留下的兩個習慣比上面這些都小。只要牽涉到距離，就把每一欄的意思和你希望它佔多少權重寫下來：預設值——也就是它們剛好是用什麼單位送進來的——本身已經是一個決定，而標準化是另一個決定，不是中立的。另外，當一個分群或最近鄰模型表現得可疑地好的時候，檢查兩件事：它在純雜訊上是不是也一樣好，以及被評分的那個點是不是就在拿來評分的資料裡面。這兩個檢查都只有幾行，而且都抓得到任何例外都不會抓到的失敗。</p>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2047%20-%20k-means%20and%20knn">day 47 on GitHub</a></p>
+</body>
+</html>

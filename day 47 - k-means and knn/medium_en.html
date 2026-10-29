@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>k-means and k-nearest neighbours: clustering and classifying with nothing but a distance</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>k-means and k-nearest neighbours: clustering and classifying with nothing but a distance</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2047%20-%20k-means%20and%20knn">day 47 on GitHub</a></p>
+<p><em>100 Days of Python - day 47</em></p>
+<p>I ran k-means on 180 points of uniform random noise and asked for three clusters. It gave me three: sizes 54, 75 and 51, each with a sensible-looking centroid, converged in a handful of rounds, with an objective value of 449.0 that looks exactly like every other objective value I have ever seen. There is no structure in that data at all. Nothing in the output said so.</p>
+<p>That is the shape of this whole day. k-means and k-nearest neighbours are the two algorithms almost everyone meets first, and between them they contain about six lines of logic:</p>
+<pre><code>k-means   : repeat { assign each point to the nearest centroid
+                     move each centroid to the mean of its members }
+k-nearest : for a query, take the k nearest training points and let them vote</code></pre>
+<p>Neither of those rules is where the bugs are. Both algorithms are <strong>a distance function plus a rule</strong>, the rule is almost impossible to get wrong, and the distance function never raises. It just quietly answers a different question than the one you asked.</p>
+<img alt="day47_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2047%20-%20k-means%20and%20knn/imgs/day47_1.png">
+<h2>Lloyd&#x27;s algorithm, and the two reasons it stops</h2>
+<p>Every run below uses the same distance matrix, built the way Day 44 built everything: <code>|x - c|² = |x|² - 2 x·c + |c|²</code> turns a double loop into one matrix product.</p>
+<pre><code>def sq_dists(X, C):
+    x2 = np.einsum(&#x27;ij,ij-&gt;i&#x27;, X, X)[:, None]
+    c2 = np.einsum(&#x27;ij,ij-&gt;i&#x27;, C, C)[None, :]
+    return np.maximum(x2 - 2.0 * X @ C.T + c2, 0.0)</code></pre>
+<p>The <code>np.maximum</code> is not a tidy-up. The expansion subtracts two large numbers, so for the point <code>[1000000.5, 48000000.25]</code> it evaluates the distance from that point to itself as <strong>-1.0</strong>, and the square root of that is <code>nan</code>. Clamping at zero is part of the algorithm.</p>
+<p>The loop itself is two lines:</p>
+<pre><code>labels = np.argmin(sq_dists(X, C), axis=1)                      # assign
+C = np.array([X[labels == j].mean(axis=0) for j in range(k)])   # update</code></pre>
+<p>On 180 points in three blobs this converges in six rounds, and the objective - the sum of squared distances to the assigned centroid, usually called the inertia - goes 1639.0, 1158.5, 1029.8, 447.9, 240.0, 239.0. It never goes up, and that is not an accident. <strong>The two halves lower it for two completely different reasons.</strong> Assignment lowers it because every point picks its own cheapest centroid, so nobody can end up worse off. The update lowers it because the mean is the minimiser of squared distance. A finite number of possible partitions plus an objective that only falls means the loop has to stop.</p>
+<p>Hold on to the second reason. A few sections from now it gets taken away.</p>
+<h2>The objective can never tell you k</h2>
+<p>Inertia falls every time you add a centroid, and at <code>k = n</code> it is exactly zero. So &quot;minimise the objective&quot; always answers <code>k = n</code>, and it has no power whatsoever to tell you how many groups are in the data.</p>
+<img alt="day47_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2047%20-%20k-means%20and%20knn/imgs/day47_2.png">
+<p>The elbow method is the usual answer, and on data that really does have three groups it works: the step from k=2 to k=3 removes 78.7% of the inertia and the next step only 9.3%, a factor of 8.4. But look at the second curve. Those are the 180 uniform random points from the opening paragraph. 32.7% is followed by 40.0% - the drop gets <em>bigger</em> - and there is no elbow anywhere, because there is nothing to find.</p>
+<p>The important part is that the elbow is something you see, not something the algorithm computes. The usual responses both decline to ask how small the inertia is. The gap statistic literally compares the inertia curve against the same algorithm run on structureless data. The silhouette score takes a different route to the same scepticism: it scores each point by how much nearer it is to its own cluster than to the next nearest one, which has nowhere to go but zero when the clusters are arbitrary.</p>
+<h2>The answer depends on the random start</h2>
+<p>Lloyd converges to <em>a</em> local minimum. On three clearly separated blobs - the easiest data set anyone could construct - 23 random starts out of 200 end more than 1% above the best found, and the worst gives an inertia of 1742.1 against 367.0, with cluster sizes <code>[21, 120, 39]</code> instead of <code>[60, 60, 60]</code>. Two centroids landed in the same blob, so that blob was split in half and the other two were merged into one.</p>
+<p>Both runs are &quot;the output of k-means&quot;. Neither prints a warning. The only way to tell them apart is to compare the inertia, which is exactly why the standard practice is to restart several times and keep the best, and why scikit-learn has an <code>n_init</code> parameter at all. Its <code>&#x27;auto&#x27;</code> default is itself a statement about what the next paragraph buys: one start when you initialise with k-means++, ten when you initialise randomly.</p>
+<p>k-means++ is the cheap improvement: pick the first centre uniformly, then pick each further centre with probability proportional to its squared distance to the nearest centre so far. That is Day 42&#x27;s weighted random pick, and it takes the failure rate from 23 in 200 down to 1 in 200. It is still random; it has just made the bad draw rare.</p>
+<h2>A centroid can lose all of its points</h2>
+<pre><code>C[j] = X[labels == j].mean(axis=0)   # empty -&gt; nan</code></pre>
+<p>The mean of an empty set is <code>nan</code>, and numpy says so with one <code>RuntimeWarning</code> on stderr. A warning is easy to miss, but that is not the interesting part.</p>
+<p>The interesting part is <code>np.argmin([0.246, nan, 50.08])</code>, which returns <strong>1</strong>. It does not skip the <code>nan</code>; it returns its index. So on the next round every distance to the dead centroid is <code>nan</code>, <code>nan</code> wins every comparison, and the assignment becomes <code>[1, 1, 1, 1, 1]</code>: the entire data set joins the centroid that has no position. One more update and the model is <code>[[nan, nan], [2.36, 2.02], [nan, nan]]</code> - one cluster holding everything, plus two that do not exist.</p>
+<p>What comes out is a perfectly shaped <code>(k, 2)</code> array, and <code>len(C)</code> is still <code>k</code>, so any sanity check that counts clusters passes. Swapping in <code>np.nanargmin</code> only hides this one level deeper. The real fix is what scikit-learn does: move the orphaned centroid to the point that is furthest from any centroid.</p>
+<h2>The units decide the clustering</h2>
+<p>Here is a data set shaped like something you might actually have: 360 requests, two columns, <code>prompt_tokens</code> between 200 and 4000 and a cache hit rate between 0 and 1. The three real populations differ <em>only</em> in hit rate - 0.15, 0.50 and 0.85 - while the token count is drawn from the same wide range for all three.</p>
+<img alt="day47_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2047%20-%20k-means%20and%20knn/imgs/day47_3.png">
+<pre><code>version        purity  what the three centroids learned
+-------------  ------  --------------------------------
+raw units      0.358   hit rates 0.487, 0.492, 0.509
+standardised   0.669   hit rates 0.302, 0.311, 0.828
+hit rate only  1.000   hit rates 0.143, 0.492, 0.854</code></pre>
+<p>Purity is the fraction of points whose cluster&#x27;s majority label is their own; guessing scores 0.333. The raw-units run scored 0.358, which is guessing. The token axis spans about 4000 times more than the hit-rate axis, so squared it contributes about sixteen million times more distance, and k-means cut three vertical token bands without ever looking at the column the answer was in. The inertia it reported, 46140168, is a perfectly good number for the question it answered.</p>
+<p>Standardising is normally called the fix for this. It is not a fix, it is a <strong>different arbitrary choice</strong>: &quot;every column matters equally&quot;. Here that still leaves one column of pure noise casting exactly as many votes as the answer on every distance, which is why purity stops at 0.669 instead of 1.000. Scaling decides what the distance means, and no amount of it can tell you which columns are relevant. That part is your knowledge about the problem, not a property of the data.</p>
+<h2>The update rule has to match the distance</h2>
+<p>Day 45 spent a section on LeetCode 462 proving that the minimiser of <code>sum |x - c|</code> is the median, while the minimiser of <code>sum (x - c)²</code> is the mean. On <code>[1, 2, 3, 100]</code> the mean is 26.5 and costs 147.0 in absolute distance; the median is 2.5 and costs 100.0.</p>
+<p>That is not trivia. It is exactly the fact Lloyd&#x27;s termination proof rests on. So what happens if you keep the Lloyd loop, switch the assignment to L1 distance because you want something robust to outliers, and leave the update as a mean?</p>
+<img alt="day47_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2047%20-%20k-means%20and%20knn/imgs/day47_4.png">
+<p>On 96 points - three blobs plus six scattered outliers - the L1 objective of the mean-updating version goes 562.5, 340.2, <strong>342.3</strong>, 329.4, 244.1, 196.6, 196.5, 196.5. It went <em>up</em> at step 1. The update step no longer minimises the thing the assignment step is measuring, so there is no longer any argument that it cannot make things worse, and the termination proof is gone. Over 600 (data set, seed) pairs, 150 runs are non-monotone and 555 finish worse than the correct median update.</p>
+<p>It still converged here, and it will usually converge, which is the problem: a loop that is convergent by luck looks exactly like a loop that is convergent by proof.</p>
+<h2>Squared distance only knows one shape</h2>
+<p>Squared distance to a single centre has circular level sets, and a point joins whichever centre is nearest, so the border between two clusters is the perpendicular bisector of the line joining their centroids. Every cluster k-means can express is therefore a convex cell with straight sides.</p>
+<pre><code>data                        purity  cluster sizes
+--------------------------  ------  -------------
+two long thin bars          0.523   145, 155
+two moons                   0.757   145, 155
+one blob of 200, one of 20  0.909   105, 115</code></pre>
+<p>The last row is the one worth staring at. A purity of 0.909 and two clusters of 105 and 115 look like a healthy result. They are not: the 20-point group was recovered <strong>0 times out of 20</strong>. k-means halved the big blob instead, because halving 200 points removes far more squared distance than isolating 20 does - and 0.909 is exactly the score you get for calling everything the majority class.</p>
+<h2>k-nearest neighbours: the data is the model</h2>
+<p>There is no training step. You store the data; the cost all moves to query time.</p>
+<pre><code>d2 = ((Xtrain - q) ** 2).sum(axis=1)
+nn = np.argsort(d2)[:k]
+return np.bincount(ytrain[nn]).argmax()</code></pre>
+<p><code>k</code> is the smoothing knob: small k follows every piece of noise, <code>k = n</code> flattens the model into a constant. On 240 points from two overlapping moons, 160 train and 80 test:</p>
+<pre><code>k    train accuracy  train, self excluded  test accuracy
+---  --------------  --------------------  -------------
+1    1.000           0.956                 0.887
+3    0.981           0.981                 0.938
+5    0.988           0.969                 0.963
+11   0.975           0.969                 0.975
+25   0.956           0.956                 0.975
+61   0.875           0.869                 0.912
+160  0.500           0.500                 0.500</code></pre>
+<img alt="day47_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2047%20-%20k-means%20and%20knn/imgs/day47_5.png">
+<p>Look at the first column at k = 1. It is 1.000, and it is 1.000 for any data set whose points are distinct, because the nearest neighbour of a training point is the point itself. It proves nothing at all, and 1.000 is the number people stop checking at. (Two identical points carrying different labels are the only way to lose, and that is a data problem rather than a model one.) Excluding the point itself drops it to 0.956, and the honest held-out number is 0.887. A validation split that leaks a single row does the same thing more quietly.</p>
+<p>Held-out accuracy peaks at k = 11 and ties there with k = 25, which is itself worth noticing: the useful range of k is a plateau, not a point, and anything that reports a single best k is reporting the first of several equals.</p>
+<p>Two smaller traps live here too. An even <code>k</code> can tie, and <code>np.bincount([0, 1]).argmax()</code> returns 0 - numpy breaks ties by smallest index, so the lowest-numbered class wins every tie in the data set, uniformly and invisibly. And at <code>k = 160</code>, the whole training set, every query gets the global majority label; on imbalanced data that constant model will still look accurate.</p>
+<h2>In high dimensions, nothing is near</h2>
+<p>Both algorithms are built entirely on the word &quot;nearest&quot;, and that word stops meaning anything as the number of columns grows.</p>
+<img alt="day47_6" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2047%20-%20k-means%20and%20knn/imgs/day47_6.png">
+<p>With 500 uniform random points, <code>(furthest - nearest) / nearest</code> is 81.292 at two dimensions and 0.110 at 1024: the furthest point goes from being 82 times further away to being 11% further away. Nothing broke. Every extra dimension adds one more term to a sum, the distance becomes an average over more and more coordinates, and averages concentrate.</p>
+<p>The practical version does not look like a geometry problem at all. Keep exactly two informative columns and pad with pure noise:</p>
+<pre><code>dimensions  informative columns  k = 11 test accuracy
+----------  -------------------  --------------------
+2           2                    0.940
+4           2                    0.940
+10          2                    0.920
+30          2                    0.860
+100         2                    0.790
+400         2                    0.720</code></pre>
+<p>The two useful columns never changed. Accuracy fell from 0.940 to 0.720 because the distance function averages them with 398 columns of noise. No exception, no warning, just a model that quietly stopped working - and it is the same disease as the units section, wearing a different face.</p>
+<h2>The cost of being lazy, and three ways out</h2>
+<p>Brute-force k-nearest is <code>O(n · d)</code> per query however it is written. The module grows the training set from 2,500 to 40,000 points at 16 dimensions and prints the cost per query alongside its ratio to the smallest run. The milliseconds depend on the machine and move between runs, so they are not quoted here; run it and watch the ratio column instead. It climbs with n, and no amount of vectorising stops it climbing - that buys a constant (Day 44), it does not bend the line.</p>
+<p>There are exactly three escapes, and they fail in this order:</p>
+<ul><li><strong>One dimension.</strong> The data can be sorted, so binary search it. That is LeetCode 658 below, and it is the only case where the <em>search</em> is logarithmic rather than linear in n.</li><li><strong>k out of n.</strong> You need a set, not an order, so quickselect it instead of sorting. That is LeetCode 973 below, and Day 21&#x27;s selection problem.</li><li><strong>Many dimensions.</strong> No exact spatial index survives; the usual rule of thumb is that k-d trees stop beating brute force somewhere in the low tens of dimensions, for the reason measured two sections up. So you approximate, and you pay for it with a recall below 1.0. That is the HNSW graph built on Day 31.</li></ul>
+<h2>LeetCode 973 - K Closest Points to Origin</h2>
+<p><strong>The task.</strong> You are given a list of points on a plane and a number <code>k</code>. Return the <code>k</code> points that are closest to the origin <code>(0, 0)</code>, measured by ordinary straight-line distance. The answer is a set: you may return those <code>k</code> points in any order, and the problem guarantees the answer is unique.</p>
+<p><strong>Input / output.</strong> <code>points</code> is a list of <code>[x, y]</code> pairs of integers, and <code>k</code> is an integer with <code>1 &lt;= k &lt;= len(points)</code>. You return a list of <code>k</code> of those pairs.</p>
+<p><strong>Example.</strong> For <code>points = [[3, 3], [5, -1], [-2, 4]]</code> and <code>k = 2</code>, the squared distances are <code>18</code>, <code>26</code> and <code>20</code>. The two smallest are 18 and 20, so the answer is <code>[[3, 3], [-2, 4]]</code> - and <code>[[-2, 4], [3, 3]]</code> is equally correct.</p>
+<p><strong>Constraints.</strong> Up to 10⁴ points, each coordinate up to 10⁴ in absolute value. A full sort passes comfortably at that size, so the interesting question is not whether your solution runs but whether it does more work than was asked for. The coordinate bound matters a second time: <code>x² + y²</code> reaches about 2 × 10⁸, which is well inside the range of integers a float64 represents exactly, so the comparison stays exact in both forms - the square root is simply work you never needed to do.</p>
+<p>Two details are worth keeping. Never take the square root: it is monotone, so it cannot change the ordering, and it turns an integer comparison into a floating-point one for nothing. And the answer being a set is what lets you skip the sort - a max-heap of size <code>k</code> makes each step <code>O(log k)</code> instead of <code>O(log n)</code>.</p>
+<pre><code>import heapq
+
+class Solution:
+    def kClosest(self, points: list[list[int]], k: int) -&gt; list[list[int]]:
+        heap: list[tuple[int, int, int]] = []
+        for x, y in points:
+            heapq.heappush(heap, (-(x * x + y * y), x, y))
+            if len(heap) &gt; k:
+                heapq.heappop(heap)
+        return [[x, y] for _, x, y in heap]</code></pre>
+<p>The key is negated because Python only has a min-heap and the thing to discard is the <em>worst</em> candidate so far. Day 21&#x27;s quickselect gets the same answer in <code>O(n)</code> expected time by partitioning around a random pivot and recursing into whichever side still contains the boundary; on 4,000 random points with k = 50 all three approaches return the identical set.</p>
+<p><a href="https://leetcode.com/problems/k-closest-points-to-origin/">leetcode.com/problems/k-closest-points-to-origin</a></p>
+<h2>LeetCode 658 - Find K Closest Elements</h2>
+<p><strong>The task.</strong> Given an array of integers sorted in ascending order, an integer <code>k</code>, and a value <code>x</code>, return the <code>k</code> elements of the array that are closest to <code>x</code>, themselves sorted in ascending order. Closeness is <code>|a - x|</code>, and when two candidates are equally far from <code>x</code>, the smaller one is considered closer.</p>
+<p><strong>Input / output.</strong> <code>arr</code> is sorted ascending and may contain duplicates, <code>k</code> satisfies <code>1 &lt;= k &lt;= len(arr)</code>, and <code>x</code> may lie anywhere - including outside the range of the array. You return a sorted list of <code>k</code> elements.</p>
+<p><strong>Example.</strong> For <code>arr = [1, 2, 3, 4, 5]</code>, <code>k = 4</code> and <code>x = 3</code>, the distances are 2, 1, 0, 1, 2. Taking the four closest means taking everything except one of the two elements at distance 2, and the tie rule says the smaller value wins, so <code>5</code> is dropped and the answer is <code>[1, 2, 3, 4]</code>. For <code>arr = [1, 1, 2, 3, 4, 5]</code>, <code>k = 4</code> and <code>x = -1</code>, everything is to the right of <code>x</code>, so the answer is simply the first four: <code>[1, 1, 2, 3]</code>.</p>
+<p><strong>Constraints.</strong> Up to 10⁴ elements, and - this is the constraint that changes the algorithm - the array is already sorted. That is what makes the answer a contiguous window, and it is also what makes the sort-by-distance solution wasteful: it throws away the ordering it was handed and pays <code>O(n log n)</code> to rebuild it.</p>
+<p>Because the array is sorted, the <code>k</code> values closest to <code>x</code> are contiguous, so the answer is a window and what you search for is its left edge. Window <code>[lo, lo+k)</code> beats <code>[lo+1, lo+k+1)</code> exactly when dropping <code>arr[lo]</code> costs more than gaining <code>arr[lo+k]</code> saves - and both of those are just distances to an endpoint, so none of the values inside the window are ever examined.</p>
+<pre><code>class Solution:
+    def findClosestElements(self, arr: list[int], k: int, x: int) -&gt; list[int]:
+        lo, hi = 0, len(arr) - k
+        while lo &lt; hi:
+            mid = (lo + hi) // 2
+            if x - arr[mid] &gt; arr[mid + k] - x:
+                lo = mid + 1
+            else:
+                hi = mid
+        return arr[lo:lo + k]</code></pre>
+<p>The <code>&gt;</code> is the whole tie rule, and it must not be <code>&gt;=</code>. On a tie, the problem wants the smaller value, which means keeping the left window. Swapping that one character still passes all three worked examples, and differs from the reference on 104 of 3,000 random inputs - 3.5%. On <code>arr = [1, 2, 3, 4, 5]</code>, <code>k = 2</code>, <code>x = 3</code>, where 2 and 4 are both one away, <code>&gt;</code> gives <code>[2, 3]</code> and <code>&gt;=</code> gives <code>[3, 4]</code>.</p>
+<p>This is the one-dimensional case of k-nearest, and the only one in the entire day that escapes <code>O(n · d)</code>. The reason it can is entirely that one dimension admits a sort. In two dimensions there is no such order, and that is where the whole problem starts.</p>
+<p><a href="https://leetcode.com/problems/find-k-closest-elements/">leetcode.com/problems/find-k-closest-elements</a></p>
+<h2>Complexity</h2>
+<pre><code>Operation                                         Time                                                        Space
+------------------------------------------------  ----------------------------------------------------------  ----------------------------------------------
+One k-means round, n points, k centroids, d dims  O(n · k · d)                                                O((n + k) · d) data + O(n · k) distance matrix
+k-means, i rounds                                 O(i · n · k · d)                                            same as one round
+k-means++ initialisation, as written here         O(n · k² · d)                                               O((n + k) · d)
+k-means++ keeping a running minimum instead       O(n · k · d)                                                O(n) extra
+k-nearest, one query, brute force                 O(n · d + n log n) to sort, O(n · d + n log k) with a heap  O(n)
+k-nearest, training                               O(1) - there is no training                                 O(n · d) to keep the data
+LeetCode 973, heap                                O(n log k)                                                  O(k)
+LeetCode 973, quickselect                         O(n) expected, O(n²) worst case                             O(n)
+LeetCode 658                                      O(log(n − k) + k)                                           O(k) output
+LeetCode 658, sort by distance                    O(n log n)                                                  O(n)</code></pre>
+<h2>Why this matters</h2>
+<p>These two algorithms sit under a lot of machinery that does not look like them. Vector search is k-nearest with an approximate index bolted on, and the recall number in every ANN benchmark is the price being paid for the dimension problem above. Product quantisation exists because the distance function degrades as columns are added, not because anyone wanted to compress - and the k-means that assigns vectors to centroids inside a quantiser is this exact loop, with this exact dependence on initialisation.</p>
+<p>The two habits worth keeping are smaller than any of that. Whenever a distance is involved, write down what the columns mean and what you want them to weigh: the default, whatever units they happened to arrive in, is already a decision, and standardising is a different decision rather than a neutral one. And when a clustering or a nearest-neighbour model is working suspiciously well, check two things - whether it would work just as well on noise, and whether the point being scored is in the data being scored against. Both checks are a few lines, and both catch failures that no exception ever will.</p>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2047%20-%20k-means%20and%20knn">day 47 on GitHub</a></p>
+</body>
+</html>
