@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Decision trees, random forests and gradient boosting: how the most widely used model on tabular data works</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Decision trees, random forests and gradient boosting: how the most widely used model on tabular data works</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2048%20-%20decision%20trees%20random%20forests%20and%20boosting">day 48 on GitHub</a></p>
+<p><em>100 Days of Python - day 48</em></p>
+<p>I grew a decision tree on 300 rows where one binary column <em>is</em> the answer and one continuous column is pure noise, then asked it which columns mattered. It said the noise column, by a factor of 1.67. It also scored 1.000 on its own training data. Both of those numbers are what the model says about itself, and both of them are wrong in a direction you can predict before you run anything.</p>
+<p>A decision tree is the only model in this series with no coefficients and no distance function. It asks questions — <em>is column 7 below 0.31?</em> — and keeps asking until it is willing to commit. That makes it the one model a person can actually read, and the easiest one to fool.</p>
+<p>The same block gets used three ways:</p>
+<pre><code>one tree          : ask questions until every leaf is pure   -&gt; it memorises
+many independent  : average trees that memorise different noise  (random forest)
+many dependent    : each small tree fixes what the last ones missed  (boosting)</code></pre>
+<p>The forest exists to kill variance, boosting exists to kill bias, and swapping their tree depths swaps their failure modes.</p>
+<img alt="day48_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2048%20-%20decision%20trees%20random%20forests%20and%20boosting/imgs/day48_1.png">
+<h2>One prediction is one root-to-leaf path</h2>
+<p>The loop is short enough to read in full:</p>
+<pre><code>def grow(X, y, depth):
+    node = Node(majority(y), gini(y))
+    if gini(y) == 0 or depth == max_depth:
+        return node                      # a leaf holds a constant
+    gain, j, t = best_split(X, y)        # every (column, threshold)
+    node.feat, node.thr = j, t
+    m = X[:, j] &lt;= t
+    node.left  = grow(X[m],  y[m],  depth + 1)
+    node.right = grow(X[~m], y[~m], depth + 1)
+    return node</code></pre>
+<p>Gini and entropy both ask &quot;how mixed is this node&quot; and both hit 0 when it is pure. On eight rows split 0/8, 1/7, 2/6, 3/5, 4/4 the gini values are 0.000, 0.219, 0.375, 0.469, 0.500 and the entropies are 0.000, 0.544, 0.811, 0.954, 1.000. Which one you pick barely matters. The stopping rule is what matters, and that is the next section.</p>
+<p>Because the question is always &quot;is this column below this number&quot;, every cut is parallel to an axis and every leaf is a box. A prediction walks one root-to-leaf path and reads the constant at the end — and the whole model is just the set of those paths, which makes it the one thing in this series you can export as a list of rules and argue with.</p>
+<h2>Finding the split twice</h2>
+<p>The obvious implementation rebuilds both children for every candidate threshold: O(n) work, O(n) candidates, d columns, so <strong>O(n² d) per node</strong>. Sorting the column once and sweeping the cut left to right makes every statistic the criterion needs a running total, so each candidate costs O(1) and the node costs <strong>O(n log n · d)</strong>. For gini and entropy the running totals are class counts; for variance they are <code>sum(y)</code> and <code>sum(y²)</code>, because <code>var = E[y²] − E[y]²</code>.</p>
+<p>Both versions are in the module and the assertions check that they agree exactly on 60 random problems under gini, entropy and variance alike. Only the fast one is usable at the sizes further down; the rebuilt version would have made the rest of this article impractical to run.</p>
+<h2>Silent failure #1: a tree grown to purity scores 1.000 on its own data</h2>
+<p>400 points in two diagonal bands, 10% of the labels flipped, 260 train and 140 held out:</p>
+<pre><code>maxdepth  leaves  train  test
+--------  ------  -----  -----
+1         2       0.704  0.664
+2         4       0.781  0.814
+3         8       0.858  0.829
+5         24      0.912  0.850
+8         42      0.973  0.771
+12        50      0.996  0.764
+none      52      1.000  0.764</code></pre>
+<img alt="day48_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2048%20-%20decision%20trees%20random%20forests%20and%20boosting/imgs/day48_2.png">
+<p>The training column is monotone in depth and ends at exactly 1.000, and that number carries no information at all. This is Day 47&#x27;s k = 1 nearest neighbour wearing a different hat: a fully grown tree is a lookup table for its own training set.</p>
+<p>You can watch it happen on 24 hand-placed points. Calling everything the majority class scores 0.7083. The first cut drops gini by 0.17014 and takes accuracy to 0.7917; the second drops it by 0.34028 and reaches 0.9583; the third drops it by 0.03125 and moves accuracy <em>not at all</em>; the fourth finally locks one odd row into a box of its own and reports 1.0000. The last two cuts are not learning anything.</p>
+<p>How general is &quot;it gets to 1.000&quot;? Nearly but not quite, and the two exceptions are worth naming. The exotic one is exact symmetry: on a perfect 8×8 XOR lattice the best split available has a gain of exactly 0.0, so the tree stops at <strong>1 leaf</strong> and trains to <strong>0.5000</strong>. The common one is contradictory duplicates — two identical rows carrying different labels leave an impure node with no legal split at all. Outside those two cases some split has a positive gain, and the tree walks all the way up.</p>
+<h2>Silent failure #2: greedy cannot look one step ahead</h2>
+<p><code>y = (x0 &gt; 0) XOR (x1 &gt; 0)</code>, 400 points, no label noise whatsoever. A depth-2 tree represents this exactly: cut x0 at 0, then x1 at 0 in both children, four pure leaves, accuracy 1.0000.</p>
+<img alt="day48_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2048%20-%20decision%20trees%20random%20forests%20and%20boosting/imgs/day48_3.png">
+<ul><li>gain of the correct split on x0 at 0: <strong>0.00000124</strong></li><li>gain of the correct split on x1 at 0: <strong>0.00061250</strong></li><li>gain of the split greedy actually picks: <strong>0.01114311</strong>, at <code>x0 &lt;= -0.9414</code></li></ul>
+<p>Neither column carries any information on its own, so the correct cut is worth nothing <em>at the root</em>. All of the payoff is in the second cut, and greedy only ever looks at the first. So the root goes to a sliver at the edge of the range that happens to be slightly unbalanced, and everything after it is patching: greedy depth 2 scores 0.5675 where the correct depth-2 tree scores 1.0000, and it takes depth 6 and 10 leaves to crawl back to 1.0000.</p>
+<p>Representable and unreachable at the same time. This is not a sloppy implementation — finding the optimal tree is NP-hard, so greedy top-down induction is what essentially every tree learner in production does. (Exact solvers do exist — MIP formulations, DL8.5, MurTree, GOSDT — but they are a different tool for a different size of problem, not what CART or XGBoost run.)</p>
+<p>What <em>does</em> escape it? Not boosting on its own. A sum of single-split trees is an additive model, and XOR is the textbook example of something no additive model can express: 200 rounds of depth-1 boosting on this data reaches <strong>0.6900</strong>. That is above 0.5 only because a finite sample is never perfectly balanced, so the marginals carry a little accidental signal — not because the sum of stumps captures any part of the XOR. Depth 2 is the first size that can hold the interaction inside one tree, and 200 rounds of it reach <strong>1.0000</strong>, as does depth 3. The fix is not a cleverer search; it is a building block big enough to contain the thing you are looking for.</p>
+<h2>Silent failure #3: feature importance rewards opportunity, not use</h2>
+<p>300 rows. Column 0 is binary and <em>is</em> the answer, with 20% of labels flipped. Column 1 is continuous pure noise. Columns 2–4 are binary noise. Grow the tree to purity and ask it what mattered:</p>
+<pre><code>column              impurity importance  permutation importance (held out)
+------------------  -------------------  ---------------------------------
+real (binary)       0.347                +0.168
+noise (continuous)  0.580                +0.033
+noise b1            0.022                +0.007
+noise b2            0.025                −0.019
+noise b3            0.026                +0.006</code></pre>
+<img alt="day48_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2048%20-%20decision%20trees%20random%20forests%20and%20boosting/imgs/day48_4.png">
+<p>Impurity importance puts the pure-noise column <strong>first</strong>, at 1.67× the real signal. The mechanism is in one line: at the root, the continuous column offers <strong>209</strong> candidate thresholds and the binary column offers <strong>1</strong>. Two hundred times the chances to look good on noise. Impurity importance sums how much impurity each column&#x27;s splits removed; it has no way to ask whether removing it meant anything.</p>
+<p>Permutation importance asks exactly that — shuffle a column, measure how far the score falls — and it reverses the ranking. It has to be measured on rows the model never saw. Run it on the training set and it will cheerfully reward the column the tree memorised with, because on the training set that column really does carry the predictions. (This tree scores 1.000 on its training rows and 0.656 on held-out ones.)</p>
+<h2>Silent failure #4: one row changes the whole tree</h2>
+<p>Take 200 points, fit a depth-4 tree, then refit 200 times with one row removed each time. The <strong>root split</strong> changed in 60 of 200 runs — 30%. Predictions moved on 1.8% of rows on average and 7.5% at worst.</p>
+<p>Nothing about the data changed meaningfully: 199 of 200 rows are identical every time. A model this sensitive to its sample is a model with high variance, and high variance is exactly what averaging is good at removing. That is the entire argument for the next section.</p>
+<h2>The forest: bagging first, and then making the trees ask different questions</h2>
+<p>900 rows, 10 columns: one that dominates the answer, four that help a little, five pure noise. 600 train, 300 held out, averaged over three forest seeds.</p>
+<pre><code>model                             train  test   disagreement  out-of-bag
+--------------------------------  -----  -----  ------------  ----------
+single unpruned tree              1.000  0.773  -             -
+bagging only, all 10 features     0.999  0.857  0.244         0.826
+random forest, sqrt = 3 features  0.999  0.873  0.304         0.834</code></pre>
+<p>The root column chosen, over 90 trees:</p>
+<pre><code>bagging only  : [90,  0,  0,  0, 0, 0, 0, 0, 0, 0]
+random forest : [29, 18,  9, 15, 7, 3, 2, 1, 5, 1]</code></pre>
+<img alt="day48_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2048%20-%20decision%20trees%20random%20forests%20and%20boosting/imgs/day48_5.png">
+<p>The two knobs do different jobs. Bagging makes the trees see different rows; <code>max_features</code> makes them ask different questions. Bagging is where most of the win is: +0.083. Feature subsampling adds +0.017 on top, which is smaller than it is usually sold as, and I would rather say so than round it up. What it clearly does change is the disagreement between trees, 0.244 to 0.304 — and that is the quantity averaging feeds on. Averaging predictors that agree buys nothing, and the root histogram shows exactly why: without subsampling, every single tree opens with the same question.</p>
+<p>Out-of-bag scoring is genuinely free. Each bootstrap sample draws n rows with replacement, so it misses about <code>(1 − 1/n)^n → 1/e = 36.8%</code> of them; every row is therefore unseen by roughly a third of the trees and can be scored with exactly those. No validation split required.</p>
+<h2>Silent failure #5: a tree cannot predict a number it has never seen</h2>
+<p>120 points of <code>y = sin(x) + 0.35x</code> on x in [−3, 3], fitted with a depth-6 tree and a 40-tree forest. Then asked about x outside that range:</p>
+<pre><code>x      tree     forest   truth
+-----  -------  -------  --------
+2.9    +1.3829  +1.3301  +1.2542
+3.5    +1.3829  +1.3301  +0.8742
+5.0    +1.3829  +1.3301  +0.7911
+10.0   +1.3829  +1.3301  +2.9560
+100.0  +1.3829  +1.3301  +34.4936</code></pre>
+<img alt="day48_6" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2048%20-%20decision%20trees%20random%20forests%20and%20boosting/imgs/day48_6.png">
+<p>Every answer past the edge is the same number, forever. A leaf holds a constant, so the model is a step function and the rightmost step has no right edge. Averaging flat things is flat, so the forest does not fix it — it just picks a slightly different constant.</p>
+<p>There is a second, quieter version of the same fact: the data reaches 1.7795 and the tree never predicts above 1.5463. Any model whose output is a non-negative weighted average of training targets is trapped inside their range. The usual fix is not a better tree. It is to model the trend separately — fit a line, take the residual — and let the tree have what is left.</p>
+<h2>Boosting: gradient descent where the parameter is a function</h2>
+<p>Day 45 took steps in parameter space, <code>w ← w − lr · dL/dw</code>. Here the model is a sum of trees and the thing being improved is the function <code>F</code> itself:</p>
+<pre><code>F = np.full(len(y), y.mean())        # the best constant under squared loss
+for _ in range(n_trees):
+    resid = y - F                    # = -dL/dF for L = 0.5 (y - F)^2
+    tree = DecisionTree(max_depth=2).fit(X, resid)
+    F += lr * tree.predict(X)</code></pre>
+<p>&quot;Fit the next tree to what is left over&quot; is not a separate idea. It is what the gradient of squared loss happens to look like. Change the loss and the target of the next tree changes with it — that is the entire content of the word <em>gradient</em>, and it is why the same loop trains a classifier by fitting trees to something that is not a residual at all.</p>
+<p>On 600 rows and 6 columns (3 informative), 420 train and 180 held out, predicting the training mean for everything gives a test MSE of 2.6937. Three hundred depth-2 trees — at most four leaves each, models that can barely do anything — get to 0.6312.</p>
+<h2>Silent failure #6: the training loss never tells you to stop</h2>
+<pre><code>lr    depth  train MSE at the end  best test MSE  at tree  test MSE at the end
+----  -----  --------------------  -------------  -------  -------------------
+1.0   2      0.0003                0.8597         20       1.1433
+0.3   2      0.0277                0.6510         95       0.7006
+0.1   2      0.1603                0.6250         250      0.6312
+0.03  2      0.4367                0.8102         300      0.8102
+0.1   6      0.0000                0.6272         142      0.6296
+0.1   10     0.0000                0.7130         132      0.7130</code></pre>
+<img alt="day48_7" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2048%20-%20decision%20trees%20random%20forests%20and%20boosting/imgs/day48_7.png">
+<p>Read the first row across. Training MSE finishes at 0.0003 — visually zero, a perfect fit. Held-out MSE bottomed out at 0.8597 after only 20 trees and then climbed 33% to 1.1433. The training curve is monotone decreasing for every row in this table — the module checks that row by row and prints the result as an extra column — and it is structurally incapable of telling you when to stop. That is why early stopping needs held-out data, and why every boosting library has a parameter for it. None of them require one; they will all happily run to the end.</p>
+<p>Shrinkage is the trade: <code>lr = 1.0</code> reaches its best after 20 trees and that best is 0.8597; <code>lr = 0.1</code> needs 250 trees and gets 0.6250. Smaller steps, more of them, a better place to stop — the learning-rate story from Day 45 with a tree in place of a gradient vector.</p>
+<p>Depth is the other half of the same trade. At <code>lr = 0.1</code>, depth 2 gets 0.6250, depth 6 gets 0.6272, and depth 10 gets 0.7130 while driving the training MSE to zero on the way. A boosting loop wants weak learners; give it strong ones and the first few trees have already memorised the residuals, leaving the rest of the loop nothing honest to fit.</p>
+<h2>The two uses pull in opposite directions</h2>
+<pre><code>model                             test MSE
+--------------------------------  --------
+one deep tree (maxdepth=None)     1.1002
+one stump (maxdepth=2)            2.0962
+forest of 40 deep trees           0.7165
+forest of 40 stumps (maxdepth=2)  1.7940
+boosting, 300 stumps, lr 0.1      0.6312</code></pre>
+<p>The forest of deep trees works and the forest of stumps does not: averaging removes variance, and a stump has almost none to remove — it is simply wrong, and averaging forty copies of wrong gives wrong. Boosting on stumps is the best row in the table, because the dependence is the point: tree 2 is fitted to what tree 1 got wrong. (The two stump rows are not literally the same trees — the forest&#x27;s stumps see 3 random columns each, the boosted ones see all 6 — but the depth, which is what the row is about, is identical.)</p>
+<p>Deep and independent kills variance. Shallow and dependent kills bias. Swapping the depths swaps the failure.</p>
+<h2>LeetCode 112 - Path Sum</h2>
+<p><strong>The task.</strong> Given the root of a binary tree and an integer <code>targetSum</code>, return <code>true</code> if the tree has a root-to-leaf path such that the values along the path add up to <code>targetSum</code>. A leaf is a node with no children.</p>
+<p><strong>Input / output.</strong> <code>root</code> is a binary tree node (or <code>None</code> for an empty tree) and <code>targetSum</code> is an integer. You return a boolean.</p>
+<p><strong>Example.</strong> For <code>[5,4,8,11,null,13,4,7,2,null,null,null,1]</code> and <code>targetSum = 22</code>, the answer is <code>true</code>: the path 5 → 4 → 11 → 2 sums to 22. There is no path summing to 100, so that would be <code>false</code>.</p>
+<p><strong>Constraints.</strong> Up to 5,000 nodes, values between −1,000 and 1,000, and — the constraint that makes the problem interesting — <strong>values may be negative</strong>. That is what rules out the pruning you would reach for first: you cannot stop descending when the running sum passes the target, because a negative child can bring it back. The empty tree must return <code>false</code> for any target, including 0.</p>
+<p>The whole problem is the definition of a leaf. A leaf is a node with <strong>no children</strong>, which is not the same as &quot;the recursion ran off the tree&quot;.</p>
+<pre><code>class Solution:
+    def hasPathSum(self, root, targetSum: int) -&gt; bool:
+        if root is None:
+            return False
+        if root.left is None and root.right is None:
+            return targetSum == root.val
+        rest = targetSum - root.val
+        return self.hasPathSum(root.left, rest) or self.hasPathSum(root.right, rest)</code></pre>
+<p>Write the base case as <code>if root is None: return targetSum == 0</code> instead and a node with one child gets counted as a leaf. On <code>[1, 2]</code> with target 1 that version walks into the right child that does not exist, finds the target already used up, and returns <code>True</code> — reporting a root-to-leaf path that is not there. Over 3,000 random small trees the two spellings disagree 121 times, 4.0%: common enough to be caught, rare enough to pass a handful of examples.</p>
+<p>A decision tree never hits this bug, because every internal node it builds gets exactly two children. LeetCode&#x27;s trees are not so disciplined, which is precisely why the definition matters there.</p>
+<p><a href="https://leetcode.com/problems/path-sum/">leetcode.com/problems/path-sum</a></p>
+<h2>LeetCode 257 - Binary Tree Paths</h2>
+<p><strong>The task.</strong> Given the root of a binary tree, return every root-to-leaf path as a string with the values joined by <code>-&gt;</code>. The paths may come back in any order.</p>
+<p><strong>Input / output.</strong> <code>root</code> is a binary tree node; you return a list of strings such as <code>&quot;1-&gt;2-&gt;5&quot;</code>.</p>
+<p><strong>Example.</strong> For <code>[1,2,3,null,5]</code> the answer is <code>[&quot;1-&gt;2-&gt;5&quot;, &quot;1-&gt;3&quot;]</code>. Node 2 has only a right child, so it is not a leaf and does not end a path; node 5 and node 3 are the leaves.</p>
+<p><strong>Constraints.</strong> Between 1 and 100 nodes, so the tree always exists and the output is small. The size bound is what makes this a clarity problem rather than a performance one: there is no clever algorithm to find, only an accumulator to get right.</p>
+<pre><code>class Solution:
+    def binaryTreePaths(self, root) -&gt; list[str]:
+        out: list[str] = []
+
+        def walk(node, acc):
+            if node is None:
+                return
+            acc = acc + [str(node.val)]          # a new list, not a mutated one
+            if node.left is None and node.right is None:
+                out.append(&#x27;-&gt;&#x27;.join(acc))
+                return
+            walk(node.left, acc)
+            walk(node.right, acc)
+
+        walk(root, [])
+        return out</code></pre>
+<p>The walk is three lines and it is never where things go wrong. The accumulator is. Share one list across the recursion with no copy and no undo, append it at each leaf, and <code>[1,2,3,null,5]</code> comes back as <code>[&#x27;1-&gt;2-&gt;5-&gt;3&#x27;, &#x27;1-&gt;2-&gt;5-&gt;3&#x27;]</code> — both paths wrong, and both the <em>same</em> wrong value, because what got stored at the first leaf was the list that kept growing afterwards. This is Day 39&#x27;s <code>res.append(path)</code> bug moved from a backtracking search into a tree. Either copy on the way in, as above, or append and pop around the recursive calls.</p>
+<p>That same walk over a fitted tree is what turns the model into something readable: the depth-3 tree from the first figure becomes 8 rules of the form <em>if x ≤ 0.26 and y &gt; 1.36 and x &gt; −1.53 then class 1 (35 rows)</em>. No other model in this series hands you that.</p>
+<p><a href="https://leetcode.com/problems/binary-tree-paths/">leetcode.com/problems/binary-tree-paths</a></p>
+<h2>Complexity</h2>
+<pre><code>Operation                                       Time                                   Space
+----------------------------------------------  -------------------------------------  ------------
+One split, swept, n rows, d columns, k classes  O(d · n log n + d · n · k)             O(n · k)
+One split, rebuilt per candidate                O(d · n²)                              O(n)
+Growing a tree to depth D                       O(D · d · n log n)                     O(nodes)
+Predicting one row                              O(depth)                               O(1)
+Random forest, T trees                          T times one tree, trivially parallel   O(T · nodes)
+Out-of-bag score                                O(T · n · depth)                       O(n · k)
+Boosting, T trees                               T times one tree, strictly sequential  O(T · nodes)
+Permutation importance, r repeats               O(r · d · n · depth)                   O(n · d)</code></pre>
+<h2>Why this matters</h2>
+<p>Gradient-boosted trees are still the default for tabular data, and the three knobs that matter most are the ones in this article: depth, learning rate, number of trees. XGBoost, LightGBM and CatBoost differ from the loop above in how they find splits — histogram binning instead of exact sweeps, which is the same &quot;running total&quot; trick pushed further — and in how they regularise, not in what the loop is doing. Every one of them has a parameter for held-out data, for the reason in the table above — and none of them require it, which is how a model gets shipped at 300 trees when 20 was the right answer.</p>
+<p>Two habits are worth keeping. First, never report a tree model&#x27;s accuracy on its own training rows; an unrestricted tree drives that number to 1.000 unless the data actively prevents it, and even a restricted one is scoring itself on the data it chose its splits from. Second, when a feature importance table surprises you, check the cardinality of the surprising column before believing it — and then check it again with permutation importance on held-out rows, which is a few lines and answers the question the first table silently skipped.</p>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2048%20-%20decision%20trees%20random%20forests%20and%20boosting">day 48 on GitHub</a></p>
+</body>
+</html>

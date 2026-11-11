@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 49 — PCA、SVD 與 t-SNE：把幾百欄資料壓成兩欄，畫成一張看得懂的圖</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 49 — PCA、SVD 與 t-SNE：把幾百欄資料壓成兩欄，畫成一張看得懂的圖</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2049%20-%20pca%20svd%20and%20t-sne">day 49 on GitHub</a></p>
+<p><em>100 Days of Python - day 49</em></p>
+<p>我拿 180 個十維的高斯雜訊點去跑 t-SNE。它畫出了三群——用 k-means 把圖切成三塊，三塊分得乾乾淨淨。我換一個隨機種子，它畫出另外三群。silhouette 這個指標在「分群是隨便切的」時會接近 0，而它給原始資料 0.0872，給四張 t-SNE 的圖 0.3689 到 0.3972——是資料裡實際含量的 4.2 到 4.6 倍。</p>
+<p>這就是今天的形狀。降維把 d 欄壓成兩欄，而被壓掉的那些不會留下任何痕跡。出來的是一張圖，而圖極容易被過度解讀。</p>
+<pre><code>PCA   回答的是：哪些方向的變異最大？
+t-SNE 回答的是：誰跟誰是鄰居？</code></pre>
+<p>這兩個都不是「哪些方向有用」，也不是「這兩群離多遠」，而那正是大家從圖上讀走的兩件事。下面每一節都在量「被優化的東西」和「被讀走的東西」之間的距離。</p>
+<img alt="day49_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2049%20-%20pca%20svd%20and%20t-sne/imgs/day49_1.png">
+<h2>PCA 就是對置中後的資料做 SVD</h2>
+<pre><code>Xc = X - X.mean(axis=0)
+U, s, Vt = np.linalg.svd(Xc, full_matrices=False)
+components = Vt                       # 每一列是一個方向
+explained_variance = s ** 2 / (n - 1)</code></pre>
+<p>課本的走法是建共變異數矩陣 <code>XᵀX / (n − 1)</code> 再做特徵分解。這裡兩者吻合到 4.4e-15，而再過幾節它們會完全分家。在那之前有兩件事要先講。</p>
+<p><code>np.linalg.eigh</code> 回傳的特徵值是<strong>由小到大</strong>的，所以共變異數那條路必須自己反轉一次。忘了這一步，你會得到一個看起來完全正常、卻指向最不重要方向的答案。</p>
+<p>另外，特徵值不重複時，特徵向量只定義到正負號：<code>v</code> 和 <code>−v</code> 張出同一條線，兩個都對。（兩個特徵值相等時更糟：它們張出的那個平面裡任何一個旋轉都同樣合法，不只是鏡像而已。）兩個套件、同一個套件的兩個版本，或同一份程式在不同機器上，都可能給你一張翻過來的圖，而且沒有任何東西會提醒你。程式裡比較主成分時要連正負號一起放掉，比 <code>|u · v|</code>；而要給人看的東西則要反過來把慣例釘死，例如畫圖前強制讓每個主成分絕對值最大的那一項為正。</p>
+<h2>Silent failure #1：忘了減平均</h2>
+<p>上面第一行就是關鍵那一行。少了它，「變異」是相對於原點量的，於是第一主成分指向的是<strong>資料在哪裡</strong>，而不是它長什麼形狀。</p>
+<p>300 個點，中心在 <code>[7.85, 4.98]</code>，自己的擴散是 2.2：</p>
+<pre><code>        PC1                 解釋變異比
+------  ------------------  ----------------
+有置中  [-0.9521, -0.3059]  [0.9619, 0.0381]
+沒置中  [-0.8508, -0.5254]  [0.9950, 0.0050]</code></pre>
+<p>沒置中的 PC1 跟平均的方向只差 <strong>0.701 度</strong>，跟真正的 PC1 差 <strong>13.885 度</strong>。</p>
+<p>危險的是第二欄。壞掉的版本回報一個主成分解釋了 <strong>0.9950</strong> 的變異，而正確的是 <strong>0.9619</strong>。它看起來更好，因為它現在量的那個偏移量，比它本來應該量的擴散還大——分母跟著分子一起被灌水了。</p>
+<p><strong>大家真的會拿去報告的那個數字，在犯這個錯之後會往上跑。</strong>但不是每個數字都被騙，這才是有用的地方：把這 300 個點從一個主成分重建回來，置中版的誤差是 0.093544，沒置中的是 0.230609，<strong>重建誤差差了 2.5 倍</strong>，它抓得到。它只是不會被放進投影片裡的那個數字。</p>
+<h2>Silent failure #2：單位決定了軸</h2>
+<p>Day 47 和 Day 48 都撞到過這件事。PCA 是它最明顯的地方，因為答案本身就是一個方向。兩欄互相獨立的雜訊——<code>prompt_tokens</code> 在幾百的量級，cache 命中率在 [0, 1]：</p>
+<pre><code>原始單位 : PC1 [1.00000000 0.00003620]   解釋變異比 0.99999992
+標準化後 : PC1 [0.70710678 0.70710678]   解釋變異比 0.56328964</code></pre>
+<p>在原始單位下，PC1 跟 token 那根軸只差 0.0021 度，而 PCA 回報「一個主成分解釋了兩欄獨立雜訊的 <strong>99.999992%</strong> 變異」。這個數字是對的，而且它是關於單位的事實，不是關於資料的。標準化讓兩欄一樣大聲，那是另一個同樣武斷的選擇，不是中立的——但至少那是你做的選擇。</p>
+<h2>Silent failure #3：解釋變異不等於有用</h2>
+<p>400 個點、兩個類別。兩類沿著某一個方向分開；另一個方向帶著大得多的變異，而且一點資訊都沒有；整個東西被旋轉過，所以沒有一個方向是座標軸。</p>
+<img alt="day49_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2049%20-%20pca%20svd%20and%20t-sne/imgs/day49_2.png">
+<pre><code>主成分  解釋的變異  最好的一刀
+------  ----------  ----------
+PC1     98.33%      0.5450
+PC2     1.67%       1.0000</code></pre>
+<p>PC1 握著 98.33% 的變異，而用它做最好的一刀只能分對 0.5450，也就是擲銅板。PC2 只有 1.67%，卻分得完美。兩者的變異比是 59.0 比 1，而排序對「唯一有人會問的那個問題」來說剛好是反的。</p>
+<p>注意 PCA 做對了什麼、又做錯了什麼。它找對了那<strong>一對</strong>方向——旋轉是對的，訊號乾乾淨淨地落在它其中一根軸上。它只是用錯的鍵去排序。「保留 95% 的變異」在這裡會把 PC2 丟掉，而 PCA 沒辦法做得更好：它是非監督的，從頭到尾沒看過標籤。</p>
+<h2>為什麼用 SVD 而不是共變異數矩陣</h2>
+<p>兩條路在數學上一樣。做出 <code>XᵀX</code> 會把條件數平方，而 <code>float64</code> 只有大約 16 位數可以花。</p>
+<p>奇異值<strong>正比於</strong> 1、eps、eps/2，放在一組隨機的正交基底裡（基底另外乘了 √(n−1)，所以下表最小奇異值在 eps=1e-4 時讀到的是 7.04e-04 而不是 5e-05）：</p>
+<pre><code>eps    cond(X)  cond(cov)  最小奇異值（SVD）  （eigh）    相對誤差
+-----  -------  ---------  -----------------  ----------  ---------
+1e-04  2.0e+04  4.0e+08    7.0425e-04         7.0425e-04  4.582e-08
+1e-06  2.0e+06  4.0e+12    7.0425e-06         7.0416e-06  1.197e-04
+1e-08  2.0e+08  4.2e+16    7.0425e-08         0.0000e+00  1.000e+00
+1e-09  2.0e+09  6.5e+17    7.0425e-09         0.0000e+00  1.000e+00</code></pre>
+<img alt="day49_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2049%20-%20pca%20svd%20and%20t-sne/imgs/day49_3.png">
+<p>到 eps = 1e-8，共變異數那條路對一個真值是 7.04e-08 的奇異值回傳<strong>剛好 0</strong>。一個真的有變異的方向被四捨五入掉了，而且完全沒有警告。</p>
+<p><code>cond(cov)</code> 那一欄是直接量共變異數矩陣本身算出來的，不是把 <code>cond(X)</code> 自己平方寫上去的，所以最後一列讀到的是 6.5e+17 而不是預測的 4.0e+18：到那個地步，矩陣已經爛到連它自己的 condition number 都算不準了，量測本身成了它要量的那件事的受害者。</p>
+<p>同一個地方還有第二個症狀：<code>eigh</code> 對一個共變異數矩陣回傳 <strong>-1.435e-16</strong>，也就是一個負的變異數。對它開根號會得到 <code>nan</code>，所以從特徵值算標準差的程式必須夾在 0——而夾住正好把問題藏起來。</p>
+<h2>截斷的 SVD，以及「解釋變異」到底是什麼意思</h2>
+<p>Eckart–Young：把 SVD 在第 k 個奇異值截斷，就是 Frobenius 範數下最好的 rank-k 近似，而誤差剛好等於「被丟掉的奇異值平方和」開根號。</p>
+<pre><code>k   Frobenius 誤差  sqrt(丟掉的平方和)  保住的範數平方比例
+--  --------------  ------------------  ------------------
+1   425.474593      425.474593          0.1185
+5   338.494196      338.494196          0.4421
+10  248.372324      248.372324          0.6996
+20  122.977998      122.977998          0.9264
+40  0.000000        0.000000            1.0000</code></pre>
+<img alt="day49_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2049%20-%20pca%20svd%20and%20t-sne/imgs/day49_4.png">
+<p>最後一欄是「保住了多少 Frobenius 範數平方」，而在<strong>置中過</strong>的資料上，那就正好是 PCA 的 explained variance ratio——同一個比例，只是停在統計之前一步。這裡的 <code>A</code> 沒有置中，所以兩者會差一點點：k = 10 時原始的是 0.6996，置中版是 0.6991。</p>
+<p>這個等式<strong>就是</strong>「解釋變異」的全部內容，也正是這個詞那麼容易被誤用的原因。「保留 95% 的變異」說的是「重建誤差的平方只剩 5%」，它沒有說「我關心的那個東西還留著 95%」——上一節就是這兩件事分道揚鑣的樣子。</p>
+<h2>t-SNE：留住鄰居，其他全部放掉</h2>
+<p><strong>P</strong>：在原本的空間裡，用高斯把距離變成「鄰居機率」。每一列有<strong>自己</strong>的寬度，用二分搜尋調到那一列的 perplexity 落在你要的值上。perplexity 是 2 的熵次方，也就是「這個點實際上有幾個鄰居」。在 180 個點、perplexity 30 時，sigma 在各列之間從 0.7827 跑到 1.7242。二分搜尋的容忍值是 1e-5，所以它真正達到的 perplexity 落在 29.9997 到 30.0003 之間——夠近，但不是剛好 30。</p>
+<p><strong>Q</strong>：在二維的圖上改用自由度 1 的 Student-t。</p>
+<img alt="day49_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2049%20-%20pca%20svd%20and%20t-sne/imgs/day49_5.png">
+<p>在距離 3 的地方，Student-t 還給 0.100，而高斯只給 0.01111——小了九倍。那條重尾就是整個招式。在高維度裡幾乎每一對點都是「中等距離」，少了重尾它們會全部擠到紙的中間。</p>
+<p>然後用梯度下降最小化 KL(P ‖ Q)：</p>
+<pre><code>num  = 1 / (1 + pairwise_sq_dists(Y))        # Student-t kernel
+np.fill_diagonal(num, 0.0)                   # 一個點不是自己的鄰居
+Q    = num / num.sum()
+W    = (P - Q) * num
+grad = 4 * (Y * W.sum(1)[:, None] - W @ Y)</code></pre>
+<p>600 次迭代把 KL 從 1.6949 降到 0.2499，而每個點原本最近的 10 個鄰居有 0.6206 在圖上還是鄰居。<strong>那個 recall 數字是這張圖唯一有資格宣稱的東西。</strong></p>
+<p>被優化的東西就是那個嵌入本身。沒有任何函數被配出來，所以 t-SNE 沒有 <code>transform()</code>——新的點只能整份重跑，而那是每一輪 n² 對。</p>
+<h2>Silent failure #4：t-SNE 會在純雜訊裡畫出群</h2>
+<p>180 個十維高斯雜訊點。裡面什麼都沒有。</p>
+<pre><code>perplexity  資料的 silhouette  圖的 silhouette
+----------  -----------------  ---------------
+5           0.0872             0.3972
+15          0.0872             0.3763
+30          0.0872             0.3707
+50          0.0872             0.3689</code></pre>
+<p>silhouette 接近 0 的意思是「這個分群是隨便切的」。資料本身 0.0872；四張圖分別是它的 4.23 到 4.56 倍。這是 Day 47「k-means 在均勻亂數上也會給三群」再往前一層：這個方法本來就是用來生出群的，所以它生出群。</p>
+<p>抓到它的測試只要多跑一次：</p>
+<pre><code>三群真的存在：三次執行之間的相關 [0.9871, 0.9894, 0.99],   平均 0.9889
+純 10 維雜訊：三次執行之間的相關 [0.3244, 0.2875, 0.3439], 平均 0.3186</code></pre>
+<p>真的結構換一個隨機種子還在。假的不會：同一份雜訊給出三張彼此幾乎不同意的圖。</p>
+<img alt="day49_7" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2049%20-%20pca%20svd%20and%20t-sne/imgs/day49_7.png">
+<h2>Silent failure #5：圖上的大小和距離都沒有意義</h2>
+<img alt="day49_6" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2049%20-%20pca%20svd%20and%20t-sne/imgs/day49_6.png">
+<p>三群，中間那群比其他兩群寬十倍：</p>
+<pre><code>資料裡的寬度 : [1.025, 10.818, 1.182]   最寬 / 最窄 = 10.56
+圖上的寬度   : [2.159,  2.421, 2.155]   最寬 / 最窄 =  1.12</code></pre>
+<p>寬十倍的那一群在圖上跟其他兩群一樣大，因為每一列都自己挑了一個 sigma 去湊同一個 perplexity。那個「每列自己的寬度」正是 t-SNE 應付不同密度區域的方法，也正是為什麼輸出沒辦法報告密度。</p>
+<p>而群跟群之間的距離，則是整個不見了：</p>
+<pre><code>資料裡的距離比  圖上的同一個比
+--------------  --------------
+2.02            1.04
+4.03            1.04
+8.05            1.04
+26.82           1.02</code></pre>
+<p>有一群比另一群遠了將近 27 倍，而圖把它們放在一樣遠的地方。這裡沒有 bug：KL(P ‖ Q) 是在<strong>一對一對</strong>的點上加總，而整個式子裡沒有任何一項叫做「這群多寬」或「這兩群隔多遠」，所以優化從頭到尾就沒有在試著把它們弄對。</p>
+<h2>Silent failure #6：損失變好，圖變差</h2>
+<p>同樣三群，只動一個旋鈕：</p>
+<pre><code>perplexity  最後的 KL  留住的鄰居
+----------  ---------  ----------
+2           0.6008     0.5283
+5           0.5849     0.5822
+30          0.2499     0.6206
+80          0.0010     0.5028
+150         0.0025     0.3656</code></pre>
+<p>表裡最低的 KL 是 0.0010，出現在 perplexity 80。那看起來是完美的配合，而它只留住 0.5028 的鄰居，相對於 perplexity 30 的 0.6206。</p>
+<p>坑在於 <strong>P 對每一個 perplexity 都是重新建的</strong>，所以這張表的每一列是一個不同的目標函數。KL 的值在不同 perplexity 之間不可比較，而優化器會印出來的那唯一一個數字，剛好對「選那個最關鍵的旋鈕」毫無用處。</p>
+<h2>LeetCode 719 - Find K-th Smallest Pair Distance（找出第 K 小的數對距離）</h2>
+<p><strong>題意。</strong> 給一個整數陣列 <code>nums</code> 和一個整數 <code>k</code>，回傳所有數對之中第 k 小的距離，其中一對 <code>(a, b)</code> 的距離是 <code>|a − b|</code>。每一對位置只算一次，包含值相同的那些對。</p>
+<p><strong>輸入輸出。</strong> <code>nums</code> 是整數串列，<code>k</code> 是整數且 <code>1 ≤ k ≤ n(n−1)/2</code>。回傳一個整數。</p>
+<p><strong>範例。</strong> <code>nums = [1, 3, 1]</code>、<code>k = 1</code> 時，三對的距離是 2、0、2，排序後是 0、2、2，所以第 1 小是 <code>0</code>。</p>
+<p><strong>限制。</strong> <code>2 ≤ n ≤ 10⁴</code>，<code>0 ≤ nums[i] ≤ 10⁶</code>。n 的上限就是整題的全部：它代表最多有 <strong>49,995,000</strong> 對，光是把它們生出來就已經做不到，更不用說排序。而值的上限讓「答案」本身可以被二分——它落在 <code>[0, 10⁶]</code>，一個你可以一直對半砍的範圍。</p>
+<p>關鍵是去二分<strong>答案</strong>而不是資料。<code>count(m)</code>（距離不超過 <code>m</code> 的數對有幾組）對 <code>m</code> 單調遞增，所以最小的、滿足 <code>count(m) ≥ k</code> 的那個 <code>m</code> 就是第 k 小的距離。而因為陣列排好序，<code>count</code> 本身是一個滑動視窗：<code>j</code> 只會往右走，所以它是 O(n) 而不是 O(n²)。</p>
+<pre><code>class Solution:
+    def smallestDistancePair(self, nums: list[int], k: int) -&gt; int:
+        nums.sort()
+        n = len(nums)
+
+        def count(m: int) -&gt; int:
+            total = j = 0
+            for i in range(n):
+                while nums[i] - nums[j] &gt; m:
+                    j += 1
+                total += i - j          # [j, i) 裡的每個 index 都和 i 配成一對
+            return total
+
+        lo, hi = 0, nums[-1] - nums[0]
+        while lo &lt; hi:
+            mid = (lo + hi) // 2
+            if count(mid) &gt;= k:
+                hi = mid
+            else:
+                lo = mid + 1
+        return lo</code></pre>
+<p><code>lo</code> 一定要從 <strong>0</strong> 開始，不是 1。「距離至少是 1」對每一對不同的值都成立，而只要陣列裡有重複值就不成立。從 1 開始在 5,000 筆隨機測資裡有 316 筆跟正解不同——6.3%——而第一筆是 <code>nums = [0, 0, 0, 1, 4, 5, 6, 8], k = 2</code>，回傳 1 而不是 0。幾個手寫的、值都相異的測資永遠看不到它。</p>
+<p><a href="https://leetcode.com/problems/find-k-th-smallest-pair-distance/">leetcode.com/problems/find-k-th-smallest-pair-distance</a></p>
+<h2>LeetCode 2352 - Equal Row and Column Pairs（相等的列與行對）</h2>
+<p><strong>題意。</strong> 給一個 <code>n × n</code> 的整數矩陣 <code>grid</code>，回傳有幾組 <code>(r, c)</code> 讓第 <code>r</code> 列和第 <code>c</code> 行相等——也就是以同樣的順序含有同樣的元素。</p>
+<p><strong>輸入輸出。</strong> <code>grid</code> 是一個方形的二維整數串列。回傳一個整數；同一列可以對上好幾行，每一組都分開算。</p>
+<p><strong>範例。</strong> <code>grid = [[3,2,1],[1,7,6],[2,7,7]]</code> 的答案是 <code>1</code>：第 2 列是 <code>(2, 7, 7)</code>，第 1 行也是 <code>(2, 7, 7)</code>。<code>[[3,1,2,2],[1,4,4,5],[2,4,2,2],[2,4,2,2]]</code> 的答案是 <code>3</code>。</p>
+<p><strong>限制。</strong> <code>1 ≤ n ≤ 200</code>，<code>1 ≤ grid[i][j] ≤ 10⁵</code>。規模上限代表天真的 O(n³) 三重迴圈也能輕鬆通過，所以這題考的是「寫清楚」而不是「跑得快」。真正會咬人的是<strong>值</strong>的上限：值到 10⁵ 代表它們是多位數，而那正是下面那個捷徑會壞掉的原因。</p>
+<p>一列和一行相等的意思是「同一串數字」，所以 key 必須是那串數字。tuple 保留了元素的邊界，把數字黏成一串字串則把邊界丟掉了。</p>
+<pre><code>from collections import Counter
+
+class Solution:
+    def equalPairs(self, grid: list[list[int]]) -&gt; int:
+        rows = Counter(tuple(r) for r in grid)
+        return sum(rows[col] for col in zip(*grid))</code></pre>
+<p>改用 <code>&#x27;&#x27;.join(map(str, row))</code> 當 key，<code>(1, 2, 34)</code> 和 <code>(1, 23, 4)</code> 就都變成 <code>&quot;1234&quot;</code>。在 <code>[[1, 2, 34], [23, 5, 6], [4, 7, 8]]</code> 上，正確答案是 0，而字串版回傳 1。</p>
+<p>這個 bug 有多大？隨機測試又有多大機會找到它？在值落在 1..99 的 9,801 個二元序列裡，只存在 <strong>9,072</strong> 個不同的字串 key。有 729 個 key 被共用，而且每一個都剛好被兩個序列共用，所以 9,801 個序列裡有 <strong>1,458 個（14.9%）</strong>沒有唯一的 key。而兩個獨立抽出來、值到 100,000 的三元序列，在 200,000 次抽樣裡撞到 <strong>0 次</strong>。輸入空間的一成五，而隨機測試幾乎踩不到：這就是會上線的 bug 的形狀。</p>
+<p><a href="https://leetcode.com/problems/equal-row-and-column-pairs/">leetcode.com/problems/equal-row-and-column-pairs</a></p>
+<h2>複雜度</h2>
+<pre><code>操作                          時間                             空間
+----------------------------  -------------------------------  -----------------
+用 SVD 做 PCA，n 列、d 欄     O(n · d · min(n, d))             O(n · d)
+用共變異數矩陣做 PCA          O(n · d² + d³)                   O(d²)
+Randomized SVD，k 個成分      O(n · d · k)                     O((n + d) · k)
+投影到 k 個成分               O(n · d · k)                     O(n · k)
+建 t-SNE 的 P                 O(n² · d)，外加每列一次二分搜尋  O(n²)
+t-SNE 一次迭代（精確）        O(n²)                            O(n²)
+t-SNE 一次迭代（Barnes-Hut）  O(n log n)                       O(n)
+LeetCode 719                  O(n log n + n log(最大距離))     除了排序之外 O(1)
+LeetCode 2352                 O(n²)                            O(n²)</code></pre>
+<h2>為什麼這件事重要</h2>
+<p>這兩個東西到處都是，而且都被用同一種隨便的方式讀。PCA 是一半的 pipeline 的預設前處理，而「我們保留了 95% 的變異」常常被說得像是一句關於資訊量的話；第三節就是訊號小、雜訊大的時候，這句話的代價。白化、以 PCA 為基礎的異常偵測、以及每一張「解釋變異」的圖，繼承的都是同一個落差。</p>
+<p>t-SNE 和 UMAP 則是大家看高維資料的方式——embedding、單細胞量測、activation——而大家從那些圖上讀走的兩件事，「這群多大」和「這兩群離多遠」，剛好就是目標函數裡完全沒有對應項的那兩個量。</p>
+<p>習慣很小。分解之前先置中，而且確認你的套件真的做了。當一個方向、一欄資料或一張圖讓你意外的時候，先看單位，再去找故事。而當一張圖顯示出群的時候，在相信它們之前先換一個隨機種子重跑一次：那多跑的一次，是分辨「資料裡的結構」和「方法本身的結構」最便宜的方法。</p>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2049%20-%20pca%20svd%20and%20t-sne">day 49 on GitHub</a></p>
+</body>
+</html>

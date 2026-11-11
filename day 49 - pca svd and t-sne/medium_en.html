@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PCA, SVD and t-SNE: turning hundreds of columns into two you can plot</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>PCA, SVD and t-SNE: turning hundreds of columns into two you can plot</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2049%20-%20pca%20svd%20and%20t-sne">day 49 on GitHub</a></p>
+<p><em>100 Days of Python - day 49</em></p>
+<p>I ran t-SNE on 180 points of ten-dimensional gaussian noise. It drew three groups — three that a k-means cut of the map separates cleanly. I changed the random seed and it drew three different ones. A silhouette score, which is near zero when a grouping is arbitrary, gave the raw data 0.0872 and gave each of four pictures of it between 0.3689 and 0.3972 — between 4.2 and 4.6 times as much structure as the data contains.</p>
+<p>That is the shape of this whole day. Dimensionality reduction takes d columns and hands back two, and the d − 2 that went away leave no trace. What comes out is a picture, and a picture is extremely easy to over-read.</p>
+<pre><code>PCA   answers: which directions carry the most variance?
+t-SNE answers: which points are each other&#x27;s neighbours?</code></pre>
+<p>Neither of those is <em>which directions matter</em> or <em>how far apart are these groups</em>, and those are the two things people read off the plot. Everything below measures the gap between what was optimised and what was read.</p>
+<img alt="day49_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2049%20-%20pca%20svd%20and%20t-sne/imgs/day49_1.png">
+<h2>PCA is the SVD of the centred data</h2>
+<pre><code>Xc = X - X.mean(axis=0)
+U, s, Vt = np.linalg.svd(Xc, full_matrices=False)
+components = Vt                       # rows are the directions
+explained_variance = s ** 2 / (n - 1)</code></pre>
+<p>The textbook route builds the covariance matrix <code>XᵀX / (n − 1)</code> and eigendecomposes it. The two agree here to 4.4e-15, and later they stop agreeing at all. Two things to note before that.</p>
+<p><code>np.linalg.eigh</code> returns eigenvalues in <strong>ascending</strong> order, so the covariance route needs an explicit reversal. Forget it and you get a perfectly ordinary looking answer pointing at the least important direction.</p>
+<p>And an eigenvector with a simple eigenvalue is defined only up to its sign: <code>v</code> and <code>−v</code> span the same line, and both are correct. (When two eigenvalues are equal it is worse than a mirror — any rotation inside their plane is equally valid.) Two libraries, two versions of one library, or the same code on a different machine can hand you a flipped plot and nothing warns you. Code that compares components has to compare them up to sign, <code>|u · v|</code>; anything a human will look at needs a pinned convention instead, such as forcing the largest-magnitude entry of each component positive before plotting.</p>
+<h2>Silent failure #1: forgetting to subtract the mean</h2>
+<p>The first line above is the one that matters. Without it, &quot;variance&quot; is measured about the origin instead of about the data, so the first component points at <strong>where the data is</strong> rather than at how it is shaped.</p>
+<p>On 300 points centred at <code>[7.85, 4.98]</code> with a spread of 2.2:</p>
+<pre><code>             PC1                 explained variance ratio
+-----------  ------------------  ------------------------
+centred      [-0.9521, -0.3059]  [0.9619, 0.0381]
+not centred  [-0.8508, -0.5254]  [0.9950, 0.0050]</code></pre>
+<p>The uncentred PC1 sits <strong>0.701 degrees</strong> from the direction of the mean and <strong>13.885 degrees</strong> from the real PC1.</p>
+<p>The dangerous part is the second column. The broken version reports <strong>0.9950</strong> of the variance in one component against the correct <strong>0.9619</strong>. It looks better, because the offset it is now measuring is larger than the spread it should have been measuring — the denominator was inflated along with the numerator.</p>
+<p>The number anyone actually reports goes <strong>up</strong> when you make this mistake. Not every number is fooled, though, which is the useful part: rebuilding the 300 points from one component costs 0.093544 centred and 0.230609 uncentred, so reconstruction error is <strong>2.5× worse</strong> and does catch it. It is simply not the number that ends up on the slide.</p>
+<h2>Silent failure #2: the units pick the axes</h2>
+<p>Day 47 and Day 48 both ran into this. PCA is where it is most visible, because the answer <em>is</em> a direction. Two independent noise columns — <code>prompt_tokens</code> in the hundreds, a cache hit rate in [0, 1]:</p>
+<pre><code>raw units    : PC1 [1.00000000 0.00003620]   explained variance ratio 0.99999992
+standardised : PC1 [0.70710678 0.70710678]   explained variance ratio 0.56328964</code></pre>
+<p>In raw units PC1 is the token axis to within 0.0021 degrees, and PCA reports that one component explains <strong>99.999992%</strong> of the variance of two independent noise columns. That number is true, and it is a fact about the units rather than about the data. Standardising makes the columns equally loud, which is a different arbitrary choice, not a neutral one — but at least it is one you made.</p>
+<h2>Silent failure #3: explained variance is not usefulness</h2>
+<p>400 points in two classes. The classes are separated along one direction; another direction carries far more variance and no information at all; the whole thing is rotated so that neither one is an axis.</p>
+<img alt="day49_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2049%20-%20pca%20svd%20and%20t-sne/imgs/day49_2.png">
+<pre><code>component  variance explained  best single cut
+---------  ------------------  ---------------
+PC1        98.33%              0.5450
+PC2        1.67%               1.0000</code></pre>
+<p>PC1 holds 98.33% of the variance and separates the classes at 0.5450, which is a coin flip. PC2 holds 1.67% and separates them perfectly. The ratio of the two variances is 59.0 to 1, and the ordering is exactly backwards for the only question anyone was going to ask.</p>
+<p>Note what PCA did and did not get wrong. It found the right <em>pair</em> of directions — the rotation is correct and the signal lies cleanly along one of its axes. It only sorted them by the wrong key. &quot;Keep 95% of the variance&quot; discards PC2 here, and PCA could not have done better: it is unsupervised and never sees the labels.</p>
+<h2>Why the SVD and not the covariance matrix</h2>
+<p>Both routes are the same mathematics. Forming <code>XᵀX</code> squares the condition number, and <code>float64</code> has about 16 digits to spend.</p>
+<p>With singular values proportional to 1, eps and eps/2 in a random orthogonal basis (the basis is scaled by √(n−1), which is why the smallest singular value at eps = 1e-4 below reads 7.04e-04 rather than 5e-05):</p>
+<pre><code>eps    cond(X)  cond(cov)  smallest sv, from SVD  from eigh   relative error
+-----  -------  ---------  ---------------------  ----------  --------------
+1e-04  2.0e+04  4.0e+08    7.0425e-04             7.0425e-04  4.582e-08
+1e-06  2.0e+06  4.0e+12    7.0425e-06             7.0416e-06  1.197e-04
+1e-08  2.0e+08  4.2e+16    7.0425e-08             0.0000e+00  1.000e+00
+1e-09  2.0e+09  6.5e+17    7.0425e-09             0.0000e+00  1.000e+00</code></pre>
+<img alt="day49_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2049%20-%20pca%20svd%20and%20t-sne/imgs/day49_3.png">
+<p>At eps = 1e-8 the covariance route returns <strong>exactly zero</strong> for a singular value that is really 7.04e-08. A direction with real variance in it has been rounded out of existence, with no warning at all.</p>
+<p>The <code>cond(cov)</code> column is measured from the covariance matrix rather than squared by hand, which is why the last row reads 6.5e+17 instead of the predicted 4.0e+18: by then the matrix is too degenerate for its own condition number to survive. The measurement is a victim of what it measures.</p>
+<p>There is a second symptom in the same place: <code>eigh</code> returns <strong>-1.435e-16</strong> for a covariance matrix, which is a negative variance. <code>np.sqrt</code> of it is <code>nan</code>, so code that takes standard deviations from eigenvalues has to clamp at zero — and clamping is exactly what hides the problem.</p>
+<h2>Truncated SVD, and what &quot;explained variance&quot; means</h2>
+<p>Eckart–Young: truncating the SVD at k is the best rank-k approximation in Frobenius norm, and the error is exactly the square root of the sum of the discarded singular values squared.</p>
+<pre><code>k   Frobenius error  sqrt(sum dropped²)  share of the squared norm
+--  ---------------  ------------------  -------------------------
+1   425.474593       425.474593          0.1185
+5   338.494196       338.494196          0.4421
+10  248.372324       248.372324          0.6996
+20  122.977998       122.977998          0.9264
+40  0.000000         0.000000            1.0000</code></pre>
+<img alt="day49_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2049%20-%20pca%20svd%20and%20t-sne/imgs/day49_4.png">
+<p>The last column is the share of the squared Frobenius norm kept, and on <strong>centred</strong> data that is exactly PCA&#x27;s explained-variance ratio — the same ratio, one step before the statistics. This <code>A</code> is not centred, so the two differ a little: at k = 10 the raw share is 0.6996 and the centred one is 0.6991.</p>
+<p>That identity is all &quot;explained variance&quot; ever means, which is also why the phrase is so easy to misuse. &quot;Keep 95% of the variance&quot; says the squared reconstruction error is down to 5%. It does not say that 95% of the thing you care about survived, and the previous section is what those two parting company looks like.</p>
+<h2>t-SNE: keep the neighbours, let go of everything else</h2>
+<p><strong>P</strong>: in the original space, turn distances into neighbour probabilities with a gaussian. Every row gets its <strong>own</strong> width, found by binary search so that the perplexity of that row hits the number you asked for. Perplexity is 2^entropy — &quot;how many neighbours does this point effectively have&quot;. On 180 points at perplexity 30, sigma ranges from 0.7827 to 1.7242 across the rows. The search stops at a tolerance of 1e-5, so the perplexity it actually achieves runs 29.9997 to 30.0003 — near enough, but not exactly 30.</p>
+<p><strong>Q</strong>: on the 2-D page, use a Student-t with one degree of freedom instead.</p>
+<img alt="day49_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2049%20-%20pca%20svd%20and%20t-sne/imgs/day49_5.png">
+<p>At a distance of 3 the Student-t still gives 0.100 where the gaussian gives 0.01111 — nine times smaller. That heavy tail is the whole trick. In high dimensions almost every pair is moderately far apart, and without it they would all pile into the middle of the page.</p>
+<p>Then minimise KL(P ‖ Q) by moving the points:</p>
+<pre><code>num  = 1 / (1 + pairwise_sq_dists(Y))        # the Student-t kernel
+np.fill_diagonal(num, 0.0)                   # a point is not its own neighbour
+Q    = num / num.sum()
+W    = (P - Q) * num
+grad = 4 * (Y * W.sum(1)[:, None] - W @ Y)</code></pre>
+<p>600 iterations take KL from 1.6949 to 0.2499, and 0.6206 of each point&#x27;s ten nearest neighbours are still its neighbours on the page. <strong>That recall number is the only claim the picture is entitled to make.</strong></p>
+<p>The embedding <em>is</em> the parameter vector. There is no function being fitted, which is why t-SNE has no <code>transform()</code> for new points — a new point means re-running everything, at n² pairs per iteration.</p>
+<h2>Silent failure #4: t-SNE draws clusters in pure noise</h2>
+<p>180 points of ten-dimensional gaussian noise. There is nothing in it.</p>
+<pre><code>perplexity  silhouette of the data  silhouette of the picture
+----------  ----------------------  -------------------------
+5           0.0872                  0.3972
+15          0.0872                  0.3763
+30          0.0872                  0.3707
+50          0.0872                  0.3689</code></pre>
+<p>A silhouette near 0 means &quot;this grouping is arbitrary&quot;. The data scores 0.0872; the four pictures of it score between 4.23 and 4.56 times that. This is Day 47&#x27;s k-means on uniform noise, one layer further along: the method is built to produce groups, so it produces groups.</p>
+<p>The test that catches it costs one more run:</p>
+<pre><code>three real blobs: correlation between three runs [0.9871, 0.9894, 0.99],   mean 0.9889
+ pure 10-D noise: correlation between three runs [0.3244, 0.2875, 0.3439], mean 0.3186</code></pre>
+<p>Real structure survives a different random seed. Invented structure does not: the same noise gives three maps that barely agree with each other.</p>
+<img alt="day49_7" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2049%20-%20pca%20svd%20and%20t-sne/imgs/day49_7.png">
+<h2>Silent failure #5: sizes and distances on the page mean nothing</h2>
+<img alt="day49_6" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2049%20-%20pca%20svd%20and%20t-sne/imgs/day49_6.png">
+<p>Three blobs, the middle one ten times wider than the others:</p>
+<pre><code>spreads in the data : [1.025, 10.818, 1.182]   widest / narrowest = 10.56
+spreads in the map  : [2.159,  2.421, 2.155]   widest / narrowest =  1.12</code></pre>
+<p>A cluster ten times wider comes out the same size as the others, because every row chose its own sigma to reach the same perplexity. That per-row width is how t-SNE copes with regions of different density, and it is exactly why the output cannot report density.</p>
+<p>And the between-cluster distances are simply gone:</p>
+<pre><code>true distance ratio  ratio on the page
+-------------------  -----------------
+2.02                 1.04
+4.03                 1.04
+8.05                 1.04
+26.82                1.02</code></pre>
+<p>One group is nearly 27 times further away than another and the map puts them at the same distance. There is no bug here: KL(P ‖ Q) is a sum over <em>pairs</em> of points, and it contains no term that names how wide a cluster is or how far apart two clusters are, so the optimisation was never trying to get either of them right.</p>
+<h2>Silent failure #6: the loss gets better while the map gets worse</h2>
+<p>Same three blobs, one knob changed:</p>
+<pre><code>perplexity  final KL  neighbours kept
+----------  --------  ---------------
+2           0.6008    0.5283
+5           0.5849    0.5822
+30          0.2499    0.6206
+80          0.0010    0.5028
+150         0.0025    0.3656</code></pre>
+<p>The lowest KL in the table is 0.0010, at perplexity 80. That looks like a perfect fit, and it keeps 0.5028 of the neighbours against 0.6206 at perplexity 30.</p>
+<p>The trap is that <strong>P is rebuilt from scratch for every perplexity</strong>, so each row of this table is a different objective function. KL values are not comparable across perplexities, and the one number the optimiser prints is therefore useless for choosing the one knob that matters.</p>
+<h2>LeetCode 719 - Find K-th Smallest Pair Distance</h2>
+<p><strong>The task.</strong> Given an integer array <code>nums</code> and an integer <code>k</code>, return the k-th smallest distance among all pairs, where the distance of a pair <code>(a, b)</code> is <code>|a − b|</code>. Every unordered pair of positions counts once, including pairs of equal values.</p>
+<p><strong>Input / output.</strong> <code>nums</code> is a list of integers and <code>k</code> is an integer with <code>1 ≤ k ≤ n(n−1)/2</code>. You return a single integer.</p>
+<p><strong>Example.</strong> For <code>nums = [1, 3, 1]</code> and <code>k = 1</code>, the three pairs give distances 2, 0 and 2. Sorted they are 0, 2, 2, so the first smallest is <code>0</code>.</p>
+<p><strong>Constraints.</strong> <code>2 ≤ n ≤ 10⁴</code> and <code>0 ≤ nums[i] ≤ 10⁶</code>. That upper bound on n is the whole problem: it allows <strong>49,995,000</strong> pairs, so building them, let alone sorting them, is out of reach. The bound on the values is what makes the answer binary-searchable — it lives in <code>[0, 10⁶]</code>, a range you can halve.</p>
+<p>The move is to binary-search the <strong>answer</strong> rather than the data. <code>count(m)</code>, the number of pairs at most <code>m</code> apart, is non-decreasing in <code>m</code>, so the smallest <code>m</code> with <code>count(m) ≥ k</code> is the k-th smallest distance. And because the array is sorted, <code>count</code> itself is a sliding window: <code>j</code> only ever moves right, so it is O(n) rather than O(n²).</p>
+<pre><code>class Solution:
+    def smallestDistancePair(self, nums: list[int], k: int) -&gt; int:
+        nums.sort()
+        n = len(nums)
+
+        def count(m: int) -&gt; int:
+            total = j = 0
+            for i in range(n):
+                while nums[i] - nums[j] &gt; m:
+                    j += 1
+                total += i - j          # every index in [j, i) pairs with i
+            return total
+
+        lo, hi = 0, nums[-1] - nums[0]
+        while lo &lt; hi:
+            mid = (lo + hi) // 2
+            if count(mid) &gt;= k:
+                hi = mid
+            else:
+                lo = mid + 1
+        return lo</code></pre>
+<p><code>lo</code> must start at <strong>0</strong>, not 1. &quot;A distance is at least 1&quot; is true of every pair of different values and false the moment the array repeats one. Starting at 1 differs from the truth on 316 of 5,000 random cases — 6.3% — and the first failure is <code>nums = [0, 0, 0, 1, 4, 5, 6, 8], k = 2</code>, which returns 1 instead of 0. A handful of hand-written tests with distinct values will never see it.</p>
+<p><a href="https://leetcode.com/problems/find-k-th-smallest-pair-distance/">leetcode.com/problems/find-k-th-smallest-pair-distance</a></p>
+<h2>LeetCode 2352 - Equal Row and Column Pairs</h2>
+<p><strong>The task.</strong> Given an <code>n × n</code> integer matrix <code>grid</code>, return the number of pairs <code>(r, c)</code> such that row <code>r</code> and column <code>c</code> are equal — that is, they contain the same elements in the same order.</p>
+<p><strong>Input / output.</strong> <code>grid</code> is a square list of lists of integers. You return a single integer; the same row can match several columns and each match counts separately.</p>
+<p><strong>Example.</strong> For <code>grid = [[3,2,1],[1,7,6],[2,7,7]]</code> the answer is <code>1</code>: row 2 is <code>(2, 7, 7)</code> and column 1 is <code>(2, 7, 7)</code>. For <code>[[3,1,2,2],[1,4,4,5],[2,4,2,2],[2,4,2,2]]</code> the answer is <code>3</code>.</p>
+<p><strong>Constraints.</strong> <code>1 ≤ n ≤ 200</code> and <code>1 ≤ grid[i][j] ≤ 10⁵</code>. The size bound means the naive O(n³) triple loop passes comfortably, so this is a clarity problem rather than a performance one. The <strong>value</strong> bound is the one that bites: values up to 10⁵ are multi-digit, which is what breaks the shortcut below.</p>
+<p>A row and a column are equal when they are the same <em>sequence</em>, so the key has to be the sequence. A tuple keeps the element boundaries; gluing the digits into one string throws them away.</p>
+<pre><code>from collections import Counter
+
+class Solution:
+    def equalPairs(self, grid: list[list[int]]) -&gt; int:
+        rows = Counter(tuple(r) for r in grid)
+        return sum(rows[col] for col in zip(*grid))</code></pre>
+<p>Use <code>&#x27;&#x27;.join(map(str, row))</code> as the key instead and <code>(1, 2, 34)</code> and <code>(1, 23, 4)</code> both become <code>&quot;1234&quot;</code>. On <code>[[1, 2, 34], [23, 5, 6], [4, 7, 8]]</code> the correct answer is 0 and the joined-string version returns 1.</p>
+<p>How big is that bug, and how likely is a test to find it? Of the 9,801 two-element sequences with values in 1..99, only <strong>9,072</strong> distinct joined keys exist. 729 keys are shared, each by exactly two sequences, so <strong>1,458 of the 9,801 — 14.9%</strong> — are not uniquely keyed. And two independently drawn three-element sequences with values up to 100,000 collided <strong>0 times in 200,000 draws</strong>. Fifteen percent of the input space, and essentially no chance of stumbling into it: the exact shape of a bug that reaches production.</p>
+<p><a href="https://leetcode.com/problems/equal-row-and-column-pairs/">leetcode.com/problems/equal-row-and-column-pairs</a></p>
+<h2>Complexity</h2>
+<pre><code>Operation                           Time                                    Space
+----------------------------------  --------------------------------------  --------------------
+PCA via the SVD, n rows, d columns  O(n · d · min(n, d))                    O(n · d)
+PCA via the covariance matrix       O(n · d² + d³)                          O(d²)
+Randomized SVD, k components        O(n · d · k)                            O((n + d) · k)
+Projecting onto k components        O(n · d · k)                            O(n · k)
+Building P for t-SNE                O(n² · d) plus a binary search per row  O(n²)
+One t-SNE iteration, exact          O(n²)                                   O(n²)
+One t-SNE iteration, Barnes-Hut     O(n log n)                              O(n)
+LeetCode 719                        O(n log n + n log(max distance))        O(1) beyond the sort
+LeetCode 2352                       O(n²)                                   O(n²)</code></pre>
+<h2>Why this matters</h2>
+<p>Both of these turn up constantly and are read the same careless way. PCA is the default preprocessing step in half the pipelines that exist, and &quot;we kept 95% of the variance&quot; is said as though it were a statement about information; the third section is what that sentence costs when the signal is small and the noise is large. Whitening, PCA-based anomaly detection and every &quot;explained variance&quot; plot inherit the same gap.</p>
+<p>t-SNE and UMAP are how high-dimensional data gets looked at — embeddings, single-cell measurements, activations — and the two things people read off those plots, <em>how big is this cluster</em> and <em>how far apart are these two</em>, are precisely the two quantities the objective contains no term for.</p>
+<p>The habits are small. Centre before you decompose, and check that your library did. When a direction, a column or a plot surprises you, look at the units before you look for a story. And when a picture shows groups, re-run it with a different random seed before you believe them: that one extra run is the cheapest distinction between structure in the data and structure in the method.</p>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2049%20-%20pca%20svd%20and%20t-sne">day 49 on GitHub</a></p>
+</body>
+</html>

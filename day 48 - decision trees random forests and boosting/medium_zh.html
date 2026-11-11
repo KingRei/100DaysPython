@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 48 — 決策樹、隨機森林與 Gradient Boosting：表格資料上最常用的預測模型怎麼運作</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 48 — 決策樹、隨機森林與 Gradient Boosting：表格資料上最常用的預測模型怎麼運作</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2048%20-%20decision%20trees%20random%20forests%20and%20boosting">day 48 on GitHub</a></p>
+<p><em>100 Days of Python - day 48</em></p>
+<p>我在 300 列資料上長了一棵決策樹，其中第 0 欄是二元的、而且就是答案，第 1 欄是連續的純雜訊。然後我問它哪些欄位重要。它說是那一欄雜訊，而且是真訊號的 1.67 倍。同一棵樹在自己的訓練資料上拿了 1.000。這兩個數字都是模型對自己的描述，而且都朝一個你跑之前就能預測的方向錯。</p>
+<p>決策樹是這個系列裡唯一一個沒有係數、也沒有距離函數的模型。它只是在問問題——「第 7 欄有沒有小於 0.31？」——一路問到它願意給答案為止。所以它是唯一一個人真的讀得懂的模型，也是最好騙的那一個。</p>
+<p>同一塊積木有三種用法：</p>
+<pre><code>一棵樹        ：一直問到每片葉子都純淨   -&gt; 它在背答案
+很多棵獨立的  ：把各自背的雜訊平均掉      （隨機森林）
+很多棵相依的  ：每棵小樹修掉前面漏掉的     （boosting）</code></pre>
+<p>森林存在是為了殺 variance，boosting 存在是為了殺 bias，而把兩者的樹深對調，失敗的方式也跟著對調。</p>
+<img alt="day48_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2048%20-%20decision%20trees%20random%20forests%20and%20boosting/imgs/day48_1.png">
+<h2>一個預測就是一條根到葉的路徑</h2>
+<p>整個迴圈短到可以一次讀完：</p>
+<pre><code>def grow(X, y, depth):
+    node = Node(majority(y), gini(y))
+    if gini(y) == 0 or depth == max_depth:
+        return node                      # 葉子裡放的是一個常數
+    gain, j, t = best_split(X, y)        # 掃過每個 (欄位, 門檻)
+    node.feat, node.thr = j, t
+    m = X[:, j] &lt;= t
+    node.left  = grow(X[m],  y[m],  depth + 1)
+    node.right = grow(X[~m], y[~m], depth + 1)
+    return node</code></pre>
+<p>gini 和 entropy 都在問「這個節點有多混」，而且都在純淨時歸零。八列資料切成 0/8、1/7、2/6、3/5、4/4 時，gini 是 0.000、0.219、0.375、0.469、0.500，entropy 是 0.000、0.544、0.811、0.954、1.000。選哪一個其實差不多，真正會咬人的是停止規則，那是下一節的事。</p>
+<p>因為問題永遠是「某一欄有沒有小於某個數」，每一刀都跟座標軸平行，每一片葉子都是一個長方形。一個預測就是走一條根到葉的路徑，然後讀最後那個常數——而整個模型就是這些路徑的集合，這讓它成為這個系列裡唯一一個可以攤開成規則清單、讓人直接跟它吵架的模型。</p>
+<h2>同一個分裂，找兩次</h2>
+<p>最直覺的寫法是：對每一個候選門檻都把兩邊的子節點重建一次。O(n) 的工乘上 O(n) 個候選再乘上 d 欄，<strong>每個節點 O(n² d)</strong>。把欄位排序一次，再讓切點從左掃到右，criterion 需要的每個統計量都變成滾動加總，於是每個候選是 O(1)，整個節點變成 <strong>O(n log n · d)</strong>。gini 和 entropy 的滾動量是各類別的計數，variance 的是 <code>sum(y)</code> 和 <code>sum(y²)</code>，因為 <code>var = E[y²] − E[y]²</code>。</p>
+<p>兩個版本都在模組裡，而斷言會檢查它們在 60 個隨機問題上、對 gini／entropy／variance 三種 criterion 都完全一致。下面的規模只有快的那個跑得動，慢的那個會讓這篇文章的其他部分跑不完。</p>
+<h2>Silent failure #1：長到底的樹在自己的資料上拿 1.000</h2>
+<p>400 個點排成兩條對角帶，10% 的標籤被翻掉，260 訓練、140 留著：</p>
+<pre><code>maxdepth  葉子  訓練   測試
+--------  ----  -----  -----
+1         2     0.704  0.664
+2         4     0.781  0.814
+3         8     0.858  0.829
+5         24    0.912  0.850
+8         42    0.973  0.771
+12        50    0.996  0.764
+不限      52    1.000  0.764</code></pre>
+<img alt="day48_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2048%20-%20decision%20trees%20random%20forests%20and%20boosting/imgs/day48_2.png">
+<p>訓練那一欄對深度是單調的，而且結尾剛好是 1.000，而那個數字一點資訊都沒有。這就是 Day 47 的 k = 1 最近鄰換了一頂帽子：長到底的樹是它自己訓練集的查表。</p>
+<p>你可以在 24 個手放的點上看著它發生。把每個點都猜成多數類的話是 0.7083。第一刀讓 gini 掉 0.17014，準確率到 0.7917；第二刀掉 0.34028，到 0.9583；第三刀只掉 0.03125，準確率<strong>一點都沒動</strong>；第四刀才把那一個落單的點單獨關進一片小長方形，然後回報 1.0000。最後兩刀沒有學到任何東西。</p>
+<p>「它會走到 1.000」有多普遍？幾乎、但不是完全，而那兩個例外都值得點名。稀有的那個是完美對稱：在一個完美的 8×8 XOR 格點上，最好的那一刀增益剛好是 0.0，於是樹停在 <strong>1 片葉子</strong>、訓練準確率 <strong>0.5000</strong>。常見的那個是矛盾的重複列——兩列特徵完全一樣、標籤不同，那個不純的節點就一刀都切不下去。除了這兩種情形之外，總會有某一刀的增益是正的，樹就一路走上去。</p>
+<h2>Silent failure #2：貪婪看不到下一步</h2>
+<p><code>y = (x0 &gt; 0) XOR (x1 &gt; 0)</code>，400 個點，一點標籤雜訊都沒有。深度 2 的樹可以完美表達它：x0 在 0 切一刀，兩個子節點各自在 x1 的 0 再切一刀，四片純葉子，準確率 1.0000。</p>
+<img alt="day48_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2048%20-%20decision%20trees%20random%20forests%20and%20boosting/imgs/day48_3.png">
+<ul><li>在 x0 的 0 切那一刀的增益：<strong>0.00000124</strong></li><li>在 x1 的 0 切那一刀的增益：<strong>0.00061250</strong></li><li>貪婪實際挑的那一刀的增益：<strong>0.01114311</strong>，切在 <code>x0 &lt;= -0.9414</code></li></ul>
+<p>兩欄各自都不帶任何資訊，所以正確的那一刀<strong>在根節點</strong>一文不值。所有收益都藏在第二刀，而貪婪只看第一刀。於是根節點被花在範圍邊緣那條剛好不太平衡的薄片上，後面每一刀都在補救：貪婪的深度 2 拿 0.5675，而正確的深度 2 拿 1.0000，要爬回 1.0000 得走到深度 6、10 片葉子。</p>
+<p>可以被表達，而且到不了。這不是實作沒寫好——找最佳的樹是 NP-hard，所以幾乎所有實際在用的樹學習器都是貪婪的由上而下建樹。（精確求解器是存在的——MIP 形式化、DL8.5、MurTree、GOSDT——但那是給另一種規模的問題用的另一種工具，不是 CART 或 XGBoost 在跑的東西。）</p>
+<p>那什麼才逃得出去？不是 boosting 本身。一堆「只有一刀」的樹加起來是一個可加模型，而 XOR 正是教科書上「任何可加模型都表達不了」的例子：在這份資料上用深度 1 跑 200 輪，訓練準確率只有 <strong>0.6900</strong>。它之所以還能高過 0.5，只是因為有限樣本不可能完美平衡、邊際分布裡帶著一點偶然的訊號，而不是因為那些樹樁抓到了 XOR 的任何一部分。深度 2 是第一個能把那個交互作用裝進單一棵樹裡的大小，而 200 輪就到 <strong>1.0000</strong>，深度 3 也是。解法不是更聰明的搜尋，而是一塊大到裝得下你要找的東西的積木。</p>
+<h2>Silent failure #3：特徵重要度獎勵的是機會，不是用到</h2>
+<p>300 列。第 0 欄是二元的、而且就是答案，20% 的標籤被翻掉。第 1 欄是連續的純雜訊。第 2–4 欄是二元雜訊。把樹長到底，然後問它什麼重要：</p>
+<pre><code>欄位            impurity 重要度  permutation 重要度（沒看過的資料）
+--------------  ---------------  ----------------------------------
+真訊號（二元）  0.347            +0.168
+雜訊（連續）    0.580            +0.033
+雜訊 b1         0.022            +0.007
+雜訊 b2         0.025            −0.019
+雜訊 b3         0.026            +0.006</code></pre>
+<img alt="day48_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2048%20-%20decision%20trees%20random%20forests%20and%20boosting/imgs/day48_4.png">
+<p>impurity 重要度把那一欄純雜訊排<strong>第一</strong>，是真訊號的 1.67 倍。機制就在一行裡：在根節點，那個連續欄位提供 <strong>209</strong> 個候選門檻，二元欄位提供 <strong>1</strong> 個。兩百倍的機會去在雜訊上看起來很漂亮。impurity 重要度加總的是「這一欄的分裂一共移除了多少不純度」，它沒有辦法問「移除得有沒有意義」。</p>
+<p>permutation 重要度問的就是那件事——把一欄打亂，量分數掉多少——而它把排名倒過來。但它一定要在模型沒看過的資料上量。在訓練資料上量的話，它會很愉快地獎勵那一欄「樹拿來背答案用的」欄位，因為在訓練資料上那一欄真的扛著預測。（這棵樹訓練 1.000、測試 0.656。）</p>
+<h2>Silent failure #4：少一列就換一棵樹</h2>
+<p>拿 200 個點配一棵深度 4 的樹，然後重配 200 次，每次只拿掉一列。<strong>根節點的分裂</strong>在 200 次裡變了 60 次——30%。預測平均在 1.8% 的列上改變，最糟 7.5%。</p>
+<p>資料其實什麼都沒變：每一次都有 199 列是一模一樣的。一個對自己樣本這麼敏感的模型就是一個 variance 很高的模型，而 variance 正是平均最擅長消掉的東西。這就是下一節全部的理由。</p>
+<h2>森林：先 bagging，再讓每棵樹問不一樣的問題</h2>
+<p>900 列、10 欄：一欄主宰答案，四欄幫一點忙，五欄純雜訊。600 訓練、300 測試，三個森林種子取平均。</p>
+<pre><code>模型                          訓練   測試   意見分歧度  out-of-bag
+----------------------------  -----  -----  ----------  ----------
+單棵不設限的樹                1.000  0.773  -           -
+只做 bagging（10 欄全開）     0.999  0.857  0.244       0.826
+隨機森林（每次 sqrt = 3 欄）  0.999  0.873  0.304       0.834</code></pre>
+<p>90 棵樹的根節點各自用了哪一欄：</p>
+<pre><code>只做 bagging ：[90,  0,  0,  0, 0, 0, 0, 0, 0, 0]
+隨機森林     ：[29, 18,  9, 15, 7, 3, 2, 1, 5, 1]</code></pre>
+<img alt="day48_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2048%20-%20decision%20trees%20random%20forests%20and%20boosting/imgs/day48_5.png">
+<p>兩個旋鈕做的是不同的事。bagging 讓每棵樹看到不一樣的「列」，<code>max_features</code> 讓每棵樹問不一樣的「問題」。大頭在 bagging：+0.083。隨機選欄位再加 +0.017，比一般講的小，而我寧願照實寫也不要把它四捨五入成一個大數字。它真正明顯改變的是樹與樹之間的分歧度，0.244 → 0.304——而那正是平均在吃的東西。平均一群意見相同的預測器什麼都買不到，而根節點的直方圖把理由攤得很開：不隨機選欄位的話，每一棵樹問的第一個問題都一樣。</p>
+<p>out-of-bag 分數是真的免費。每個 bootstrap 樣本抽 n 列、可重複，所以大約會漏掉 <code>(1 − 1/n)^n → 1/e = 36.8%</code> 的列；於是每一列都有大約三分之一的樹沒看過它，可以拿那些樹來評分。不用另外切驗證集。</p>
+<h2>Silent failure #5：樹說不出沒見過的數字</h2>
+<p>120 個點，<code>y = sin(x) + 0.35x</code>，x 在 [−3, 3]，用深度 6 的樹和 40 棵樹的森林去配。然後問它範圍外的 x：</p>
+<pre><code>x      樹       森林     真值
+-----  -------  -------  --------
+2.9    +1.3829  +1.3301  +1.2542
+3.5    +1.3829  +1.3301  +0.8742
+5.0    +1.3829  +1.3301  +0.7911
+10.0   +1.3829  +1.3301  +2.9560
+100.0  +1.3829  +1.3301  +34.4936</code></pre>
+<img alt="day48_6" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2048%20-%20decision%20trees%20random%20forests%20and%20boosting/imgs/day48_6.png">
+<p>邊界以外的每一個答案都是同一個數字，一路到無限遠。葉子裡放的是常數，所以模型是一個階梯函數，而最右邊那一階沒有右邊界。把一堆水平線平均起來還是水平線，所以森林救不了它——它只是挑了一個稍微不同的常數。</p>
+<p>同一件事還有一個比較安靜的版本：資料最高到 1.7795，而樹永遠不會預測超過 1.5463。任何輸出是「訓練目標的非負加權平均」的模型都被關在那個範圍裡。實務上的解法不是換一棵更好的樹，而是把趨勢單獨模型化——先配一條線、取殘差——再把剩下的交給樹。</p>
+<h2>Boosting：梯度下降，只是被下降的是一個函數</h2>
+<p>Day 45 在參數空間裡走：<code>w ← w − lr · dL/dw</code>。這裡模型是一堆樹的和，而被改進的是函數 <code>F</code> 本身：</p>
+<pre><code>F = np.full(len(y), y.mean())        # 平方損失下最好的常數
+for _ in range(n_trees):
+    resid = y - F                    # 對 L = 0.5 (y - F)^2 而言就是 -dL/dF
+    tree = DecisionTree(max_depth=2).fit(X, resid)
+    F += lr * tree.predict(X)</code></pre>
+<p>「把下一棵樹配在剩下的東西上」不是另一個想法，它就是平方損失的梯度長成的樣子。換個損失函數，下一棵樹要配的東西就跟著換——那是「gradient」這個字的全部內容，也是為什麼同一個迴圈拿來訓練分類器時，樹配的根本不是殘差。</p>
+<p>600 列、6 欄（3 欄有用），420 訓練、180 測試。把每個點都預測成訓練集的平均值，測試 MSE 是 2.6937。三百棵深度 2 的樹——每棵最多四片葉子，自己什麼都做不了——配到 0.6312。</p>
+<h2>Silent failure #6：訓練損失永遠不會叫你停</h2>
+<pre><code>lr    depth  最後的訓練 MSE  最好的測試 MSE  在第幾棵  最後的測試 MSE
+----  -----  --------------  --------------  --------  --------------
+1.0   2      0.0003          0.8597          20        1.1433
+0.3   2      0.0277          0.6510          95        0.7006
+0.1   2      0.1603          0.6250          250       0.6312
+0.03  2      0.4367          0.8102          300       0.8102
+0.1   6      0.0000          0.6272          142       0.6296
+0.1   10     0.0000          0.7130          132       0.7130</code></pre>
+<img alt="day48_7" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2048%20-%20decision%20trees%20random%20forests%20and%20boosting/imgs/day48_7.png">
+<p>把第一列橫著讀。訓練 MSE 最後是 0.0003——看起來就是零，完美配合。測試 MSE 在第 20 棵樹就觸底 0.8597，然後往上爬了 33% 到 1.1433。這張表每一列的訓練曲線都是單調遞減的——模組會逐列檢查這件事，並把結果印成額外的一欄——它結構上就不可能告訴你什麼時候該停。這就是為什麼 early stopping 需要一份沒看過的資料，也是為什麼每一個 boosting 套件都有這個參數。但沒有一個會強迫你給：它們全都會很樂意一路跑到最後一棵。</p>
+<p>Shrinkage 是那個交易：<code>lr = 1.0</code> 在第 20 棵樹達到最好，而那個最好是 0.8597；<code>lr = 0.1</code> 要 250 棵樹，拿到 0.6250。步子小、棵數多、停的地方比較好——就是 Day 45 的學習率故事，只是把梯度向量換成一棵樹。</p>
+<p>深度是同一個交易的另一半。在 <code>lr = 0.1</code> 下，深度 2 拿 0.6250，深度 6 拿 0.6272，深度 10 拿 0.7130，而且一路把訓練 MSE 壓到 0。boosting 的迴圈要的是弱學習器；給它強的，前幾棵樹就已經把殘差背完了，剩下的迴圈沒有誠實的東西可配。</p>
+<h2>兩種用法往相反的方向拉</h2>
+<pre><code>模型                           測試 MSE
+-----------------------------  --------
+一棵深樹（maxdepth=None）      1.1002
+一個樹樁（maxdepth=2）         2.0962
+40 棵深樹的森林                0.7165
+40 個樹樁的森林（maxdepth=2）  1.7940
+boosting，300 個樹樁，lr 0.1   0.6312</code></pre>
+<p>深樹的森林有效，樹樁的森林無效：平均消掉的是 variance，而樹樁幾乎沒有 variance 可以消——它只是單純地錯，而平均四十份錯的答案還是錯的。樹樁拿去 boosting 卻是全表最好的一列，因為「相依」正是重點：第二棵樹配的是第一棵樹做錯的部分。（兩列樹樁不是字面上同一批樹——森林的樹樁每次只看 3 欄，boosting 的看全部 6 欄——但這一列要講的「深度」是一樣的。）</p>
+<p>深而獨立殺 variance。淺而相依殺 bias。把深度對調，失敗的方式也跟著對調。</p>
+<h2>LeetCode 112 - Path Sum（路徑總和）</h2>
+<p><strong>題意。</strong> 給你一棵二元樹的根節點和一個整數 <code>targetSum</code>，如果存在一條「根到葉」的路徑，路徑上所有節點的值加起來等於 <code>targetSum</code>，回傳 <code>true</code>。葉子的定義是「沒有小孩的節點」。</p>
+<p><strong>輸入輸出。</strong> <code>root</code> 是一個二元樹節點（空樹是 <code>None</code>），<code>targetSum</code> 是整數。回傳一個布林值。</p>
+<p><strong>範例。</strong> <code>[5,4,8,11,null,13,4,7,2,null,null,null,1]</code>、<code>targetSum = 22</code> 時答案是 <code>true</code>：路徑 5 → 4 → 11 → 2 加起來是 22。沒有任何路徑加起來是 100，所以那會回傳 <code>false</code>。</p>
+<p><strong>限制。</strong> 最多 5,000 個節點，節點值在 −1,000 到 1,000 之間，而且——這就是讓這題有意思的那條限制——<strong>值可以是負的</strong>。那排除掉你第一個會想到的剪枝：你不能在累加值超過 target 的時候就停止往下走，因為某個負的小孩可以把它拉回來。空樹對任何 target（包括 0）都必須回傳 <code>false</code>。</p>
+<p>整題的重點就是葉子的定義。葉子是「<strong>沒有小孩</strong>的節點」，這跟「遞迴走出樹外」不是同一件事。</p>
+<pre><code>class Solution:
+    def hasPathSum(self, root, targetSum: int) -&gt; bool:
+        if root is None:
+            return False
+        if root.left is None and root.right is None:
+            return targetSum == root.val
+        rest = targetSum - root.val
+        return self.hasPathSum(root.left, rest) or self.hasPathSum(root.right, rest)</code></pre>
+<p>把 base case 寫成 <code>if root is None: return targetSum == 0</code>，只有一個小孩的節點就會被算成葉子。在 <code>[1, 2]</code> 配 target 1 上，那個版本會走進那個根本不存在的右子樹、發現 target 剛好用完，然後回傳 <code>True</code>——回報一條不存在的根到葉路徑。在 3,000 棵隨機小樹上，兩種寫法差了 121 次，4.0%：夠常見到會被抓，又夠罕見到能通過幾個範例。</p>
+<p>決策樹永遠不會踩到這個坑，因為它建的每個內部節點都剛好有兩個小孩。LeetCode 的樹沒有這個紀律，所以定義在那裡才會變成重點。</p>
+<p><a href="https://leetcode.com/problems/path-sum/">leetcode.com/problems/path-sum</a></p>
+<h2>LeetCode 257 - Binary Tree Paths（二元樹的所有路徑）</h2>
+<p><strong>題意。</strong> 給你一棵二元樹的根節點，把每一條根到葉的路徑都回傳成一個字串，值之間用 <code>-&gt;</code> 連起來。順序隨便。</p>
+<p><strong>輸入輸出。</strong> <code>root</code> 是一個二元樹節點；回傳一串像 <code>&quot;1-&gt;2-&gt;5&quot;</code> 的字串。</p>
+<p><strong>範例。</strong> <code>[1,2,3,null,5]</code> 的答案是 <code>[&quot;1-&gt;2-&gt;5&quot;, &quot;1-&gt;3&quot;]</code>。節點 2 只有右小孩，所以它不是葉子、不會結束一條路徑；葉子是節點 5 和節點 3。</p>
+<p><strong>限制。</strong> 1 到 100 個節點，所以樹一定存在、輸出也很小。這個規模上限正是讓這題變成「寫清楚」而不是「跑得快」的原因：沒有什麼聰明的演算法要找，只有一個累積器要寫對。</p>
+<pre><code>class Solution:
+    def binaryTreePaths(self, root) -&gt; list[str]:
+        out: list[str] = []
+
+        def walk(node, acc):
+            if node is None:
+                return
+            acc = acc + [str(node.val)]          # 一個新的 list，不是就地修改
+            if node.left is None and node.right is None:
+                out.append(&#x27;-&gt;&#x27;.join(acc))
+                return
+            walk(node.left, acc)
+            walk(node.right, acc)
+
+        walk(root, [])
+        return out</code></pre>
+<p>走訪本身三行就寫完，而且從來不是出事的地方。出事的是累積器。整個遞迴共用一個 list、不複製、不 pop，在每片葉子把它存進去，<code>[1,2,3,null,5]</code> 就會回來 <code>[&#x27;1-&gt;2-&gt;5-&gt;3&#x27;, &#x27;1-&gt;2-&gt;5-&gt;3&#x27;]</code>——兩條路徑都錯，而且錯成<strong>同一個值</strong>，因為在第一片葉子存進去的就是那個之後還在繼續長的 list。這就是 Day 39 回溯搜尋裡 <code>res.append(path)</code> 沒複製的那個 bug，搬到樹上。要嘛像上面那樣進入時複製一份，要嘛在遞迴前後 append / pop。</p>
+<p>同一個走訪跑在配好的樹上，就是讓模型變得可讀的那件事：第一張圖裡那棵深度 3 的樹會變成 8 條規則，長得像「如果 x ≤ 0.26 而且 y &gt; 1.36 而且 x &gt; −1.53，就是類別 1（35 列）」。這個系列裡沒有別的模型會給你這個。</p>
+<p><a href="https://leetcode.com/problems/binary-tree-paths/">leetcode.com/problems/binary-tree-paths</a></p>
+<h2>複雜度</h2>
+<pre><code>操作                                  時間                         空間
+------------------------------------  ---------------------------  -------------
+一次分裂（掃描法），n 列、d 欄、k 類  O(d · n log n + d · n · k)   O(n · k)
+一次分裂（每個候選重建一次）          O(d · n²)                    O(n)
+長一棵深度 D 的樹                     O(D · d · n log n)           O(節點數)
+預測一列                              O(深度)                      O(1)
+隨機森林，T 棵樹                      一棵樹的 T 倍，可以完全平行  O(T · 節點數)
+out-of-bag 分數                       O(T · n · 深度)              O(n · k)
+Boosting，T 棵樹                      一棵樹的 T 倍，嚴格循序      O(T · 節點數)
+permutation 重要度，重複 r 次         O(r · d · n · 深度)          O(n · d)</code></pre>
+<h2>為什麼這件事重要</h2>
+<p>在表格資料上，gradient boosted trees 到現在還是預設答案，而最關鍵的三個旋鈕就是這篇裡的那三個：深度、學習率、樹的棵數。XGBoost、LightGBM、CatBoost 跟上面那個迴圈的差別在於怎麼找分裂點（用直方圖分箱取代精確掃描，那其實就是「滾動加總」那一招再往前推），以及怎麼加正則化，而不在於迴圈在做什麼。它們每一個都有「給一份沒看過的資料」這個參數，理由就是上面那張表——而且沒有一個會強迫你給，這就是為什麼一個該在第 20 棵樹停的模型會帶著 300 棵樹上線。</p>
+<p>有兩個習慣值得留著。第一，絕對不要拿樹模型在自己訓練資料上的準確率去報告任何事情；不設限的樹會把那個數字推到 1.000，除非資料主動擋住它，而就算設了限，它也是在「自己挑分裂點用的那份資料」上給自己打分數。第二，當一張特徵重要度表讓你意外的時候，先去看那個讓你意外的欄位有幾個相異值，再決定要不要相信它——然後在沒看過的資料上用 permutation 重要度再量一次，那只有幾行，而且問的正是第一張表安靜跳過的那個問題。</p>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2048%20-%20decision%20trees%20random%20forests%20and%20boosting">day 48 on GitHub</a></p>
+</body>
+</html>
