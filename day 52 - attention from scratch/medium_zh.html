@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 52 — Attention、FlashAttention、PagedAttention 與 MLA：手寫一次 attention，然後把長 context 的記憶體帳單算清楚</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 52 — Attention、FlashAttention、PagedAttention 與 MLA：手寫一次 attention，然後把長 context 的記憶體帳單算清楚</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2052%20-%20attention%20from%20scratch">day 52 on GitHub</a></p>
+<p><em>100 Days of Python - day 52</em></p>
+<p>Attention 就是一個加權平均。整個模型就這件事：每個 query 位置對每個 key 位置算一個分數，把分數變成加總為 1 的權重，再用這些權重去平均 value 向量。四行 numpy。</p>
+<p>難的地方全部不在那條式子，而在「怎麼把這個平均算出來，又不要真的把它要平均的那個東西生出來」。context 長到 131,072 個 token 時，光是一層的分數矩陣在 fp16 下就是 1,024 GB，那不是一個你配置得出來的數字；而讓你不用重算過去的 KV cache，同樣的 context 下用一般的 multi-head attention 是 64.0 GB，用 MLA 是 4.5 GB。今天先把 attention 實作出來，看它兩種不會報錯的壞法，然後看所有推論系統都會對它做的四個改動：FlashAttention、PagedAttention、MQA/GQA/MLA 這一家，以及 delta rule 這種線性 attention。</p>
+<p>Day 51 把文字變成 token id，今天是模型拿到這些 id 之後做的事。</p>
+<h2>一個加權平均</h2>
+<pre><code>def attention(Q, K, V, mask=None, scale=None):
+    d = Q.shape[-1]
+    scores = Q @ K.T / (scale if scale is not None else math.sqrt(d))
+    if mask is not None:
+        scores = np.where(mask, scores, -np.inf)
+    w = softmax(scores, axis=-1)
+    return w @ V, w</code></pre>
+<p><code>Q</code> 是 <code>(n, d)</code>、<code>K</code> 和 <code>V</code> 是 <code>(m, d)</code>，分數矩陣是 <code>(n, m)</code>：每一對位置一個數字。那個「每一對」就是二次方成本的來源，也是這篇文章後面全部內容存在的理由。</p>
+<p>4 個 query、6 個 key、head dimension 8 時，權重矩陣是 <code>(4, 6)</code>，每一列加總都是 1。第 0 列是 <code>[0.1269 0.1065 0.0799 0.2059 0.3886 0.0923]</code>。因為每一列都是一組非負、加總為 1 的數，所以每一列輸出都是 value 那幾列的凸組合，永遠跑不出 <code>V</code> 的範圍：V 的範圍是 <code>[-0.634 -1.504 -1.052]</code> 到 <code>[1.107 0.519 1.721]</code>，輸出的範圍是 <code>[0.332 -0.667 -0.07]</code> 到 <code>[0.42 -0.24 0.112]</code>。attention 沒辦法生出一個新的值，它只能決定每一個既有的值要用多少。</p>
+<h2>第一個不會報錯的壞法：exp() 吃到大數</h2>
+<p>課本上的 softmax 是 <code>exp(x) / sum(exp(x))</code>。float32 最大裝到 3.403e+38，而 <code>exp(89)</code> 就已經是 inf；float16 最大 65504，<code>exp(12)</code> 就已經是 inf。所以 <code>softmax_naive([1000, 1001, 999])</code> 回傳 <code>[nan nan nan]</code>：inf 除以 inf。</p>
+<p>修法只有一行，而且它是精確的不是近似：對任何常數 <code>c</code>，<code>softmax(x)</code> 都等於 <code>softmax(x - c)</code>，因為 <code>c</code> 在分子和分母互相抵消。取 <code>c = max(x)</code> 讓最大的那個指數剛好是 <code>exp(0) = 1</code>，就不可能溢位：</p>
+<pre><code>def softmax(x, axis=-1):
+    x = np.asarray(x, dtype=float)
+    m = np.max(x, axis=axis, keepdims=True)
+    e = np.exp(x - m)
+    return e / e.sum(axis=axis, keepdims=True)</code></pre>
+<p>同一組輸入現在給 <code>[0.2447 0.6652 0.09]</code>。1000 這種 logit 聽起來很荒謬，直到你想起來一個分數是兩個 d 維向量的內積——而且在 fp16 裡你只需要 12。</p>
+<h2>為什麼要除以 sqrt(d)，用量的</h2>
+<p>一個分數是 <code>d</code> 個乘積的和。輸入變異數為 1 時，這個和的標準差本來就隨著 <code>sqrt(d)</code> 長大，所以 head 越寬 logit 散得越開，而 softmax 碰到散得很開的 logit 就會塌成一個 argmax。</p>
+<pre><code>d     原始分數的標準差  sqrt(d)  最大權重（未縮放）  除過 sqrt(d)
+----  ----------------  -------  ------------------  ------------
+8     2.846             2.83     0.3221              0.0437
+64    7.911             8.00     0.7067              0.0404
+512   22.563            22.63    0.9048              0.0423
+4096  64.109            64.00    0.9688              0.0428</code></pre>
+<p>每一個寬度上量到的標準差都貼著 <code>sqrt(d)</code>，誤差大約在百分之一（最差的是 d = 64，7.911 對 8.00）。不除的話，4096 寬的 head 平均把 0.9688 的權重壓在一個 key 上：那就是 argmax，而 argmax 幾乎不會把梯度傳給其他 key。除以 <code>sqrt(d)</code> 之後，不管 <code>d</code> 多大 logit 都維持在大約單位尺度，寬度差了 512 倍、平均最大權重都還在 0.04 附近。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2052%20-%20attention%20from%20scratch/imgs/day52_2.png?raw=true">
+<h2>第二個不會報錯的壞法：mask 放在 softmax 之後</h2>
+<p>causal 語言模型必須擋住位置 <code>i</code> 去讀位置 <code>j &gt; i</code>。正確做法是在 softmax 之前把那些分數設成 <code>-inf</code>：<code>exp(-inf)</code> 是 0，那些 key 拿到的權重剛好是 0，而每一列還是加總為 1。錯的做法——在 diff 裡看起來一模一樣——是先算 softmax 再把未來那幾格歸零。</p>
+<pre><code>row sums, masked before softmax: [1. 1. 1. 1. 1. 1.]
+row sums, masked after  softmax: [0.0504 0.5048 0.0618 0.9274 0.826  1.    ]</code></pre>
+<p>第 0 列只看得到自己，它那唯一一個權重應該是 1.0。先 softmax 再歸零的版本給 0.0504：每個比較早的位置都被「它不准看的那部分未來」等比例縮小，輸出也就等比例地更靠近零。沒有例外、沒有 nan、形狀全對，loss 照樣往下掉——只是模型訓練的時候，前面的位置被一個隨機的倍率壓著。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2052%20-%20attention%20from%20scratch/imgs/day52_1.png?raw=true">
+<p><em>（圖上就是上面那兩行 row sum 來源的 6 x 6 causal 權重矩陣）</em></p>
+<h2>FlashAttention：同一個數字，一趟掃完，不生出矩陣</h2>
+<p>天真的寫法必須把整個 <code>(n, m)</code> 分數矩陣生出來，因為 softmax 要用到每一列的最大值和總和，而這兩個東西都要看完整列才有。online softmax 說：不一定，只要你願意回頭修正已經算好的部分。</p>
+<p>一塊一塊地走 key，每個 query 列只帶兩個數字——目前看過的最大分數，以及 <code>exp(分數 - 那個最大值)</code> 的滾動總和。某一塊出現更大的分數時，把已經累積的東西乘上 <code>exp(舊max - 新max)</code> 再繼續。那個重新縮放就是全部的訣竅：</p>
+<pre><code>s_blk = Q @ K[s:e].T / math.sqrt(d)          # 分數矩陣的一塊
+new_max = np.maximum(run_max, np.max(s_blk, axis=-1))
+alpha = np.exp(run_max - new_max)            # 把已經累積的補正到新的最大值
+p = np.exp(s_blk - new_max[:, None])
+run_sum = run_sum * alpha + p.sum(axis=-1)
+out = out * alpha[:, None] + p @ V[s:e]
+run_max = new_max</code></pre>
+<p>（檔案裡多兩個 <code>np.where</code> 是為了「整列的 key 都被 mask 掉」那種列，不然 running max 會留著 <code>-inf</code>）</p>
+<pre><code>每塊大小  與完整矩陣的最大絕對差
+--------  ----------------------
+1         6.661e-16
+8         3.886e-16
+32        3.608e-16
+128       3.886e-16
+256       4.996e-16</code></pre>
+<p>每一個 block size 的差都是浮點數最後一位的雜訊。這件事比看起來重要：FlashAttention 是同一個和的精確改寫，不是它的近似，所以打開它改變的是記憶體和速度、不是模型。沒有一欄「準確度」需要檢查。</p>
+<h2>二次方那一項寄來的帳單</h2>
+<p>分數矩陣每一對位置一格，每個 head、每一層各一份。fp16、32 個 head：</p>
+<pre><code>context  一層的分數矩陣  32 層
+-------  --------------  ----------
+1,024    0.06 GB         2.0 GB
+4,096    1.00 GB         32.0 GB
+16,384   16.00 GB        512.0 GB
+131,072  1024.00 GB      32768.0 GB</code></pre>
+<p>context 乘 4，這個數字乘 16。131,072 時一層就是 1,024 GB，而 FlashAttention 真正的貢獻是它從頭到尾沒有配置它：一次只拿一塊，所以記憶體變成跟 context 成線性，而算術仍然是二次方。二次方的「工作量」沒有消失，消失的只有二次方的「儲存」。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2052%20-%20attention%20from%20scratch/imgs/day52_3.png?raw=true">
+<h2>PagedAttention：KV cache 其實是個記憶體配置器問題</h2>
+<p>生成的時候你不會重算過去，而是把看過的每個 token 的 K 和 V 留著。連續配置的 cache 必須按「這條序列可能長到多長」保留，因為一旦發出去就搬不動了。8 條長度 <code>[12, 300, 48, 900, 7, 2048, 64, 130]</code> 的序列，每條都可能長到 4,096：</p>
+<pre><code>one contiguous block per sequence: 32,768 slots, 3,509 used, 89.3% wasted
+pages of   16:   3,552 slots, 3,509 used,  1.2% wasted (222 pages)
+pages of   64:   3,776 slots, 3,509 used,  7.1% wasted (59 pages)
+pages of  256:   4,864 slots, 3,509 used, 27.9% wasted (19 pages)</code></pre>
+<p>改成邊長邊發固定大小的頁，剩下的浪費就只有每條序列最後一頁的尾巴——每條最多 <code>page_size - 1</code> 格，不管序列長到多長。所以浪費從 89.3% 掉到 1.2%，再隨著頁變大爬回 27.9%：頁大小是在「尾巴的浪費」和「頁表的大小」之間選。</p>
+<p>代價是 attention 不能再把 K 和 V 當成一塊平坦的陣列讀，要先查頁表。這就是作業系統對記憶體做的同一件事、同一個理由，而且順便給了同一個好處：兩條共用同一段 prompt 的序列可以指向同一批前綴頁，不用各留一份。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2052%20-%20attention%20from%20scratch/imgs/day52_4.png?raw=true">
+<h2>MHA、MQA、GQA、MLA：「到底什麼非 cache 不可」的四個答案</h2>
+<p>分頁解決的是浪費，它不會改變一個 token 本身要多少。32 層、32 個 query head、head dimension 128、fp16：</p>
+<pre><code>layout                       bytes/token  KB   128k context  vs MHA
+---------------------------  -----------  ---  ------------  ------
+MHA（32 個 kv head）         524,288      512  64.0 GB       1.0x
+GQA（8 個 kv head）          131,072      128  16.0 GB       4.0x
+MLA（512 latent + 64 rope）  36,864       36   4.5 GB        14.2x
+MQA（1 個 kv head）          16,384       16   2.0 GB        32.0x</code></pre>
+<p>有趣的是「各自放棄了什麼」那一欄。MQA 讓 32 個 query head 讀同一份 K 和 V，head 就失去了各自注意不同東西的能力；GQA 是同一個取捨但以四個一組做，所以它是現在最常見的預設。MLA 每個 token 只留一個低秩的 latent 向量，讀的時候再從它重建出每個 head 的 K 和 V，所以 head 仍然各自不同、cache 還是小 14.2 倍——代價是讀取時多出來的算術，以及一條專門給位置資訊走的小路，因為 rotary embedding 沒辦法被摺進那個 latent 裡還活著。</p>
+<p>這四個都還是隨 context 長大，因為 cache 是「每個 token 一份」。下一節是不會長大的那一家。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2052%20-%20attention%20from%20scratch/imgs/day52_5.png?raw=true">
+<h2>delta rule：一個拿來寫的狀態，不是一個拿來疊加的 cache</h2>
+<p>softmax attention 把每個 key 和 value 都留著，每一步再全部重讀一次。這正是它精確的原因，也正是 cache 會長大的原因。delta rule 這一層只留一個 <code>d x d</code> 的矩陣，就地修改它：</p>
+<pre><code>out[t] = S @ k                                    # 讀
+S = S - b * np.outer(S @ k, k) + b * np.outer(V[t], k)   # 先擦掉，再寫進去</code></pre>
+<p>也就是把 <code>S &lt;- S (I - beta k k^T) + beta v k^T</code> 的乘積展開。第一項把 <code>S</code> 目前對 <code>k</code> 的關聯擦掉，第二項把 <code>v</code> 寫到那個位置。讀就是一次矩陣乘向量——真正的一層是用它自己的 query 投影讀，<code>o = S @ q</code>；這個檔案拿 key 本身去探，因為它要量的是「存進去的東西還在不在」。32 層加起來的狀態是 32 MB，而且 context 是 1,000 個 token 還是 1,000,000 個，它都還是 32 MB。</p>
+<p>剩下的問題是「裝得下多少」。把互相正交的 key-value 對寫進一個 16 x 16 的狀態再全部讀回來：</p>
+<pre><code>寫進去的對數  最差的回想誤差  被蓋掉的關聯數
+------------  --------------  --------------
+8             1.00e-12        0
+16            1.00e-12        0
+17            1.33e+00        1
+24            1.69e+00        8
+32            1.87e+00        16</code></pre>
+<p>16 個剛好裝滿，因為 16 維空間裡最多只有 16 個互相正交的方向——前兩列那個 1e-12 是這個檔案在正規化 key 時加的 epsilon，不是互相干擾。第 17 個剛好蓋掉其中一個，32 個蓋掉 16 個。最新寫進去的那個永遠是完美的——它的誤差是 1.8e-12——被犧牲的是舊的。而且這還是最好的情況：換成一般的隨機 key 而不是正交的，8 對寫進同一個狀態就已經有 1.66 的最差誤差，因為每一次寫入都會把已經在裡面的抹糊一點。</p>
+<p>所以這個取捨不是「線性 attention 比較差」，而是：記憶體是常數，回想有上限。gated 的那一支加上遺忘係數，讓舊的關聯是慢慢衰減而不是撐到被蓋掉，這個上限就表現得好一些：Gated DeltaNet 是每個 head 一個純量衰減，Kimi 的 KDA 再細到每個通道一個（對角的 gate）。狀態仍然是一個固定大小的矩陣。這也是為什麼實務上這些層是跟少數幾層完整 attention 交錯使用而不是取代它：完整的那幾層負責精確的長距離回想，線性的那些層用每個 token 固定的成本扛其他全部。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2052%20-%20attention%20from%20scratch/imgs/day52_6.png?raw=true">
+<h2>LeetCode 239 - Sliding Window Maximum（滑動視窗最大值）</h2>
+<p><strong>題目在問什麼。</strong> 給你一個陣列和一個視窗寬度 <code>k</code>。視窗從最左邊開始，一次往右移一格，一直到最右邊。請回報視窗在每一個位置時，裡面的最大值。</p>
+<p><strong>輸入輸出。</strong> 輸入整數陣列 <code>nums</code> 與整數 <code>k</code>，回傳一個有 <code>len(nums) - k + 1</code> 個元素的 list，第 i 個是 <code>nums[i:i+k]</code> 的最大值。</p>
+<p><strong>範例。</strong> <code>nums = [1, 3, -1, -3, 5, 3, 6, 7]</code>、<code>k = 3</code> 的答案是 <code>[3, 3, 5, 5, 6, 7]</code>。第一個視窗 <code>[1, 3, -1]</code> 最大是 3；第二個 <code>[3, -1, -3]</code> 還是 3；接著 <code>[-1, -3, 5]</code> 把 5 帶進來，5 再撐一個視窗就被 6、然後 7 接手。</p>
+<p><strong>限制。</strong> 最多 100,000 個元素、<code>1 &lt;= k &lt;= len(nums)</code>。每個視窗重掃一次是 <code>O(n*k)</code>，上限那端是 10^10 次運算，過不了；而對視窗維護一個 heap 要做到 <code>O(n log k)</code> 的前提是你能刪掉「剛離開視窗的那個元素」，普通的二元 heap 沒有額外記帳做不到。這題要的是 <code>O(n)</code>。</p>
+<p>維護一個 deque，裡面放的是 index，對應的值由大到小。新的值進來時，尾巴上所有比它小的都永遠出局了：新來的又大又新，所以在任何還包含它們的視窗裡，新來的都是更好的答案。deque 的頭就是目前視窗的最大值，而它只在「按 index 掉出視窗」時才被丟掉。</p>
+<pre><code>class Solution:
+    def maxSlidingWindow(self, nums: list[int], k: int) -&gt; list[int]:
+        from collections import deque
+        dq, out = deque(), []
+        for i, v in enumerate(nums):
+            while dq and nums[dq[-1]] &lt;= v:
+                dq.pop()
+            dq.append(i)
+            if dq[0] &lt;= i - k:
+                dq.popleft()
+            if i &gt;= k - 1:
+                out.append(nums[dq[0]])
+        return out</code></pre>
+<p>它看起來像雙層迴圈，但每個 index 只被推進去一次、彈出來一次，所以整趟是 <code>O(n)</code>，狀態是 <code>O(k)</code>。那個滾動最大值就是 FlashAttention 那一節：online softmax 帶的是一個數字而不是整列，而且每次那個數字變了就把已經算好的補正一次。</p>
+<p><a href="https://leetcode.com/problems/sliding-window-maximum/">leetcode.com/problems/sliding-window-maximum</a></p>
+<h2>LeetCode 703 - Kth Largest Element in a Stream（資料流中的第 k 大元素）</h2>
+<p><strong>題目在問什麼。</strong> 寫一個類別，建構時給它 <code>k</code> 和一串起始數字，之後每加進一個新數字，就回答「到目前為止第 k 大的是多少」。</p>
+<p><strong>輸入輸出。</strong> <code>KthLargest(k, nums)</code> 建構；<code>add(val)</code> 加入一個數字，回傳包含 <code>val</code> 在內、看過的所有數字中第 k 大的那個。</p>
+<p><strong>範例。</strong> <code>KthLargest(3, [4, 5, 8, 2])</code> 之後依序加入 3、5、10、9、4，回傳 <code>[4, 5, 5, 8, 8]</code>。加入 3 之後所有值是 <code>2, 3, 4, 5, 8</code>，第三大是 4；加入 10 之後變成 5，因為前三名現在是 10、8、5。</p>
+<p><strong>限制。</strong> <code>add</code> 最多呼叫 10^4 次，而且保證查詢時至少已經有 <code>k</code> 個元素。這題的重點在記憶體：它不希望你把整串資料留著。</p>
+<p>維護一個剛好 <code>k</code> 個元素的 min-heap。它的堆頂就是目前的第 k 大，而任何比堆頂小的值一進來就可以直接丟掉。</p>
+<pre><code>class KthLargest:
+    def __init__(self, k: int, nums: list[int]):
+        import heapq
+        self.k = k
+        self.heap = list(nums)
+        heapq.heapify(self.heap)
+        while len(self.heap) &gt; k:
+            heapq.heappop(self.heap)
+
+    def add(self, val: int) -&gt; int:
+        import heapq
+        if len(self.heap) &lt; self.k:
+            heapq.heappush(self.heap, val)
+        elif val &gt; self.heap[0]:
+            heapq.heapreplace(self.heap, val)
+        return self.heap[0]</code></pre>
+<p>陷阱是「用哪一種 heap」。把全部東西放進一個 max-heap 也答得出來，記憶體 <code>O(n)</code>、每次呼叫 <code>O(k log n)</code>——它會通過測試，而它是對這個問題的錯誤答案。size-k 的 min-heap 才是那個「記憶體跟已經流過多少無關」的版本。</p>
+<p><a href="https://leetcode.com/problems/kth-largest-element-in-a-stream/">leetcode.com/problems/kth-largest-element-in-a-stream</a></p>
+<h2>複雜度</h2>
+<pre><code>操作                                  時間      空間
+------------------------------------  --------  ------
+attention（完整矩陣）                 O(nmd)    O(nm)
+attention（online / FlashAttention）  O(nmd)    O(nd)
+每生一個 token 讀一次 KV cache        O(nd)     O(nd)
+delta rule 的寫與讀                   O(d^2)    O(d^2)
+LeetCode 239                          O(n)      O(k)
+LeetCode 703 的 add                   O(log k)  O(k)</code></pre>
+<h2>這些東西之後會用在哪</h2>
+<p>今天每一個東西做的都是同一件事：掃過一串你存不下的資料，身上只帶一份有上限的狀態，而那份狀態必須夠用。FlashAttention 把它限制在每個 query 列兩個數字，而且保持精確；delta rule 把它限制在一個矩陣，放棄精確。LeetCode 239 限制在一個 deque、703 限制在一個 size-k 的 heap。哪一個上限是對的，完全看你願意失去什麼。</p>
+<p>分頁那一節也是作業系統那套東西回來的地方：頁、頁表、內部碎片、copy-on-write 共用，只是這次套在張量而不是行程的位址空間上。而 MLA 的那個低秩 latent 就是 Day 49 的 Eckart-Young 近似，只是這次拿來當儲存格式而不是拿來畫圖。</p>
+<p>程式碼和互動式走查都在 repo：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2052%20-%20attention%20from%20scratch">day 52 on GitHub</a>。</p>
+</body>
+</html>
