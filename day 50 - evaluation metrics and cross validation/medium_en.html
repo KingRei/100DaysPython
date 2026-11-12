@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Evaluation metrics and cross-validation: deciding whether to look at accuracy, F1 or AUC</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Evaluation metrics and cross-validation: deciding whether to look at accuracy, F1 or AUC</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2050%20-%20evaluation%20metrics%20and%20cross%20validation">day 50 on GitHub</a></p>
+<p><em>100 Days of Python - day 50</em></p>
+<p>I trained a logistic regression on 2,000 rows where 20 are positive, scored it on the rows it had not seen, and asked for its accuracy: <strong>0.9895</strong>. Answering &quot;negative&quot; to all 2,000 rows scores <strong>0.9900</strong>. So the trained model is worse than a constant, and its recall and F1 are both 0.0000.</p>
+<p>The same scores give a ROC-AUC of <strong>0.9027</strong>. Ranked by score, the 20 positives sit at places 2, 5, ... 452, 1407 out of 2,000: <strong>7 of them are in the top 20</strong>, and the median rank is <strong>83</strong> — the two middle positives sit at 77 and 89. That is what a ROC-AUC of 0.90 looks like from close up — mostly high, with a long tail. The model did learn. Both numbers are arithmetically correct, and the one that gets reported is the one that is wrong about the model.</p>
+<p>Day 47 scored k-means, Day 48 scored decision trees and forests, and both days quoted an accuracy without asking what it was made of. This is the day that asks. Everything below is pure NumPy, and every measured number in it is printed by <code>evaluation.py</code> in that folder. It is about one question: when you have one number to put in the report, which number should it be?</p>
+<img alt="day50_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2050%20-%20evaluation%20metrics%20and%20cross%20validation/imgs/day50_1.png">
+<h2>Four counts, and every metric is one ratio of them</h2>
+<p>A classifier that has already made its decisions produces exactly four numbers. Eight rows, truth <code>[1, 1, 1, 0, 0, 0, 0, 0]</code> and guess <code>[1, 1, 0, 1, 0, 0, 0, 0]</code>:</p>
+<pre><code>             guessed 0   guessed 1
+really 0             4           1
+really 1             1           2</code></pre>
+<p><code>tn = 4</code>, <code>fp = 1</code>, <code>fn = 1</code>, <code>tp = 2</code>. Every metric on this page is one ratio of those four:</p>
+<pre><code>metric             value   what it divides by
+-----------------  ------  -------------------------------------
+accuracy           0.7500  everything
+precision          0.6667  what we flagged, tp + fp
+recall             0.6667  what was really there, tp + fn
+specificity        0.8000  the negatives, tn + fp
+F1                 0.6667  harmonic mean of precision and recall
+balanced accuracy  0.7333  mean of recall and specificity
+MCC                0.4667  all four counts at once</code></pre>
+<p>Choosing a metric is choosing which of the four counts you are willing to let grow. Accuracy adds <code>tp</code> and <code>tn</code> together, so when <code>tn</code> is 99% of the table, accuracy is mostly a report about <code>tn</code>.</p>
+<h2>Accuracy, precision, recall — and an apple that makes the difference stick</h2>
+<p>Four ratios, four different denominators. A basket of <strong>100 pieces of fruit, 10 of them apples</strong>, and an apple detector that puts 8 pieces on the apple side — 6 apples and 2 oranges — leaving the other 92 alone, including the 4 apples it missed.</p>
+<pre><code>tp 6    fp 2    fn 4    tn 88</code></pre>
+<img alt="day50_8" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2050%20-%20evaluation%20metrics%20and%20cross%20validation/imgs/day50_8.png">
+<p><strong>Accuracy</strong> is how much of <em>everything</em> it got right: <code>(tp + tn) / 100 = 0.9400</code>.</p>
+<p><strong>Precision</strong> is how much of the <em>apple side</em> really is apple: <code>tp / (tp + fp) = 6/8 = 0.7500</code>. The spelling is the mnemonic — preci-<strong>si</strong>-on asks about the <strong>si</strong>de you picked. Its denominator is <strong>what the model said</strong>.</p>
+<p><strong>Recall</strong> is how many of <em>all the apples</em> you got back: <code>tp / (tp + fn) = 6/10 = 0.6000</code>. Again the spelling — rec-<strong>all</strong> asks about <strong>all</strong> the apples. Its denominator is <strong>what the truth said</strong>. It has a second name, the <strong>true positive rate</strong>, which is the one to remember for the next section but one.</p>
+<p><strong>False positive rate</strong> is the mirror image on the other class: of <em>all the oranges</em>, how many did you grab? <code>fp / (fp + tn) = 2/90 = 0.0222</code>.</p>
+<p>So why keep precision and recall when accuracy already exists? Look at what each denominator is made of. Recall counts apples only. FPR counts oranges only. Precision counts the pieces <strong>you</strong> put on the apple side, so the model decides how big it is. And accuracy counts the whole basket — which the dataset decides and the model cannot change. With 90 oranges in 100 pieces of fruit, most of accuracy is settled before the detector is switched on.</p>
+<p>A detector that gives up and calls every piece of fruit an orange scores:</p>
+<pre><code>accuracy 0.9000   recall 0.0000   precision nan   (0 / 0 - it flagged nothing)</code></pre>
+<p>0.9000 against the real detector&#x27;s 0.9400, while finding not a single apple. Precision cannot be inflated the same way — oranges reach its denominator only when the detector actually reaches for them, which is the mistake it is being charged for, and here it reaches for nothing, so precision answers <code>0 / 0</code>. Recall cannot be inflated by the majority class either: the 90 oranges never appear in it.</p>
+<p>They also pull against each other, but not symmetrically. Raising the threshold moves rows out of the apple side, which can only turn true positives into false negatives — so <strong>recall is monotone</strong>: it can only fall as the cut goes up, and only rise as the cut comes down. <strong>Precision is not.</strong> The next section&#x27;s table shows it wobbling: 0.3333 at a cut of 0.20, 0.2500 at 0.15, back up to 0.3500 at 0.10, because each new row either lands on an apple or does not. Over 300 random label-and-score sets, precision falls somewhere along the sweep in <strong>all 300</strong>. &quot;Raise the threshold for better precision&quot; is a tendency; only recall comes with a guarantee.</p>
+<p>Which one to optimise is a question about costs, not about statistics:</p>
+<pre><code>if this is true                                         optimise
+------------------------------------------------------  ---------
+a missed positive costs more than a wasted check        recall
+a wasted check costs more than a missed positive        precision
+the two costs are similar and the classes are balanced  accuracy
+you need one number and the classes are not balanced    F1</code></pre>
+<p>Google&#x27;s Machine Learning Crash Course has a <a href="https://developers.google.com/machine-learning/crash-course/classification/accuracy-precision-recall">chapter on exactly these definitions</a> with the same shape of guidance table, and a <a href="https://developers.google.com/machine-learning/crash-course/classification/thresholding">companion chapter on thresholds and the confusion matrix</a>; both are worth twenty minutes.</p>
+<h2>Silent failure #1: accuracy measures the size of the majority class</h2>
+<p>Back to the 2,000 rows. Predict the majority class everywhere:</p>
+<ul><li>accuracy <strong>0.9900</strong></li><li>recall <strong>0.0000</strong></li><li>precision <strong>nan</strong> — it is <code>0 / 0</code>, because we flagged nothing</li><li>MCC <strong>nan</strong> — a whole column of zeros makes its denominator 0</li></ul>
+<p>Precision and MCC refuse to answer, and the refusal is the useful part: they noticed there was nothing to score. Accuracy answered cheerfully.</p>
+<p>Finding that constant is LeetCode 169, further down. On this table it is <code>0</code>, it covers 0.9900 of the rows, and that is the number any accuracy you report has to beat before it has said anything at all. Quote accuracy on imbalanced data and you are mostly quoting the class balance.</p>
+<h2>The threshold is a number you chose, even if you never typed it</h2>
+<p>The model does not output a class. It outputs a score, and the score becomes a decision only when someone picks a cut. Here are nine cuts applied to the same scores, with nothing retrained in between:</p>
+<pre><code>cut   flagged  accuracy  precision  recall  F1
+----  -------  --------  ---------  ------  ------
+0.50  1        0.9895    0.0000     0.0000  0.0000
+0.30  1        0.9895    0.0000     0.0000  0.0000
+0.20  3        0.9895    0.3333     0.0500  0.0870
+0.15  4        0.9890    0.2500     0.0500  0.0833
+0.10  20       0.9870    0.3500     0.3500  0.3500
+0.05  88       0.9560    0.1136     0.5000  0.1852
+0.03  220      0.8940    0.0636     0.7000  0.1167
+0.02  413      0.7995    0.0387     0.8000  0.0739
+0.01  845      0.5865    0.0225     0.9500  0.0439</code></pre>
+<img alt="day50_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2050%20-%20evaluation%20metrics%20and%20cross%20validation/imgs/day50_2.png">
+<p>The highest score the model gave any row was <strong>0.6481</strong>, so a cut at 0.5 was always going to flag almost nothing — and 0.5 is a library default, not a decision anyone made about this data.</p>
+<p>Look at the accuracy column. It is <strong>highest when the model catches nothing</strong>, 0.9870 where F1 peaks, and 0.5865 where recall reaches 0.9500. Accuracy goes <em>down</em> as the model becomes useful, because being useful means spending true negatives to buy true positives.</p>
+<p>The real decision is not which metric is best. It is how many rows a day someone can review. That number picks the cut, and the cut picks the metrics.</p>
+<h2>Silent failure #2: the same F1, half the cases caught</h2>
+<p>F1 is one number carrying two independent quantities, so it has to throw one of them away. Two ways of flagging rows in a table of 2,000 with 100 positives:</p>
+<pre><code>            flagged  caught  precision  recall  F1      accuracy
+----------  -------  ------  ---------  ------  ------  --------
+wide net    300      90      0.3000     0.9000  0.4500  0.8900
+narrow net  100      45      0.4500     0.4500  0.4500  0.9450</code></pre>
+<p>Identical F1. The wide net catches 90 of the 100 and wastes 210 reviews; the narrow net catches 45 and wastes 55. If the 100 are frauds, those are not two versions of the same system — one of them lets 55 frauds through.</p>
+<p>And the narrow net, the one that misses more than half of them, has the <strong>higher accuracy</strong>: 0.9450 against 0.8900. Report both numbers, or report the one your job depends on, but do not report their average and call it a summary.</p>
+<h2>Silent failure #3: ROC-AUC and PR-AUC rank two models in opposite orders</h2>
+<p>Two models scoring the same 2,000 rows, 20 of which are positive:</p>
+<ul><li><strong>broad</strong> separates the whole population well, but parks 135 negatives above its weakest positive.</li><li><strong>sharp</strong> ranks half the positives above every negative, and buries the other half low — those ten outrank between <strong>17% and 26%</strong> of the negatives, <strong>22%</strong> on average. That is where its ROC-AUC of 0.6082 comes from: <code>(10 x 1.0000 + 10 x 0.2163) / 20 = 0.6082</code>.</li></ul>
+<pre><code>       ROC-AUC  average precision  top 10  top 20  top 50  top 100
+-----  -------  -----------------  ------  ------  ------  -------
+broad  0.9800   0.2124             0       3       12      19
+sharp  0.6082   0.5049             10      10      10      10</code></pre>
+<img alt="day50_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2050%20-%20evaluation%20metrics%20and%20cross%20validation/imgs/day50_3.png">
+<p>ROC-AUC prefers broad by a wide margin. Average precision prefers sharp by a wide margin. Neither is miscomputed.</p>
+<p>The disagreement is one denominator. To catch all 20 positives, broad has to come down to a score of 0.5897, and <strong>135 negatives sit above that line</strong>.</p>
+<p>The ROC x-axis divides those 135 by all <strong>1,980</strong> negatives, so they move it by <code>135/1980 = 0.0682</code> — under seven percent of the way across, with the curve already at the top. The same 135 are <code>135/155 = 0.8710</code> of everything you flagged to get there: <strong>87% of the review queue is wrong</strong>, and precision says so while the ROC curve does not. One set of mistakes, two denominators, and only one of them is the size of your working day.</p>
+<img alt="day50_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2050%20-%20evaluation%20metrics%20and%20cross%20validation/imgs/day50_4.png">
+<p>The last four columns settle it. If an analyst reviews ten rows a day, <strong>sharp hands them 10 real cases and broad hands them 0</strong>. If the budget is a hundred rows a day, broad gives 19 and sharp still gives 10. The budget decides which metric to read; reading the metric first picks the wrong model.</p>
+<p>Rule of thumb: ROC-AUC when both classes matter and are comparable in size, average precision when the positives are rare and the cost is the review queue.</p>
+<h2>Why the ROC axes are those two numbers and not any others</h2>
+<p>The ROC curve plots <strong>false positive rate</strong> across and <strong>recall</strong> up. Those two were not chosen for symmetry. Look at the denominators from the apple basket:</p>
+<ul><li>recall = <code>tp / (tp + fn)</code> — counts only rows that really are <strong>positive</strong></li><li>FPR = <code>fp / (fp + tn)</code> — counts only rows that really are <strong>negative</strong></li></ul>
+<p>Neither denominator mixes the classes, so <strong>neither axis knows how many of each class there are</strong>. Going up is the benefit — more of the real positives caught. Going right is the cost — more of the real negatives falsely flagged. Each threshold gives you one point; sweeping every threshold draws the curve; the diagonal is what guessing at random does, because random guessing catches the same fraction of both classes.</p>
+<p>That independence is measurable. Keep all 20 positives of the broad model and throw negatives away at random, so the model and its ranking never change and only the rarity of the positives does. Each row is the mean over 50 draws:</p>
+<pre><code>negatives kept  positive rate  ROC-AUC  average precision
+--------------  -------------  -------  -----------------
+1,980           0.0100         0.9800   0.2124
+495             0.0388         0.9807   0.5331
+124             0.1389         0.9797   0.8142
+40              0.3333         0.9811   0.9377</code></pre>
+<p>The positives go from 1% of the rows to 33%. Over that range the mean ROC-AUC moves by <strong>0.00146</strong> and the mean average precision moves by <strong>0.72529</strong> — <strong>496 times further</strong>. Precision has <code>fp</code> and <code>tp</code> in the same denominator, so it feels the balance; both ROC axes are normalised inside one class, so they do not.</p>
+<p>&quot;Nearly invariant&quot; is the honest phrase, and the word <em>nearly</em> is doing work. Those rows are means over 50 draws; the 50 individual draws at 40 negatives run from <strong>0.9400 to 1.0000</strong>. With only 40 negatives left, which 40 you kept matters a lot. What does not drift is the average.</p>
+<p>That near-invariance is simultaneously the reason to use ROC-AUC and the reason not to. It is what you want when your test set was sampled with a different class balance from production — the number transfers. It is exactly what you do not want when the rarity of the positives <em>is</em> the problem, because then the number stays high while the review queue fills with false positives. That is the whole of the previous section in one sentence.</p>
+<h2>AUC is a pair count, which is why LeetCode 493 is on this page</h2>
+<p>ROC-AUC is not an area you have to integrate. It is exactly this: <em>pick one positive and one negative at random — how often does the positive score higher?</em>, counting a tie as half.</p>
+<p>With 20 positives and 1,980 negatives that is <strong>39,600 pairs</strong>. Written out as a loop over every pair, and computed from the sorted ranks instead:</p>
+<pre><code>the definition, every pair:  0.9800000000
+from the ranks, O(n log n):  0.9800000000
+difference:                  0.00e+00</code></pre>
+<p>Sorting once and reading off the ranks gives the identical number without building the pairs. That matters at the size where it matters: at 10,000 rows the pair count is <code>100 x 9,900 = 990,000</code> with 1% positives, and <code>5,000 x 5,000 = 25,000,000</code> once the classes are balanced. LeetCode 493 allows 50,000 elements, which is <code>1,249,975,000</code> pairs.</p>
+<p>Ties are not a detail. A model that gives every row the same score wins no pair and loses none, so its AUC is exactly <strong>0.5000</strong>. Score on a coarse grid — rounded probabilities, integer buckets, a tree with few leaves — and a large share of your pairs become ties that silently count half.</p>
+<h2>Silent failure #4: plain k-fold hands you a fold with no positives</h2>
+<p>Cross-validation starts by cutting the rows into k blocks. The usual way shuffles the row numbers and splits them, and <strong>it never looks at the labels</strong>. The same 2,000 rows with 20 positives, cut into 10 folds:</p>
+<pre><code>shuffle then cut   positives per fold [0, 6, 2, 1, 0, 3, 1, 4, 1, 2]
+cut each class     positives per fold [2, 2, 2, 2, 2, 2, 2, 2, 2, 2]</code></pre>
+<img alt="day50_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2050%20-%20evaluation%20metrics%20and%20cross%20validation/imgs/day50_5.png">
+<p>Two folds have nothing to score. Recall on them is <code>0 / 0</code>. <code>np.mean</code> turns the whole cross-validation score into <code>nan</code>; <code>np.nanmean</code> quietly drops the fold from the average. Neither raises.</p>
+<p>This is not bad luck. Over 200 different shuffles, <strong>166 of them (83%)</strong> produce at least one fold with zero positives, and 258 of the 2,000 folds have no positives in them. Twenty positives over ten folds averages two per fold, and two is easily zero.</p>
+<p>Stratifying means doing the same cut once per class. It costs one line. It can change the fold sizes a little, because each class is split separately: 103 rows with 9 positives into 5 folds gives sizes <code>[21, 21, 21, 21, 19]</code> instead of <code>[21, 21, 21, 20, 20]</code>, one row per class rather than one row overall.</p>
+<h2>Silent failure #5: averaging the folds is not pooling the predictions</h2>
+<p>Five folds, the same out-of-fold scores, cut at 0.10. Two ways to turn five folds into one number:</p>
+<pre><code>per-fold precision  [1.0, 0.1667, 0.3333, 0.1429, 1.0]   mean 0.5286
+pooled precision                                               0.3500</code></pre>
+<p>A gap of <strong>+0.1786</strong>, and it comes from two folds that flagged very few rows and got them all right. The five folds flagged <code>[2, 6, 3, 7, 2]</code> rows, and the two that flagged the fewest scored a precision of 1.0000. The mean treats a fold that flagged 2 rows as equal to one that flagged 7.</p>
+<p>Precision, recall and F1 are ratios, and the mean of ratios is not the ratio of the totals. Pool the out-of-fold predictions and compute the metric once. Keep the per-fold numbers for the spread, not for the headline.</p>
+<h2>Silent failure #6: three kinds of leakage, measured and ranked</h2>
+<p>Leakage is information about the held-out rows reaching the model. Here are three kinds, each measured twice with the same procedure.</p>
+<p><strong>(a) The same customer on both sides of the split.</strong> 150 customers, 4 rows each, and the label belongs to the customer. The classifier copies the label of the nearest training row — Day 47&#x27;s k = 1 nearest neighbour, which has no parameters at all, so anything it scores above chance it found by recognising a row rather than by learning.</p>
+<pre><code>random 5-fold   accuracy 0.9900
+group 5-fold    accuracy 0.4750</code></pre>
+<p>A 0.9900 that is really 0.4750. The model learned nothing; it recognised the three siblings of each test row sitting in the training set.</p>
+<p><strong>(b) Choosing the columns before splitting.</strong> 60 rows, 400 columns of gaussian noise, a coin-flip label. There is nothing in this table to find.</p>
+<pre><code>pick the 5 best columns on all 60 rows, then cross-validate:  0.7837
+pick them inside each fold, from that fold&#x27;s training rows:   0.5169</code></pre>
+<p>Both are means over 20 independently drawn noise tables. The honest number is 0.5169 against a true 0.5. The selection saw every label, including the ones it was about to be tested on, so it found the columns that happen to match the test rows too. A cross-validation that starts <em>after</em> the selection cannot undo it.</p>
+<p><strong>(c) Standardising before splitting.</strong> A different 60 rows this time — 8 columns with real signal in them, and logistic regression rather than a centroid. The only thing that changes between the two numbers is where the column means and standard deviations were fitted.</p>
+<pre><code>inside the fold  accuracy 0.7167
+over all rows    accuracy 0.7167
+largest difference between any two scores: 1.50e-04</code></pre>
+<p>Almost nothing, and saying so is the point: these three are not equally bad. A mean and a standard deviation are two summaries of a whole column, so the 11 to 13 rows a fifth holds out barely move them while the rows are interchangeable. It stops being harmless when the test rows are a later period or a different population — then the global mean is a fact about the future. The first two are the ones that turn noise into a result.</p>
+<img alt="day50_6" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2050%20-%20evaluation%20metrics%20and%20cross%20validation/imgs/day50_6.png">
+<h2>Regularisation: how lambda gets chosen without spending the test set</h2>
+<p>120 training rows, 40 columns, only 4 of which affect the label. A larger L2 penalty makes the weights earn their size — it is the same <code>2 * lam * w</code> term added to the gradient that Day 45 and Day 46 built:</p>
+<pre><code>lambda  train   5-fold CV  test (4,000 rows)  sum of absolute weights
+------  ------  ---------  -----------------  -----------------------
+0.000   0.9917  0.7500     0.7895             33.87
+0.001   0.9750  0.7500     0.7917             24.29
+0.003   0.9500  0.7500     0.7955             16.53
+0.010   0.9250  0.7333     0.7937             10.02
+0.030   0.9083  0.7333     0.7833             6.53
+0.100   0.8833  0.7333     0.7715             3.83
+0.300   0.8667  0.7333     0.7565             1.99</code></pre>
+<p>Unpenalised, the model scores 0.9917 on the rows it trained on and 0.7895 on fresh rows — a gap of <strong>0.2022</strong> that no amount of staring at the training score would reveal. That gap is what cross-validation exists to measure.</p>
+<p>Cross-validation never sees those 4,000 test rows, and it scores 0.7500 at three different lambdas. It cannot separate them: 120 rows split five ways means the CV accuracy can only move in steps of <code>1/120 = 0.0083</code>. The resolution of your validation set limits which settings you are allowed to distinguish between.</p>
+<p>Breaking that tie toward the strongest penalty picks lambda 0.003, which turns out to be the best of the seven on the test rows. Taking the first tied value instead gives lambda 0.0 and 0.7895. The rule is worth having because among settings you cannot tell apart, the one that fits least is the one least likely to be fitting the validation folds.</p>
+<p>Either way, the knob was chosen without touching the test set. Which matters because of the next section.</p>
+<h2>Silent failure #7: the set you chose on is no longer a test set</h2>
+<p>Score <code>m</code> models on one labelled set, keep the best, then score that same model on a second set drawn the same way. Every model below is a coin flip and so is every label, so the true accuracy of all of them is 0.5:</p>
+<pre><code>models tried  best, on the set you chose on  the same model, fresh set
+------------  -----------------------------  -------------------------
+1             0.5061                         0.4940
+10            0.5563                         0.5044
+50            0.5800                         0.5064
+200           0.5981                         0.4952</code></pre>
+<img alt="day50_7" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2050%20-%20evaluation%20metrics%20and%20cross%20validation/imgs/day50_7.png">
+<p>Nothing was learned and nothing improved. The first column rises because you are reporting a <strong>maximum over m noisy measurements</strong>, and the maximum of noise grows with m.</p>
+<p>Every hyper-parameter you sweep, every threshold you tune and every architecture you try on the same held-out set adds to m. The fix is the split you already have: choose on the validation folds, and look at the test set once, at the end, after you have stopped choosing.</p>
+<h2>LeetCode 493 - Reverse Pairs</h2>
+<p><strong>The task.</strong> Given an array of integers, count the pairs of positions <code>(i, j)</code> where <code>i</code> comes before <code>j</code> and the earlier number is more than twice the later one — <code>nums[i] &gt; 2 * nums[j]</code>.</p>
+<p><strong>Input / output.</strong> A list of integers. Return a single integer, the number of such pairs.</p>
+<p><strong>Example.</strong> <code>nums = [1, 3, 2, 3, 1]</code> gives <strong>2</strong>. Walking the pairs: position 1 holds 3 and position 4 holds 1, and <code>3 &gt; 2 * 1</code>, so that pair counts. Position 3 also holds 3, and it is also before position 4, so that is the second. Position 2 holds 2, and <code>2 &gt; 2 * 1</code> is false, so it does not count. A second example, <code>nums = [2, 4, 3, 5, 1]</code>, gives <strong>3</strong>: the 4, the 3 and the 5 are each more than twice the final 1.</p>
+<p><strong>Constraints.</strong> <code>1 &lt;= nums.length &lt;= 5 * 10^4</code> and <code>-2^31 &lt;= nums[i] &lt;= 2^31 - 1</code>. The length is the constraint that chooses the algorithm: 50,000 elements means 1,249,975,000 pairs, so anything that looks at each pair is out. The value range is the second trap — in a language with 32-bit integers, <code>2 * nums[j]</code> can overflow, which is why the usual advice is to compare with <code>nums[i] / 2.0</code> or to widen the type. Python integers do not overflow, so this one is free here and is not free in an interview in C++ or Java.</p>
+<p><strong>The move.</strong> Sort the two halves, then count across them before merging. Once both halves are sorted, if the current left value exceeds <code>2 * right[j]</code>, then everything before <code>j</code> on the right also qualifies — one comparison settles a whole block. And because the left values are themselves increasing, <code>j</code> never goes backwards: it crosses the right half once per merge, not once per element.</p>
+<p><strong>The trap.</strong> Counting <em>during</em> the merge looks like free work, and it is wrong. The merge advances on <code>left[i] &lt;= right[j]</code> while the pairs need <code>left[i] &gt; 2 * right[j]</code> — two different orders, so the pointer stops in the wrong place. I implemented that version and compared it to brute force on 2,000 random arrays: it disagrees <strong>1,051 times (52.5%)</strong>, and it overcounts in <strong>0</strong> of them — every disagreement is a count that is too low. The first one is <code>[5, 0, -10, -8, -19, -17, -20, -13]</code>, where it says 23 and the answer is 28. Count in one pass, merge in the next.</p>
+<pre><code>class Solution:
+    def reversePairs(self, nums: list[int]) -&gt; int:
+        def sort_count(a):
+            if len(a) &lt; 2:
+                return a, 0
+            mid = len(a) // 2
+            left, cl = sort_count(a[:mid])
+            right, cr = sort_count(a[mid:])
+            count = cl + cr
+            j = 0
+            for v in left:                 # both halves are sorted,
+                while j &lt; len(right) and v &gt; 2 * right[j]:
+                    j += 1                 # so j only moves forward
+                count += j                 # a whole block at once
+            merged, i, j2 = [], 0, 0
+            while i &lt; len(left) and j2 &lt; len(right):
+                if left[i] &lt;= right[j2]:
+                    merged.append(left[i]); i += 1
+                else:
+                    merged.append(right[j2]); j2 += 1
+            merged.extend(left[i:]); merged.extend(right[j2:])
+            return merged, count
+        return sort_count(list(nums))[1]</code></pre>
+<p><a href="https://leetcode.com/problems/reverse-pairs/">leetcode.com/problems/reverse-pairs</a></p>
+<h2>LeetCode 169 - Majority Element</h2>
+<p><strong>The task.</strong> Given an array, return the value that appears more than <code>n / 2</code> times.</p>
+<p><strong>Input / output.</strong> A list of integers. Return the single value that holds the majority.</p>
+<p><strong>Example.</strong> <code>nums = [2, 2, 1, 1, 1, 2, 2]</code> gives <strong>2</strong>. There are seven elements, so a majority needs at least four; 2 appears four times and 1 appears three, so 2 is the answer. The shorter <code>nums = [3, 2, 3]</code> gives <strong>3</strong> — two out of three.</p>
+<p><strong>Constraints.</strong> <code>1 &lt;= n &lt;= 5 * 10^4</code> and <code>-10^9 &lt;= nums[i] &lt;= 10^9</code>, and — the one that changes everything — <strong>the majority element always exists</strong>. That promise is what lets you skip verification. The follow-up asks for <code>O(n)</code> time and <code>O(1)</code> space, which rules out both sorting and a hash map of counts.</p>
+<p><strong>The move.</strong> Boyer-Moore voting: keep one candidate and one count. A value equal to the candidate adds to the count, anything else subtracts, and when the count hits zero the next value becomes the candidate. A value holding more than half the array cannot be cancelled away, however the other values are arranged, so whatever survives is the answer. One pass, one integer of memory.</p>
+<p><strong>Where it connects.</strong> This is the baseline from the top of the article. On the 2,000-row table it answers <code>0</code>, which is right 0.9900 of the time — and any accuracy you report has to beat that before it means anything.</p>
+<p><strong>Without the promise.</strong> Remove the guarantee and the algorithm still returns something. On <code>[1, 2, 3]</code> it returns <strong>3</strong>, which appears once in three rows. A second pass that counts the candidate turns that into &quot;there is no majority&quot;. It returns a well-formed number either way and never raises — the same shape as every failure in this article.</p>
+<pre><code>class Solution:
+    def majorityElement(self, nums: list[int]) -&gt; int:
+        count, candidate = 0, None
+        for v in nums:
+            if count == 0:
+                candidate = v
+            count += 1 if v == candidate else -1
+        return candidate</code></pre>
+<p><a href="https://leetcode.com/problems/majority-element/">leetcode.com/problems/majority-element</a></p>
+<h2>Complexity</h2>
+<pre><code>Operation                                 Time                   Space
+----------------------------------------  ---------------------  --------
+confusion matrix and every ratio from it  O(n)                   O(1)
+ROC or PR curve, and the area under it    O(n log n)             O(n)
+ROC-AUC from the pair definition          O(P x N)               O(P x N)
+ROC-AUC from the ranks                    O(n log n)             O(n)
+k-fold cross-validation                   k x (cost of one fit)  O(n)
+LeetCode 493, merge sort counting         O(n log n)             O(n)
+LeetCode 169, Boyer-Moore                 O(n)                   O(1)</code></pre>
+<h2>Why this matters</h2>
+<p>Every model that reaches production reaches it because a number said it was good enough, and this is the day about that number. The same scores can be read as 0.9895 or as 0.9027; the same two models can be ranked in opposite orders; the same pipeline can report 0.9900 for a model worth 0.4750. None of it raises an exception, because none of it is a bug — every one of those numbers is the correct answer to a question nobody checked they were asking.</p>
+<p>The habit that survives all of it is small: before reading a score, write down what decision it is going to drive. How many rows a day can be reviewed. What a missed positive costs against a wasted review. Whether the test rows could have influenced anything that was fitted. Those three answers pick your metric, your threshold and your splitter — and then the number means what it says.</p>
+</body>
+</html>

@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Building a BPE tokenizer from scratch: turning a sentence into the integers a model actually sees</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Building a BPE tokenizer from scratch: turning a sentence into the integers a model actually sees</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2051%20-%20bpe%20tokenizer%20from%20scratch">day 51 on GitHub</a></p>
+<p><em>100 Days of Python - day 51</em></p>
+<p>The word <code>tokens</code> costs <strong>three tokens</strong>. The word <code> tokens</code>, with a space in front of it, costs <strong>one</strong>.</p>
+<p>Same five letters. The difference is a space, and the reason is that a tokenizer learned <code> tokens</code> as a single symbol because that is how the word appears in running text, while bare <code>tokens</code> was never frequent enough to be worth an id.</p>
+<p>A language model never sees your text. It sees a list of integers, and the thing that produced that list made a long series of choices you did not make: where words break, whether a leading space belongs to the next word, how a number is cut up, and how many of those integers your sentence costs. This is the one part of the pipeline that is not learned by gradient descent — it is learned by counting.</p>
+<p>Everything below is pure Python with no dependencies — about a hundred lines of tokenizer, plus the tests — and <code>python bpe.py</code> prints every measured number in this article.</p>
+<img alt="day51_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2051%20-%20bpe%20tokenizer%20from%20scratch/imgs/day51_1.png">
+<h2>One sentence has four different lengths</h2>
+<pre><code>&quot;the cost of a model call is counted in tokens&quot;
+10 words, 45 characters, 45 bytes, 12 tokens
+the | cost| of| a| model| ca|ll| is| count|ed| in| tokens</code></pre>
+<img alt="day51_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2051%20-%20bpe%20tokenizer%20from%20scratch/imgs/day51_2.png">
+<p>None of those four numbers can be computed from another. Billing is the last one. The context window measures the last one. And the only thing that can produce the last one is the tokenizer itself.</p>
+<p>Look at <code>call</code>. It comes apart into <code> ca</code> and <code>ll</code>, because this corpus never made <code> call</code> frequent enough to merge. Nothing is broken — but the model will never see the word <em>call</em>. It sees two fragments that mean other things in other places.</p>
+<h2>Everything is bytes first</h2>
+<p>A byte-level tokenizer starts with all 256 possible bytes already in the vocabulary. That makes it total: every possible input is representable and there is no unknown-token problem. The cost moves somewhere else.</p>
+<pre><code>   &#x27;a&#x27;  1 byte(s)  [97]           -&gt; 1 token
+   &#x27;é&#x27;  2 byte(s)  [195, 169]     -&gt; 2 tokens
+   &#x27;模&#x27;  3 byte(s)  [230, 168, 161] -&gt; 3 tokens
+  &#x27;🙂&#x27;  4 byte(s)  [240, 159, 153, 130] -&gt; 4 tokens</code></pre>
+<p>On this tokenizer, <code>&#x27;模型看到的從來不是你的文字&#x27;</code> is 13 characters, 39 bytes and <strong>32 tokens</strong>. The English <code>&#x27;what the model sees is never your text&#x27;</code> is 38 characters, 38 bytes and <strong>17 tokens</strong>. Roughly the same sentence; the Chinese one costs 1.9 times as many tokens, and per character it is 2.46 tokens against 0.45 — <strong>5.5 times more</strong>. That is UTF-8 and the training corpus, not the model.</p>
+<h2>Training is three lines</h2>
+<p>Count every adjacent pair in the corpus. Merge the most frequent one into a new symbol. Repeat.</p>
+<pre><code>  #         pair   count   new token
+  1    (32, 116)      41   &#x27; t&#x27;
+  2   (101, 110)      29   &#x27;en&#x27;
+  3   (101, 114)      29   &#x27;er&#x27;
+  4    (32, 105)      26   &#x27; i&#x27;
+  5   (256, 104)      21   &#x27; th&#x27;
+  6    (99, 111)      20   &#x27;co&#x27;
+  7   (111, 107)      17   &#x27;ok&#x27;
+  8   (262, 257)      16   &#x27;oken&#x27;</code></pre>
+<p>Round five merges <code>&#x27; t&#x27;</code> — itself the output of round one — with <code>h</code>. Round eight merges two already-merged symbols, <code>ok</code> and <code>en</code>, into <code>oken</code>. Merges stack on merges, and that is how tokens grow from bytes into whole words.</p>
+<p>On this corpus it stops after <strong>143 merges</strong> at a vocabulary of 399, because no pair occurs twice any more: merging something that appears once grows the vocabulary and shortens nothing.</p>
+<p>The merges are kept <strong>in the order they were made</strong>, and that order is the tokenizer. Encoding is nothing but replaying it.</p>
+<h2>Silent failure #1: the most frequent pair is usually not unique</h2>
+<p>Look at rounds two and three above. <code>&#x27;en&#x27;</code> and <code>&#x27;er&#x27;</code> both occur 29 times. The algorithm says &quot;merge the most frequent pair&quot; and there are two of them.</p>
+<p>Of the 143 merge steps on this corpus, <strong>123 of them — 86% — had a tie at the top.</strong></p>
+<img alt="day51_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2051%20-%20bpe%20tokenizer%20from%20scratch/imgs/day51_4.png">
+<p>Either choice is defensible. But after you take one, the counts around that pair change and the two tokenizers diverge from there. Re-running this training with other tie-breaks gives 141 to 143 merges and 500 to 504 tokens: they compress the corpus to within a few tokens of each other and they disagree about what a token is.</p>
+<p>So the tie-break is not an implementation detail. It is part of the specification:</p>
+<pre><code>best = max(counts.items(), key=lambda kv: (kv[1], -kv[0][0], -kv[0][1]))[0]</code></pre>
+<p>The first field is the count; the other two are the tie-break. Without them, <code>max</code> over a dictionary follows insertion order, and your vocabulary becomes a function of which Python you ran it on. Picking the k most frequent things with a written-down tie-break is LeetCode 692, below.</p>
+<h2>Encoding replays the merges by rank, not by longest match</h2>
+<pre><code>&#x27; counted&#x27; starts as 8 bytes
+after merge #  6 (&#x27;c&#x27; + &#x27;o&#x27;):   &#x27; &#x27; &#x27;co&#x27; &#x27;u&#x27; &#x27;n&#x27; &#x27;t&#x27; &#x27;e&#x27; &#x27;d&#x27;
+after merge # 15 (&#x27; &#x27; + &#x27;co&#x27;):  &#x27; co&#x27; &#x27;u&#x27; &#x27;n&#x27; &#x27;t&#x27; &#x27;e&#x27; &#x27;d&#x27;
+after merge # 19 (&#x27;n&#x27; + &#x27;t&#x27;):   &#x27; co&#x27; &#x27;u&#x27; &#x27;nt&#x27; &#x27;e&#x27; &#x27;d&#x27;
+after merge # 25 (&#x27;u&#x27; + &#x27;nt&#x27;):  &#x27; co&#x27; &#x27;unt&#x27; &#x27;e&#x27; &#x27;d&#x27;
+after merge # 32 (&#x27; co&#x27; + &#x27;unt&#x27;): &#x27; count&#x27; &#x27;e&#x27; &#x27;d&#x27;
+after merge # 34 (&#x27;e&#x27; + &#x27;d&#x27;):   &#x27; count&#x27; &#x27;ed&#x27;</code></pre>
+<img alt="day51_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2051%20-%20bpe%20tokenizer%20from%20scratch/imgs/day51_3.png">
+<p>At every step it applies the available merge with the <strong>smallest rank</strong> — the one learned earliest — not the longest match in the vocabulary.</p>
+<p>This matters more than it looks. Hand someone the table of token strings and nothing else, and they can write a longest-match tokenizer that produces <em>different</em> output on the same vocabulary. That is why what ships with a model is the ordered merge list, not just the strings.</p>
+<h2>Silent failure #2: decoding one token at a time</h2>
+<p><code>&#x27;模型看到的&#x27;</code> is 15 bytes and 13 tokens, and <strong>12 of those 13 tokens are not valid UTF-8 on their own</strong> — three-byte characters routinely get split across token boundaries.</p>
+<pre><code>join the bytes, then decode once:   &#x27;模型看到的&#x27;
+decode each token, then join:       &#x27;������������的&#x27;</code></pre>
+<img alt="day51_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2051%20-%20bpe%20tokenizer%20from%20scratch/imgs/day51_5.png">
+<p><em>The figure shows <code>&#x27;€5 café €9&#x27;</code> rather than the Chinese string — same phenomenon, with characters the figure&#x27;s font can actually draw. There it is 15 bytes, 13 tokens and 8 of them invalid alone.</em></p>
+<p>The second line is what <code>[vocab[i].decode(errors=&#x27;replace&#x27;) for i in ids]</code> gives you, and <code>errors=&#x27;replace&#x27;</code> is precisely why it does not raise. Streaming output token by token is where people meet this: the fix is to hold back bytes that do not yet form a complete character, not to replace them.</p>
+<p>The property most worth testing is the round trip — encode, decode, compare bytes. <code>check()</code> round-trips twelve different strings including the empty string, a lone space, emoji and 500 repeated characters, and then checks five more things: contiguous ids, every merged token equal to the concatenation of the two it came from, and the same merge list on a second run.</p>
+<h2>Silent failure #3: the regex decides what a token may be</h2>
+<p>Before any counting happens, the text is cut into chunks that merges may never cross:</p>
+<pre><code>PRETOKEN = re.compile(r&quot;&quot;&quot;&#x27;(?:[sdmt]|ll|ve|re)| ?[^\W\d_]+| ?\d{1,3}| ?[^\s\w]+|\s+&quot;&quot;&quot;)</code></pre>
+<p>Drop that step — treat the whole corpus as one chunk — and here is what changes:</p>
+<pre><code>                     merges  tokens  tokens/byte  tokens with a space inside
+-------------------  ------  ------  -----------  --------------------------
+one chunk, no regex  144     502     0.3934       12
+pre-tokenised        143     500     0.3918       0</code></pre>
+<p>Compression is almost identical. What changes is <strong>what a token is</strong>: without the regex, 12 of the 144 merges produce tokens with a space in the middle, such as <code>&#x27; is not &#x27;</code>, <code>&#x27;t in&#x27;</code>, <code>&#x27;t is &#x27;</code> and <code>&#x27; the tokeniz&#x27;</code>.</p>
+<p>Tokens like those make a word depend on what follows it, so the same word gets different ids in different sentences and the model has to learn it twice. The regex is not an optimisation; it is a constraint. The two rules doing most of the work are <em>a leading space joins the next word</em> and <em>digits are cut into groups of at most three</em>:</p>
+<pre><code>     &#x27;7&#x27; -&gt; 1 token   [&#x27;7&#x27;]
+   &#x27;128&#x27; -&gt; 2 tokens  [&#x27;1&#x27;, &#x27;28&#x27;]
+  &#x27;1280&#x27; -&gt; 3 tokens  [&#x27;1&#x27;, &#x27;28&#x27;, &#x27;0&#x27;]
+&#x27;128000&#x27; -&gt; 3 tokens  [&#x27;1&#x27;, &#x27;28&#x27;, &#x27;000&#x27;]</code></pre>
+<p>That last line is why models are strange at arithmetic. <code>1280</code> and <code>128000</code> are not stored as numbers; they are stored as a handful of fragments that happen to look similar.</p>
+<h2>What the vocabulary size buys you</h2>
+<pre><code>vocab  merges  tokens  tokens/byte
+-----  ------  ------  -----------
+256    0       1276    1.0000
+300    44      767     0.6011
+350    94      598     0.4687
+399    143     500     0.3918</code></pre>
+<img alt="day51_6" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2051%20-%20bpe%20tokenizer%20from%20scratch/imgs/day51_6.png">
+<p>At 256 there are no merges at all and one token is one byte. 143 merges later the same text is <strong>61% shorter</strong>. The curve flattens because this is a greedy algorithm taking the biggest saving available at each step, so the savings can only shrink. Real tokenizers run the same loop to 50,000–200,000 tokens on hundreds of gigabytes; the shape is identical and the flat part is much further out.</p>
+<h2>The same greedy move as Day 38, from the other end of the table</h2>
+<p>Day 38 built Huffman codes by repeatedly merging the two <strong>least</strong> frequent symbols. BPE repeatedly merges the <strong>most</strong> frequent pair. Both are greedy, both merge, and they are solving different problems.</p>
+<ul><li>Huffman on these bytes: <strong>4.6928 bits per byte</strong>, so the corpus fits in 749 bytes instead of 1,276. The alphabet is unchanged; the codes got shorter.</li><li>BPE with 143 merges: <strong>0.3918 tokens per byte</strong>, so 1,276 bytes become 500 tokens. The sequence got shorter; the alphabet grew to 399.</li></ul>
+<p>Huffman optimises bits on the wire for a fixed alphabet. BPE optimises sequence length for a model whose cost is per token, and it is allowed to invent new symbols to do it. Neither can do the other&#x27;s job: Huffman codes are not integers a model can embed, and BPE tokens are not shorter to transmit.</p>
+<h2>LeetCode 692 - Top K Frequent Words</h2>
+<p><strong>The task.</strong> Given a list of words, return the <code>k</code> most frequent ones, most frequent first. When two words occur the same number of times, the alphabetically smaller one comes first.</p>
+<p><strong>Input / output.</strong> A list of strings and an integer <code>k</code>. Return a list of <code>k</code> strings in the required order.</p>
+<p><strong>Example.</strong> <code>[&quot;i&quot;, &quot;love&quot;, &quot;leetcode&quot;, &quot;i&quot;, &quot;love&quot;, &quot;coding&quot;]</code> with <code>k = 2</code> returns <code>[&quot;i&quot;, &quot;love&quot;]</code>. Both words occur twice, so the tie decides: <code>&quot;i&quot;</code> sorts before <code>&quot;love&quot;</code>. A second example, <code>[&quot;the&quot;, &quot;day&quot;, &quot;is&quot;, &quot;sunny&quot;, &quot;the&quot;, &quot;the&quot;, &quot;the&quot;, &quot;sunny&quot;, &quot;is&quot;, &quot;is&quot;]</code> with <code>k = 4</code>, returns <code>[&quot;the&quot;, &quot;is&quot;, &quot;sunny&quot;, &quot;day&quot;]</code> — <code>&quot;the&quot;</code> has 4, <code>&quot;is&quot;</code> has 3, then <code>&quot;sunny&quot;</code> and <code>&quot;day&quot;</code> are separated by count, not by the tie-break.</p>
+<p><strong>Constraints.</strong> <code>1 &lt;= words.length &lt;= 500</code>, each word is 1 to 10 lowercase letters, and <code>k</code> is between 1 and the number of distinct words. The follow-up asks for <code>O(n log k)</code> time and <code>O(n)</code> space, which is what rules out sorting everything and forces the heap.</p>
+<p><strong>The move.</strong> One sort key carries both rules: <code>(-count[w], w)</code> — falling on the count, rising on the word.</p>
+<p><strong>The trap.</strong> The heap version is where this gets interesting, and it is the version you want when the vocabulary is large. A size-<code>k</code> min-heap has to evict the <strong>worst</strong> candidate, which here means the least frequent and, among equals, the alphabetically <strong>last</strong>. So the count has to compare forwards while the string compares backwards. A tuple of <code>(count, word)</code> cannot express that — you need a wrapper class with an inverted <code>__lt__</code>, or a negated count with a max-heap.</p>
+<p>This is the BPE merge loop as an interview question: find the most frequent thing, break ties by a rule you wrote down, repeat.</p>
+<pre><code>class Solution:
+    def topKFrequent(self, words: list[str], k: int) -&gt; list[str]:
+        count = Counter(words)
+        # one key, both rules: falling on the count, rising on the word
+        return sorted(count, key=lambda w: (-count[w], w))[:k]</code></pre>
+<p><a href="https://leetcode.com/problems/top-k-frequent-words/">leetcode.com/problems/top-k-frequent-words</a></p>
+<h2>LeetCode 394 - Decode String</h2>
+<p><strong>The task.</strong> Expand an encoded string where <code>k[substring]</code> means the substring repeated <code>k</code> times. The brackets can nest.</p>
+<p><strong>Input / output.</strong> A string. Return the expanded string.</p>
+<p><strong>Example.</strong> <code>&quot;3[a]2[bc]&quot;</code> becomes <code>&quot;aaabcbc&quot;</code>. <code>&quot;3[a2[c]]&quot;</code> becomes <code>&quot;accaccacc&quot;</code>: the inner <code>2[c]</code> expands to <code>cc</code>, making the body <code>acc</code>, and the outer <code>3[...]</code> repeats that three times. <code>&quot;2[abc]3[cd]ef&quot;</code> becomes <code>&quot;abcabccdcdcdef&quot;</code> — note that <code>ef</code> lands <em>after</em> the expansions, not inside them.</p>
+<p><strong>Constraints.</strong> <code>1 &lt;= s.length &lt;= 30</code>, the digits give a repeat count between 1 and 300, and the input is always valid — no stray brackets, and no digits inside the square brackets other than as a repeat count. The guarantee of validity is what lets you skip all the error handling and write the loop in seven lines.</p>
+<p><strong>The move.</strong> One stack, and two things pushed at every opening bracket: the text built so far, and the repeat count waiting for the text still to come. Nothing is expanded until the closing bracket arrives, which is what makes the nested case work without recursion.</p>
+<p><strong>Two details the examples are chosen to expose.</strong> Counts can have more than one digit, so it has to be <code>num = num * 10 + int(ch)</code> and not <code>num = int(ch)</code> — otherwise <code>12[a]</code> repeats twice. And after a bracket closes, characters keep accumulating onto the <em>same</em> buffer, which is why the <code>ef</code> in the third example comes out in the right place.</p>
+<p>It is the shape of a decoder: a flat sequence on one side, a longer string on the other, and the expansion driven entirely by a table. A tokenizer&#x27;s decode step is the same move without the nesting.</p>
+<pre><code>class Solution:
+    def decodeString(self, s: str) -&gt; str:
+        stack, cur, num = [], &#x27;&#x27;, 0
+        for ch in s:
+            if ch.isdigit():
+                num = num * 10 + int(ch)       # counts can be multi-digit
+            elif ch == &#x27;[&#x27;:
+                stack.append((cur, num))
+                cur, num = &#x27;&#x27;, 0
+            elif ch == &#x27;]&#x27;:
+                prev, times = stack.pop()
+                cur = prev + cur * times
+            else:
+                cur += ch
+        return cur</code></pre>
+<p><a href="https://leetcode.com/problems/decode-string/">leetcode.com/problems/decode-string</a></p>
+<h2>Complexity</h2>
+<pre><code>Operation                                   Time                                      Space
+------------------------------------------  ----------------------------------------  -----------------------
+one training step (count all pairs, merge)  O(total bytes)                            O(distinct pairs)
+training to a vocabulary of V               O(V x total bytes)                        O(V)
+encoding one chunk of length L              O(L²) worst case, O(L log L) with a heap  O(L)
+decoding n tokens                           O(total bytes out)                        O(total bytes out)
+LeetCode 692, sort                          O(n log n)                                O(n)
+LeetCode 692, size-k heap                   O(n log k)                                O(n)
+LeetCode 394, one stack                     O(length of the output)                   O(length of the output)</code></pre>
+<h2>Why this matters</h2>
+<p>Every number a model consumes or produces is a token, and the tokenizer is the only part of the pipeline that decides what one is. It is where the bill comes from, where the context window gets spent, and where a surprising amount of odd model behaviour starts — arithmetic on fragments of digits, a prompt that behaves differently because of one extra space, a language that costs five times more per character than another.</p>
+<p>It is also, structurally, the simplest thing in the whole stack: count pairs, merge the most frequent, write down the order. The complexity is not in the algorithm. It is in the four places the algorithm quietly decides something on your behalf — the tie-break, the replay order, the byte boundaries, and the regex that runs before any of it.</p>
+</body>
+</html>

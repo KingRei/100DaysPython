@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 51 — BPE Tokenizer 從零實作：把一句話變成模型真正看到的那串整數</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 51 — BPE Tokenizer 從零實作：把一句話變成模型真正看到的那串整數</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2051%20-%20bpe%20tokenizer%20from%20scratch">day 51 on GitHub</a></p>
+<p><em>100 Days of Python - day 51</em></p>
+<p><code>tokens</code> 這個字要花 <strong>3 個 token</strong>。<code> tokens</code>——前面多一個空格——只要 <strong>1 個</strong>。</p>
+<p>同樣五個字母。差別是一個空格，原因是 tokenizer 把「空格＋tokens」學成了一個符號——因為詞在真實文字裡就是長這樣出現的，所以它在語料裡常到值得配一個 id；而沒有空格的 <code>tokens</code> 沒有。</p>
+<p>模型從來沒看過你的文字。它看到的是一串整數，而產生那串整數的東西替你做了一連串你沒做過的決定：詞在哪裡斷、開頭那個空格算不算詞的一部分、數字怎麼被切、以及你這句話要花掉幾個整數。這是整條流程裡唯一一個不是用梯度下降學出來的部分——它是用數次數學出來的。</p>
+<p>底下全部是純 Python、沒有任何相依套件——tokenizer 本身大約一百行，另外還有測試——而 <code>python bpe.py</code> 會把這篇文章裡每一個量出來的數字印出來。</p>
+<img alt="day51_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2051%20-%20bpe%20tokenizer%20from%20scratch/imgs/day51_1.png">
+<h2>同一句話有四種長度</h2>
+<pre><code>&quot;the cost of a model call is counted in tokens&quot;
+10 個詞、45 個字元、45 個位元組、12 個 token
+the | cost| of| a| model| ca|ll| is| count|ed| in| tokens</code></pre>
+<img alt="day51_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2051%20-%20bpe%20tokenizer%20from%20scratch/imgs/day51_2.png">
+<p>這四個數字沒有任何一個能從另一個算出來。計費用的是最後一個，context window 量的是最後一個，而唯一能算出最後一個的東西，就是 tokenizer 本身。</p>
+<p>看 <code>call</code>。它被切成 <code> ca</code> 和 <code>ll</code>，因為這份語料從來沒讓 <code> call</code> 常到可以合併。這不是壞掉——但模型永遠不會看到 <em>call</em> 這個詞，它看到的是兩個碎片，而那兩個碎片在別的地方代表別的東西。</p>
+<h2>一切都先變成位元組</h2>
+<p>byte-level 的 tokenizer 一開始就把 256 個可能的位元組全部放進 vocabulary。這讓它是「全函數」的：任何輸入都表示得出來，不存在 unknown token 的問題。代價換到了別的地方。</p>
+<pre><code>   &#x27;a&#x27;  1 個位元組  [97]                 -&gt; 1 個 token
+   &#x27;é&#x27;  2 個位元組  [195, 169]           -&gt; 2 個 token
+   &#x27;模&#x27;  3 個位元組  [230, 168, 161]      -&gt; 3 個 token
+  &#x27;🙂&#x27;  4 個位元組  [240, 159, 153, 130] -&gt; 4 個 token</code></pre>
+<p>在這個 tokenizer 上，<code>&#x27;模型看到的從來不是你的文字&#x27;</code> 是 13 個字元、39 個位元組、<strong>32 個 token</strong>；英文的 <code>&#x27;what the model sees is never your text&#x27;</code> 是 38 個字元、38 個位元組、<strong>17 個 token</strong>。大致相同的一句話，中文那句花了 1.9 倍的 token，而換算成每個字元是 2.46 對 0.45——<strong>5.5 倍</strong>。原因是 UTF-8 和訓練語料，不是模型。</p>
+<h2>訓練只有三行</h2>
+<p>數語料裡每一對相鄰符號。把最常出現的那一對合併成一個新符號。重複。</p>
+<pre><code>  #         pair   count   new token
+  1    (32, 116)      41   &#x27; t&#x27;
+  2   (101, 110)      29   &#x27;en&#x27;
+  3   (101, 114)      29   &#x27;er&#x27;
+  4    (32, 105)      26   &#x27; i&#x27;
+  5   (256, 104)      21   &#x27; th&#x27;
+  6    (99, 111)      20   &#x27;co&#x27;
+  7   (111, 107)      17   &#x27;ok&#x27;
+  8   (262, 257)      16   &#x27;oken&#x27;</code></pre>
+<p>第五輪把 <code>&#x27; t&#x27;</code>（它自己是第一輪的產物）跟 <code>h</code> 合起來。第八輪更是把兩個已經合併過的符號 <code>ok</code> 和 <code>en</code> 合成 <code>oken</code>。合併可以疊在合併上面，token 就是這樣從位元組長成整個詞的。</p>
+<p>在這份語料上它跑了 <strong>143 次合併</strong>、停在 vocabulary 399，因為已經沒有任何一對出現超過一次：合併只出現一次的東西，只會讓 vocabulary 變大而文字一點都沒變短。</p>
+<p>合併是<strong>照做出來的順序</strong>存下來的，而那個順序就是 tokenizer。編碼不過是把它重播一次。</p>
+<h2>Silent failure #1：最高票通常不只一個</h2>
+<p>看上面第二、第三輪。<code>&#x27;en&#x27;</code> 和 <code>&#x27;er&#x27;</code> 都出現 29 次。演算法說「合併最常出現的那一對」，而最常出現的有兩個。</p>
+<p>這份語料的 143 個合併步驟裡，<strong>有 123 步（86%）在最高票上是平手的。</strong></p>
+<img alt="day51_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2051%20-%20bpe%20tokenizer%20from%20scratch/imgs/day51_4.png">
+<p>挑哪一個都說得過去。但挑完之後，那一對附近的計數都會變，兩個 tokenizer 從這裡開始分家。換別的平手規則重跑一次會得到 141 到 143 次合併、500 到 504 個 token：它們壓縮的結果只差幾個 token，而且對「什麼是一個 token」給出不同的答案。</p>
+<p>所以平手規則不是實作細節，它是規格的一部分：</p>
+<pre><code>best = max(counts.items(), key=lambda kv: (kv[1], -kv[0][0], -kv[0][1]))[0]</code></pre>
+<p>第一個欄位是次數，後面兩個是平手規則。沒有它們，<code>max</code> 掃一個 dict 時follow的是插入順序，你的 vocabulary 就變成「你在哪個 Python 上跑的」的函數。挑最高票又要有明確平手規則，就是後面的 LeetCode 692。</p>
+<h2>編碼是照 rank 重播，不是最長匹配</h2>
+<pre><code>&#x27; counted&#x27; 從 8 個位元組開始
+套用第  6 號合併（&#x27;c&#x27; + &#x27;o&#x27;）：   &#x27; &#x27; &#x27;co&#x27; &#x27;u&#x27; &#x27;n&#x27; &#x27;t&#x27; &#x27;e&#x27; &#x27;d&#x27;
+套用第 15 號合併（&#x27; &#x27; + &#x27;co&#x27;）：  &#x27; co&#x27; &#x27;u&#x27; &#x27;n&#x27; &#x27;t&#x27; &#x27;e&#x27; &#x27;d&#x27;
+套用第 19 號合併（&#x27;n&#x27; + &#x27;t&#x27;）：   &#x27; co&#x27; &#x27;u&#x27; &#x27;nt&#x27; &#x27;e&#x27; &#x27;d&#x27;
+套用第 25 號合併（&#x27;u&#x27; + &#x27;nt&#x27;）：  &#x27; co&#x27; &#x27;unt&#x27; &#x27;e&#x27; &#x27;d&#x27;
+套用第 32 號合併（&#x27; co&#x27; + &#x27;unt&#x27;）：&#x27; count&#x27; &#x27;e&#x27; &#x27;d&#x27;
+套用第 34 號合併（&#x27;e&#x27; + &#x27;d&#x27;）：   &#x27; count&#x27; &#x27;ed&#x27;</code></pre>
+<img alt="day51_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2051%20-%20bpe%20tokenizer%20from%20scratch/imgs/day51_3.png">
+<p>每一步套用的是「現在還在的相鄰組合裡 <strong>rank 最小</strong> 的那一個」——也就是最早被學到的那一個——而不是 vocabulary 裡最長的匹配。</p>
+<p>這件事比看起來重要。你只把 token 的字串表交給別人，他可以寫出一個最長匹配的 tokenizer，在同一個 vocabulary 上產生<strong>不同</strong>的輸出。所以跟著模型一起發佈的是那份有順序的合併清單，不是只有字串。</p>
+<h2>Silent failure #2：一個一個 token 解碼</h2>
+<p><code>&#x27;模型看到的&#x27;</code> 是 15 個位元組、13 個 token，而<strong>其中 12 個單獨拿出來不是合法的 UTF-8</strong>——三個位元組的字被切在 token 邊界上是常態。</p>
+<pre><code>先把位元組接起來，再 decode 一次：   &#x27;模型看到的&#x27;
+一個一個 decode 再接起來：          &#x27;������������的&#x27;</code></pre>
+<img alt="day51_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2051%20-%20bpe%20tokenizer%20from%20scratch/imgs/day51_5.png">
+<p><em>圖上畫的是 <code>&#x27;€5 café €9&#x27;</code> 而不是那句中文——同一件事，但換成圖的字型畫得出來的字元。那串是 15 個位元組、13 個 token，其中 8 個單獨不是合法 UTF-8。</em></p>
+<p>第二行就是 <code>[vocab[i].decode(errors=&#x27;replace&#x27;) for i in ids]</code> 會給你的東西，而 <code>errors=&#x27;replace&#x27;</code> 正是它不丟例外的原因。逐 token 串流輸出時最容易撞到這個：正確的修法是把還沒構成完整字元的位元組留在手上，不是用 replace 蓋過去。</p>
+<p>一個 tokenizer 最該測的性質就是 round trip——encode、decode、比對位元組。<code>check()</code> 對十二種不同的字串做了 round trip，包括空字串、單一空格、emoji 和重複 500 次的字元，另外還檢查五件事：id 連續、每個合併出來的 token 等於它的兩個來源接起來、以及重跑一次會得到同一份合併清單。</p>
+<h2>Silent failure #3：那條 regex 決定了什麼可以當 token</h2>
+<p>在開始數任何東西之前，文字會先被切成「合併不准跨過去」的塊：</p>
+<pre><code>PRETOKEN = re.compile(r&quot;&quot;&quot;&#x27;(?:[sdmt]|ll|ve|re)| ?[^\W\d_]+| ?\d{1,3}| ?[^\s\w]+|\s+&quot;&quot;&quot;)</code></pre>
+<p>把這一步拿掉——整份語料當成一塊——結果是：</p>
+<pre><code>                    合併次數  token 數  tokens/byte  中間有空格的 token
+------------------  --------  --------  -----------  ------------------
+一整塊，沒有 regex  144       502       0.3934       12
+有 pre-tokenise     143       500       0.3918       0</code></pre>
+<p>壓縮率幾乎一樣。變的是<strong>什麼算一個 token</strong>：沒有 regex 的話，144 個合併裡有 12 個產生了中間夾著空格的 token，例如 <code>&#x27; is not &#x27;</code>、<code>&#x27;t in&#x27;</code>、<code>&#x27;t is &#x27;</code>、<code>&#x27; the tokeniz&#x27;</code>。</p>
+<p>這種 token 會讓一個詞取決於它後面接什麼，於是同一個詞在不同句子裡拿到不同的 id，模型得把它學兩次。那條 regex 不是優化，它是約束。裡面出力最多的兩條規則是「開頭的空格跟著後面那個詞」和「連續數字切成最多三位一組」：</p>
+<pre><code>     &#x27;7&#x27; -&gt; 1 個 token   [&#x27;7&#x27;]
+   &#x27;128&#x27; -&gt; 2 個 token   [&#x27;1&#x27;, &#x27;28&#x27;]
+  &#x27;1280&#x27; -&gt; 3 個 token   [&#x27;1&#x27;, &#x27;28&#x27;, &#x27;0&#x27;]
+&#x27;128000&#x27; -&gt; 3 個 token   [&#x27;1&#x27;, &#x27;28&#x27;, &#x27;000&#x27;]</code></pre>
+<p>最後那一行就是模型算術很奇怪的原因。<code>1280</code> 和 <code>128000</code> 並不是以數字的形式存在的，它們是幾個碰巧長得很像的碎片。</p>
+<h2>vocabulary 大小買到了什麼</h2>
+<pre><code>vocab  合併次數  token 數  tokens/byte
+-----  --------  --------  -----------
+256    0         1276      1.0000
+300    44        767       0.6011
+350    94        598       0.4687
+399    143       500       0.3918</code></pre>
+<img alt="day51_6" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2051%20-%20bpe%20tokenizer%20from%20scratch/imgs/day51_6.png">
+<p>256 的時候完全沒有合併，一個 token 就是一個位元組。143 次合併之後，同一段文字短了 <strong>61%</strong>。曲線會變平，是因為這是貪婪演算法，每一步都先拿走當下最大的那筆節省，所以後面的節省只會越來越小。真正的 tokenizer 把同一個迴圈跑到 50,000–200,000 個 token、資料量是好幾百 GB；形狀一模一樣，只是平掉的位置在很後面。</p>
+<h2>跟 Day 38 同一個貪婪動作，只是從次數表的另一端</h2>
+<p>Day 38 建 Huffman code 的方法是反覆合併<strong>最不常出現</strong>的兩個符號。BPE 反覆合併<strong>最常出現</strong>的那一對。兩個都是貪婪、都是合併，而它們在解不同的問題。</p>
+<ul><li>Huffman 在這些位元組上：<strong>每個位元組 4.6928 bits</strong>，所以語料用 749 個位元組裝得下，原本是 1,276。字母表沒變，是編碼變短了。</li><li>BPE 做了 143 次合併：<strong>每個位元組 0.3918 個 token</strong>，所以 1,276 個位元組變成 500 個 token。序列變短了，字母表長到 399。</li></ul>
+<p>Huffman 是在固定字母表下最佳化「線路上的位元數」。BPE 是在「成本按 token 計價」的模型下最佳化序列長度，而且它可以發明新符號。兩者誰也做不了對方的工作：Huffman code 不是模型能 embed 的整數，而 BPE 的 token 傳輸起來並沒有比較短。</p>
+<h2>LeetCode 692 - Top K Frequent Words（前 K 個高頻詞）</h2>
+<p><strong>題意。</strong> 給一串單字，回傳出現次數最多的 <code>k</code> 個，次數多的排前面。兩個字次數一樣時，字母序小的排前面。</p>
+<p><strong>輸入／輸出。</strong> 一個字串串列和一個整數 <code>k</code>。回傳 <code>k</code> 個字串，順序照上面的規則。</p>
+<p><strong>範例。</strong> <code>[&quot;i&quot;, &quot;love&quot;, &quot;leetcode&quot;, &quot;i&quot;, &quot;love&quot;, &quot;coding&quot;]</code>、<code>k = 2</code>，答案是 <code>[&quot;i&quot;, &quot;love&quot;]</code>。兩個字都出現兩次，所以由平手規則決定：<code>&quot;i&quot;</code> 字母序在 <code>&quot;love&quot;</code> 前面。另一個例子 <code>[&quot;the&quot;, &quot;day&quot;, &quot;is&quot;, &quot;sunny&quot;, &quot;the&quot;, &quot;the&quot;, &quot;the&quot;, &quot;sunny&quot;, &quot;is&quot;, &quot;is&quot;]</code>、<code>k = 4</code>，答案是 <code>[&quot;the&quot;, &quot;is&quot;, &quot;sunny&quot;, &quot;day&quot;]</code>——<code>&quot;the&quot;</code> 4 次、<code>&quot;is&quot;</code> 3 次，而 <code>&quot;sunny&quot;</code> 和 <code>&quot;day&quot;</code> 是靠次數分出來的，不是靠平手規則。</p>
+<p><strong>限制。</strong> <code>1 &lt;= words.length &lt;= 500</code>，每個字是 1 到 10 個小寫字母，<code>k</code> 介於 1 和相異字數之間。follow-up 要求 <code>O(n log k)</code> 時間、<code>O(n)</code> 空間——就是這一條排除了「全部排序」而逼出 heap。</p>
+<p><strong>關鍵動作。</strong> 一個排序 key 同時裝下兩條規則：<code>(-count[w], w)</code>，次數遞減、字串遞增。</p>
+<p><strong>陷阱。</strong> heap 版本才是有趣的地方，也是 vocabulary 很大時你真正要的版本。size-<code>k</code> 的 min-heap 必須淘汰<strong>最差</strong>的候選，而這裡「最差」是指次數最少、同次數時字母序<strong>最後</strong>的那一個。所以次數要正著比、字串要反著比。<code>(count, word)</code> 這樣的 tuple 表達不了這件事——你得包一層把 <code>__lt__</code> 反過來的類別，或是把次數取負配 max-heap。</p>
+<p>這就是 BPE 合併迴圈變成面試題的樣子：找出最常出現的那個、照一條你寫下來的規則處理平手、再做一次。</p>
+<pre><code>class Solution:
+    def topKFrequent(self, words: list[str], k: int) -&gt; list[str]:
+        count = Counter(words)
+        # one key, both rules: falling on the count, rising on the word
+        return sorted(count, key=lambda w: (-count[w], w))[:k]</code></pre>
+<p><a href="https://leetcode.com/problems/top-k-frequent-words/">leetcode.com/problems/top-k-frequent-words</a></p>
+<h2>LeetCode 394 - Decode String（字串解碼）</h2>
+<p><strong>題意。</strong> 把一個編碼過的字串展開，其中 <code>k[substring]</code> 表示那段子字串重複 <code>k</code> 次。括號可以巢狀。</p>
+<p><strong>輸入／輸出。</strong> 一個字串，回傳展開後的字串。</p>
+<p><strong>範例。</strong> <code>&quot;3[a]2[bc]&quot;</code> 變成 <code>&quot;aaabcbc&quot;</code>。<code>&quot;3[a2[c]]&quot;</code> 變成 <code>&quot;accaccacc&quot;</code>：裡層的 <code>2[c]</code> 展開成 <code>cc</code>，讓本體變成 <code>acc</code>，外層的 <code>3[...]</code> 再把它重複三次。<code>&quot;2[abc]3[cd]ef&quot;</code> 變成 <code>&quot;abcabccdcdcdef&quot;</code>——注意 <code>ef</code> 是落在展開<strong>之後</strong>，不是裡面。</p>
+<p><strong>限制。</strong> <code>1 &lt;= s.length &lt;= 30</code>，數字給出的重複次數介於 1 到 300，而且輸入保證合法——沒有落單的括號，方括號裡也不會有數字（除了當重複次數）。「保證合法」這一條，就是讓你可以完全不做錯誤處理、七行寫完這個迴圈的原因。</p>
+<p><strong>關鍵動作。</strong> 一個 stack，每遇到一個 <code>[</code> 就推兩樣東西進去：目前累積好的字串，以及等著後面那段文字的重複次數。在 <code>]</code> 到達之前什麼都不展開——這就是巢狀情況不用遞迴也能work的原因。</p>
+<p><strong>範例刻意要露出來的兩個細節。</strong> 次數可能是多位數，所以必須寫 <code>num = num * 10 + int(ch)</code> 而不是 <code>num = int(ch)</code>，否則 <code>12[a]</code> 會只重複兩次。以及括號收掉之後，字元會繼續接在<strong>同一個</strong> buffer 上，這就是第三個例子的 <code>ef</code> 會出現在正確位置的原因。</p>
+<p>它就是 decoder 的形狀：一邊是一串扁平的序列，另一邊是比較長的字串，而展開完全由一張表驅動。tokenizer 的 decode 就是沒有巢狀的同一招。</p>
+<pre><code>class Solution:
+    def decodeString(self, s: str) -&gt; str:
+        stack, cur, num = [], &#x27;&#x27;, 0
+        for ch in s:
+            if ch.isdigit():
+                num = num * 10 + int(ch)       # counts can be multi-digit
+            elif ch == &#x27;[&#x27;:
+                stack.append((cur, num))
+                cur, num = &#x27;&#x27;, 0
+            elif ch == &#x27;]&#x27;:
+                prev, times = stack.pop()
+                cur = prev + cur * times
+            else:
+                cur += ch
+        return cur</code></pre>
+<p><a href="https://leetcode.com/problems/decode-string/">leetcode.com/problems/decode-string</a></p>
+<h2>複雜度</h2>
+<pre><code>操作                                 時間                               空間
+-----------------------------------  ---------------------------------  -------------------
+一次訓練步驟（數完所有 pair、合併）  O(總位元組數)                      O(相異 pair 數)
+訓練到 vocabulary 為 V               O(V x 總位元組數)                  O(V)
+編碼一塊長度 L 的文字                最壞 O(L²)，配 heap 是 O(L log L)  O(L)
+解碼 n 個 token                      O(輸出的總位元組數)                O(輸出的總位元組數)
+LeetCode 692，排序                   O(n log n)                         O(n)
+LeetCode 692，size-k heap            O(n log k)                         O(n)
+LeetCode 394，一個 stack             O(輸出長度)                        O(輸出長度)</code></pre>
+<h2>這一天為什麼重要</h2>
+<p>模型吃進去和吐出來的每一個數字都是 token，而 tokenizer 是整條流程裡唯一決定「什麼是一個 token」的地方。帳單從這裡來、context window 從這裡被花掉，而且相當多看起來很怪的模型行為也是從這裡開始的——在數字碎片上做算術、一個 prompt 因為多打一個空格而表現不同、某個語言每個字元的成本是另一個語言的五倍。</p>
+<p>而它在結構上又是整個 stack 裡最簡單的東西：數 pair、合併最常出現的、把順序寫下來。複雜的不是演算法，是演算法替你安靜決定掉的那四個地方——平手規則、重播順序、位元組邊界，以及在這一切之前先跑的那條 regex。</p>
+</body>
+</html>

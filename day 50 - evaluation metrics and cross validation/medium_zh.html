@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 50 — 評估指標與交叉驗證：決定要看 accuracy、F1 還是 AUC</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 50 — 評估指標與交叉驗證：決定要看 accuracy、F1 還是 AUC</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2050%20-%20evaluation%20metrics%20and%20cross%20validation">day 50 on GitHub</a></p>
+<p><em>100 Days of Python - day 50</em></p>
+<p>我在 2,000 列資料上訓練了一個 logistic regression，其中 20 列是正樣本，然後用它沒看過的列去評分，問它的 accuracy 是多少：<strong>0.9895</strong>。而「對這 2,000 列一律回答負樣本」可以拿到 <strong>0.9900</strong>。所以這個訓練過的模型輸給一個常數，而且它的 recall 和 F1 都是 0.0000。</p>
+<p>同一組分數算出來的 ROC-AUC 是 <strong>0.9027</strong>。照分數排序，那 20 個正樣本落在 2,000 列裡的第 2、5、…、452、1407 名：<strong>前 20 名裡有 7 個</strong>，而名次的中位數是 <strong>83</strong>——中間那兩個分別在第 77 和第 89 名。這就是 ROC-AUC 0.90 近看的樣子——大部分很前面，但拖著一條長尾巴。模型確實學到了東西。兩個數字都沒有算錯，而會被寫進報告的那一個，剛好是搞錯這個模型的那一個。</p>
+<p>Day 47 評分了 k-means，Day 48 評分了決策樹與森林，兩天都報了一個 accuracy，而沒有問那個 accuracy 是由什麼組成的。今天就是來問這件事。底下全部是純 NumPy（文章裡每一個量出來的數字都是 <code>python evaluation.py</code> 印的），整天只處理一個問題：當你只能在報告上放一個數字，那個數字應該是哪一個？</p>
+<img alt="day50_1" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2050%20-%20evaluation%20metrics%20and%20cross%20validation/imgs/day50_1.png">
+<h2>四個計數，每個指標都是它們的某一個比值</h2>
+<p>一個已經做完決定的分類器，產生的就只有四個數字。八列資料，真值 <code>[1, 1, 1, 0, 0, 0, 0, 0]</code>、預測 <code>[1, 1, 0, 1, 0, 0, 0, 0]</code>：</p>
+<pre><code>            猜 0        猜 1
+真的 0          4          1
+真的 1          1          2</code></pre>
+<p><code>tn = 4</code>、<code>fp = 1</code>、<code>fn = 1</code>、<code>tp = 2</code>。這一頁上每一個指標都是這四個數的某一個比值：</p>
+<pre><code>指標               值      分母是什麼
+-----------------  ------  ------------------------------
+accuracy           0.7500  全部
+precision          0.6667  你標出來的，tp + fp
+recall             0.6667  真的存在的，tp + fn
+specificity        0.8000  全部負樣本，tn + fp
+F1                 0.6667  precision 與 recall 的調和平均
+balanced accuracy  0.7333  recall 與 specificity 的平均
+MCC                0.4667  一次用到四個計數</code></pre>
+<p>選指標就是在選「你願意讓哪一個計數長大」。accuracy 把 <code>tp</code> 和 <code>tn</code> 加在一起，所以當 <code>tn</code> 佔了整張表的 99%，accuracy 基本上是在報告 <code>tn</code>。</p>
+<h2>accuracy、precision、recall——以及一顆讓你永遠記得差別的蘋果</h2>
+<p>四個比值，四個不同的分母。一籃 <strong>100 顆水果，其中 10 顆是蘋果</strong>，還有一台蘋果偵測器：它把 8 顆放到「蘋果那一邊」——6 顆真的是蘋果、2 顆是橘子——其餘 92 顆放著不管，包括它漏掉的 4 顆蘋果。</p>
+<pre><code>tp 6    fp 2    fn 4    tn 88</code></pre>
+<img alt="day50_8" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2050%20-%20evaluation%20metrics%20and%20cross%20validation/imgs/day50_8.png">
+<p><strong>accuracy（準確率）</strong> 是「全部」裡面答對多少：<code>(tp + tn) / 100 = 0.9400</code>。</p>
+<p><strong>precision（精確度）</strong> 是「被放到蘋果那一邊的」裡面真的是蘋果的比例：<code>tp / (tp + fp) = 6/8 = 0.7500</code>。拼字本身就是記憶法——preci-<strong>si</strong>-on 問的是你挑出來的那一<strong>側（side）</strong>。它的分母是<strong>模型說了什麼</strong>。</p>
+<p><strong>recall（召回率／喚回度）</strong> 是「所有蘋果」裡面你拿回來幾顆：<code>tp / (tp + fn) = 6/10 = 0.6000</code>。一樣看拼字——rec-<strong>all</strong> 問的是<strong>所有（all）</strong>的蘋果。它的分母是<strong>真實標籤說了什麼</strong>。它還有第二個名字叫<strong>真陽率（TPR）</strong>，這個名字在下下節會用到。</p>
+<p><strong>FPR（偽陽率）</strong> 是另一個類別上的鏡像：「所有橘子」裡面你抓錯了幾顆？<code>fp / (fp + tn) = 2/90 = 0.0222</code>。</p>
+<p>那為什麼有了 accuracy 還要 precision 和 recall？看每個分母是由什麼組成的。recall 只數蘋果。FPR 只數橘子。precision 數的是<strong>你</strong>放到蘋果那一邊的那幾顆，所以它的大小由模型決定。而 accuracy 數的是整籃——那是資料集決定的，模型改不了：100 顆水果裡有 90 顆橘子，accuracy 大部分的值在偵測器開機之前就已經定了。</p>
+<p>一台直接放棄、把每顆水果都說成橘子的偵測器：</p>
+<pre><code>accuracy 0.9000   recall 0.0000   precision nan   （0 / 0——它一顆都沒標）</code></pre>
+<p>0.9000 對上真偵測器的 0.9400，而它一顆蘋果都沒找到。precision 不會這樣被灌水——橘子只有在偵測器真的伸手去抓的時候才會進到它的分母，而那正是它要被追究的那個錯誤；這台偵測器什麼都沒抓，所以 precision 回答 <code>0 / 0</code>。recall 也不會被多數類灌水：那 90 顆橘子從頭到尾不會出現在它裡面。</p>
+<p>它們兩個也會互相拉扯，但不是對稱的。把門檻調高，就是把列從蘋果那一邊搬出去，而這只可能把 true positive 變成 false negative——所以 <strong>recall 是單調的</strong>：門檻往上它只會降，門檻往下它只會升。<strong>precision 不是。</strong> 下一節的表就看得到它在擺動：切 0.20 時 0.3333、0.15 時 0.2500、到 0.10 又回到 0.3500，因為每多標一列，那一列要嘛是蘋果要嘛不是。在 300 組隨機的標籤與分數上，precision 在掃描過程中某處下降的有 <strong>300 組</strong>。「把門檻調高就能換到更好的 precision」是一個傾向，不是保證；只有 recall 給你保證。</p>
+<p>要優化哪一個，是成本問題不是統計問題：</p>
+<pre><code>如果這件事成立                        就優化
+------------------------------------  ---------
+漏掉一個正樣本的代價大於白跑一次檢查  recall
+白跑一次檢查的代價大於漏掉一個正樣本  precision
+兩種代價差不多，而且類別數量平衡      accuracy
+只能給一個數字，而類別不平衡          F1</code></pre>
+<p>Google 的 Machine Learning Crash Course 有<a href="https://developers.google.com/machine-learning/crash-course/classification/accuracy-precision-recall?hl=zh-tw">一章就在講這幾個定義</a>，裡面也有一張形狀一樣的「該用哪個指標」對照表，另外還有<a href="https://developers.google.com/machine-learning/crash-course/classification/thresholding?hl=zh-tw">一章專講門檻與混淆矩陣</a>；兩章各花二十分鐘很值得。</p>
+<h2>Silent failure #1：accuracy 量的是多數類有多大</h2>
+<p>回到那 2,000 列。一律預測多數類：</p>
+<ul><li>accuracy <strong>0.9900</strong></li><li>recall <strong>0.0000</strong></li><li>precision <strong>nan</strong>——它是 <code>0 / 0</code>，因為我們一列都沒標</li><li>MCC <strong>nan</strong>——一整欄都是 0，它的分母就是 0</li></ul>
+<p>precision 和 MCC 拒絕回答，而那個拒絕才是有用的部分：它們注意到這裡沒有東西可以評。accuracy 則若無其事地給了你一個數字。</p>
+<p>找出那個常數就是後面的 LeetCode 169。在這張表上它是 <code>0</code>，涵蓋 0.9900 的列，而那就是你報出來的任何 accuracy 必須先超過的門檻，否則它什麼都沒說。在不平衡資料上引用 accuracy，你引用的其實是類別比例。</p>
+<h2>門檻是你選的數字，就算你從來沒打過它</h2>
+<p>模型輸出的不是類別，是分數；分數要變成決定，必須有人挑一個切點。下面是同一組分數的九個切點，中間沒有重訓任何東西：</p>
+<pre><code>切點  標出的列數  accuracy  precision  recall  F1
+----  ----------  --------  ---------  ------  ------
+0.50  1           0.9895    0.0000     0.0000  0.0000
+0.30  1           0.9895    0.0000     0.0000  0.0000
+0.20  3           0.9895    0.3333     0.0500  0.0870
+0.15  4           0.9890    0.2500     0.0500  0.0833
+0.10  20          0.9870    0.3500     0.3500  0.3500
+0.05  88          0.9560    0.1136     0.5000  0.1852
+0.03  220         0.8940    0.0636     0.7000  0.1167
+0.02  413         0.7995    0.0387     0.8000  0.0739
+0.01  845         0.5865    0.0225     0.9500  0.0439</code></pre>
+<img alt="day50_2" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2050%20-%20evaluation%20metrics%20and%20cross%20validation/imgs/day50_2.png">
+<p>模型給任何一列的最高分只有 <strong>0.6481</strong>，所以切在 0.5 本來就幾乎不會標到東西——而 0.5 是套件的預設值，不是任何人為這份資料做的決定。</p>
+<p>看 accuracy 那一欄。它在<strong>模型什麼都沒抓到的時候最高</strong>，在 F1 最好的時候是 0.9870，在 recall 到 0.9500 的時候只剩 0.5865。accuracy 隨著模型變有用而<strong>下降</strong>，因為有用就是拿 true negative 去換 true positive。</p>
+<p>真正要做的決定不是「哪個指標比較好」，而是「一天有人能審幾列」。那個數字決定切點，切點決定指標。</p>
+<h2>Silent failure #2：一樣的 F1，抓到的案件卻少一半</h2>
+<p>F1 是一個數字扛著兩個互相獨立的量，所以它一定得丟掉其中一個。在 2,000 列、100 個正樣本的表上，兩種標法：</p>
+<pre><code>        標出的列數  抓到  precision  recall  F1      accuracy
+------  ----------  ----  ---------  ------  ------  --------
+撒大網  300         90    0.3000     0.9000  0.4500  0.8900
+撒小網  100         45    0.4500     0.4500  0.4500  0.9450</code></pre>
+<p>F1 完全一樣。撒大網抓到 100 個裡的 90 個，浪費 210 次審查；撒小網抓到 45 個，浪費 55 次。如果那 100 個是詐欺案件，這不是同一個系統的兩個版本——其中一個放走了 55 件。</p>
+<p>而且撒小網——漏掉超過一半的那個——<strong>accuracy 比較高</strong>：0.9450 對 0.8900。兩個數字都報，或是報你的工作真正依賴的那一個，但不要報它們的平均然後說那是摘要。</p>
+<h2>Silent failure #3：ROC-AUC 和 PR-AUC 把兩個模型排成相反的順序</h2>
+<p>兩個模型對同樣 2,000 列評分，其中 20 列是正樣本：</p>
+<ul><li><strong>broad</strong> 把整體分得很開，但有 135 個負樣本排在它最弱的那個正樣本之上。</li><li><strong>sharp</strong> 把一半的正樣本排在所有負樣本之上，另一半埋在很低的地方——那十個只贏過 <strong>17% 到 26%</strong> 的負樣本、平均 <strong>22%</strong>。它的 ROC-AUC 0.6082 就是這樣來的：<code>(10 x 1.0000 + 10 x 0.2163) / 20 = 0.6082</code>。</li></ul>
+<pre><code>       ROC-AUC  average precision  前 10 名  前 20 名  前 50 名  前 100 名
+-----  -------  -----------------  --------  --------  --------  ---------
+broad  0.9800   0.2124             0         3         12        19
+sharp  0.6082   0.5049             10        10        10        10</code></pre>
+<img alt="day50_3" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2050%20-%20evaluation%20metrics%20and%20cross%20validation/imgs/day50_3.png">
+<p>ROC-AUC 大幅偏好 broad，average precision 大幅偏好 sharp。兩邊都沒算錯。</p>
+<p>差別在一個分母。broad 要抓到全部 20 個正樣本，分數得一路降到 0.5897，而<strong>有 135 個負樣本排在那條線之上</strong>。</p>
+<p>ROC 的 x 軸把這 135 個除以全部 <strong>1,980</strong> 個負樣本，所以它們只讓那條軸移動 <code>135/1980 = 0.0682</code>——橫向還不到百分之七，而曲線早就頂到最上面了。同樣這 135 個，佔你為此標出來的所有列的 <code>135/155 = 0.8710</code>：<strong>審查佇列有 87% 是錯的</strong>，precision 會說出來，ROC 曲線不會。同一批錯誤、兩個分母，而只有其中一個的大小等於你一天的工作量。</p>
+<img alt="day50_4" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2050%20-%20evaluation%20metrics%20and%20cross%20validation/imgs/day50_4.png">
+<p>最後四欄才是決定性的。如果分析師一天審 10 列，<strong>sharp 給他 10 個真案件，broad 給他 0 個</strong>。如果一天可以審 100 列，broad 給 19、sharp 還是 10。是審查量能決定該看哪個指標；先看指標再決定，就會挑錯模型。</p>
+<p>可以當成慣例：兩個類別都重要、而且數量差不多時看 ROC-AUC；正樣本稀少、成本在審查佇列上時看 average precision。</p>
+<h2>ROC 的橫軸縱軸為什麼是那兩個，而不是別的</h2>
+<p>ROC 曲線橫軸放 <strong>FPR（偽陽率）</strong>、縱軸放 <strong>recall（真陽率）</strong>。這兩個不是為了對稱才挑的。回頭看那籃水果的分母：</p>
+<ul><li>recall = <code>tp / (tp + fn)</code>——只數<strong>真的是正樣本</strong>的那些列</li><li>FPR = <code>fp / (fp + tn)</code>——只數<strong>真的是負樣本</strong>的那些列</li></ul>
+<p>兩個分母都沒有混到另一個類別，所以<strong>兩條軸都不知道每個類別各有幾個</strong>。往上走是<strong>好處</strong>——真正的正樣本被抓到更多；往右走是<strong>代價</strong>——真正的負樣本被誤標更多。每一個門檻給你一個點，掃過所有門檻就畫出整條曲線；對角線就是亂猜的結果，因為亂猜會以同樣的比例抓到兩個類別。</p>
+<p>這個「不受類別比例影響」是可以量的。把 broad 模型的 20 個正樣本全部留著，然後隨機丟掉負樣本——模型和它的排名從頭到尾沒變，變的只有正樣本有多稀少。每一列都是 50 次抽樣的平均：</p>
+<pre><code>留下的負樣本數  正樣本比例  ROC-AUC  average precision
+--------------  ----------  -------  -----------------
+1,980           0.0100      0.9800   0.2124
+495             0.0388      0.9807   0.5331
+124             0.1389      0.9797   0.8142
+40              0.3333      0.9811   0.9377</code></pre>
+<p>正樣本從佔 1% 變成佔 33%。在這個範圍裡，平均 ROC-AUC 只移動了 <strong>0.00146</strong>，平均 average precision 移動了 <strong>0.72529</strong>——是前者的 <strong>496 倍</strong>。precision 的分母裡同時有 <code>fp</code> 和 <code>tp</code>，所以它感覺得到類別比例；ROC 的兩條軸都是在單一類別內正規化的，所以它們感覺不到。</p>
+<p>「幾乎不受影響」才是誠實的說法，而「幾乎」兩個字是有作用的。上面每一列都是 50 次抽樣的平均；留 40 個負樣本時，那 50 次單獨的抽樣從 <strong>0.9400 到 1.0000</strong> 都有。只剩 40 個負樣本時，你留到的是哪 40 個影響很大，不會漂移的是平均值。</p>
+<p>這個「幾乎不受影響」同時是「該用 ROC-AUC」和「不該用 ROC-AUC」的理由。當你的測試集抽樣時的類別比例跟線上不一樣，你要的就是這個——數字可以搬過去。而當「正樣本很稀少」本身就是你要處理的問題時，你要的剛好不是這個，因為那個數字會維持很高，而審查佇列同時被偽陽性塞滿。這句話就是上一節的全部內容。</p>
+<h2>AUC 就是在數對數，所以 LeetCode 493 才會出現在這一天</h2>
+<p>ROC-AUC 不是一塊你必須去積分的面積。它的定義就是：<em>隨機抽一個正樣本和一個負樣本，正樣本分數比較高的機率是多少？</em>，平手算半個。</p>
+<p>20 個正樣本配 1,980 個負樣本，就是 <strong>39,600 對</strong>。用迴圈把每一對都走一遍，跟從排序後的名次算，兩者：</p>
+<pre><code>照定義，每一對都走:  0.9800000000
+從名次算，O(n log n):  0.9800000000
+差距:                  0.00e+00</code></pre>
+<p>排序一次、讀名次，就得到一模一樣的數字，而且沒有生出任何一對。這在真正要緊的規模上才要緊：10,000 列時，正樣本佔 1% 是 <code>100 x 9,900 = 990,000</code> 對，類別一旦平衡就是 <code>5,000 x 5,000 = 25,000,000</code> 對。LeetCode 493 允許到 50,000 個元素，那是 <code>1,249,975,000</code> 對。</p>
+<p>平手不是細節。一個給每一列同樣分數的模型，一對都沒贏、一對都沒輸，所以它的 AUC 剛好是 <strong>0.5000</strong>。用粗糙的刻度評分——四捨五入後的機率、整數桶、葉子很少的樹——你就會有一大批對變成平手，然後安靜地各算半個。</p>
+<h2>Silent failure #4：直接切 k-fold 會給你一折沒有正樣本</h2>
+<p>交叉驗證的第一步是把列切成 k 塊。常見的寫法是把列號洗牌再切，而<strong>它從頭到尾沒有看過標籤</strong>。同樣 2,000 列、20 個正樣本，切成 10 折：</p>
+<pre><code>先洗牌再切   每折的正樣本數 [0, 6, 2, 1, 0, 3, 1, 4, 1, 2]
+每個類別各自切   每折的正樣本數 [2, 2, 2, 2, 2, 2, 2, 2, 2, 2]</code></pre>
+<img alt="day50_5" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2050%20-%20evaluation%20metrics%20and%20cross%20validation/imgs/day50_5.png">
+<p>有兩折沒有東西可以評。它們上面的 recall 是 <code>0 / 0</code>。<code>np.mean</code> 會讓整個交叉驗證分數變成 <code>nan</code>；<code>np.nanmean</code> 會讓那一折安靜地從平均裡消失。兩種都不會報錯。</p>
+<p>這不是運氣不好。換 200 個不同的洗牌重跑，<strong>166 次（83%）</strong>至少有一折一個正樣本都沒有，2,000 折裡有 258 折沒有任何正樣本。20 個正樣本分到 10 折平均每折 2 個，而 2 很容易是 0。</p>
+<p>分層切折就是「對每個類別各做一次同樣的切法」，多寫一行。它可能讓每折大小差一點點，因為每個類別是分開切的：103 列、9 個正樣本切成 5 折，大小是 <code>[21, 21, 21, 21, 19]</code> 而不是 <code>[21, 21, 21, 20, 20]</code>——差的是「每個類別一列」而不是「總共一列」。</p>
+<h2>Silent failure #5：把每折平均起來，不等於把預測合在一起算</h2>
+<p>五折、同一組 out-of-fold 分數、切在 0.10。把五折變成一個數字的兩種做法：</p>
+<pre><code>每折的 precision  [1.0, 0.1667, 0.3333, 0.1429, 1.0]   平均 0.5286
+合起來算的 precision                                         0.3500</code></pre>
+<p>差了 <strong>+0.1786</strong>，而它來自兩折——那兩折標的列數最少，而且全部標對。五折各自標了 <code>[2, 6, 3, 7, 2]</code> 列，標最少的那兩折拿到 precision 1.0000。平均會把「標了 2 列的那一折」當成跟「標了 7 列的那一折」一樣重。</p>
+<p>precision、recall 和 F1 都是比值，而比值的平均不等於總數的比值。把 out-of-fold 的預測合起來算一次就好。每折的數字留著看離散程度，不要拿來當標題數字。</p>
+<h2>Silent failure #6：三種洩漏，量出來並排出輕重</h2>
+<p>洩漏就是「被留下來測試的那些列的資訊，跑進了模型」。這裡有三種，每一種都用同一套量測跑兩次。</p>
+<p><strong>(a) 同一個客戶同時出現在切線兩邊。</strong> 150 個客戶、每人 4 列，而標籤屬於客戶。分類器就是「抄最近那一列的標籤」——Day 47 的 k = 1 最近鄰，它完全沒有參數，所以它高過擲銅板的部分只可能來自「認出某一列」，不可能來自學習。</p>
+<pre><code>隨機 5-fold   accuracy 0.9900
+照客戶 5-fold   accuracy 0.4750</code></pre>
+<p>一個其實是 0.4750 的 0.9900。模型什麼都沒學到，它認出的是躺在訓練集裡、屬於同一個客戶的另外三列。</p>
+<p><strong>(b) 切之前就先挑好欄位。</strong> 60 列、400 欄高斯雜訊、擲銅板的標籤。這張表裡沒有任何可以找的東西。</p>
+<pre><code>用全部 60 列挑出最好的 5 欄，再做交叉驗證:  0.7837
+把挑欄位搬進每一折，只用該折的訓練列:      0.5169</code></pre>
+<p>兩個都是 20 張獨立抽出來的雜訊表的平均。誠實的數字是 0.5169，真值是 0.5。挑選看過每一個標籤，包括那些它馬上要拿來測試的，所以它找到的是「連測試列都剛好對得上」的欄位。在挑選<strong>之後</strong>才開始的交叉驗證救不回來。</p>
+<p><strong>(c) 切之前就先標準化。</strong> 這次換成另外 60 列——8 個欄位而且裡面真的有訊號，模型也換成 logistic regression 而不是形心。下面兩個數字之間唯一的差別，是欄的平均與標準差在哪裡被 fit 出來。</p>
+<pre><code>在每一折裡算  accuracy 0.7167
+用全部的列算  accuracy 0.7167
+任兩個分數之間的最大差距: 1.50e-04</code></pre>
+<p>幾乎沒有影響，而把這點講出來正是重點：這三種不是一樣嚴重的。平均和標準差是一整欄的兩個摘要值，在每一列可以互換的前提下，五折一次留出來的那 11 到 13 列幾乎推不動它們。但這個前提一旦不成立就不同了——當測試列是比較晚的時間段、或是另一群人，那個全域平均就是關於未來的資訊。前兩種才是把雜訊變成結果的那兩種。</p>
+<img alt="day50_6" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2050%20-%20evaluation%20metrics%20and%20cross%20validation/imgs/day50_6.png">
+<h2>正則化：lambda 怎麼在不花掉測試集的情況下被選出來</h2>
+<p>120 列訓練資料、40 欄，其中只有 4 欄真的影響標籤。L2 懲罰越大，權重越要自己掙到它的大小——加在梯度上的就是 Day 45 與 Day 46 建過的那一項 <code>2 * lam * w</code>：</p>
+<pre><code>lambda  train   5-fold CV  test（4,000 列）  權重絕對值總和
+------  ------  ---------  ----------------  --------------
+0.000   0.9917  0.7500     0.7895            33.87
+0.001   0.9750  0.7500     0.7917            24.29
+0.003   0.9500  0.7500     0.7955            16.53
+0.010   0.9250  0.7333     0.7937            10.02
+0.030   0.9083  0.7333     0.7833            6.53
+0.100   0.8833  0.7333     0.7715            3.83
+0.300   0.8667  0.7333     0.7565            1.99</code></pre>
+<p>完全不加懲罰時，模型在自己訓練的那些列上拿 0.9917，在新的列上拿 0.7895——差了 <strong>0.2022</strong>，而這個差距盯著訓練分數看一輩子也看不出來。交叉驗證存在的理由就是量這個差距。</p>
+<p>交叉驗證從來沒看過那 4,000 列測試資料，而它在三個不同的 lambda 上都拿 0.7500。它分不開它們：120 列切成五份，代表 CV 的 accuracy 只能以 <code>1/120 = 0.0083</code> 為單位跳動。你的驗證集解析度，決定了你有資格區分哪些設定。</p>
+<p>把這個平手往「懲罰最強」的方向打破，選到 lambda 0.003，而它剛好是七個裡面測試分數最好的。取平手裡的第一個則會選到 lambda 0.0、拿 0.7895。這條慣例值得有，因為在你分不出好壞的那幾個設定裡，配得最少的那一個，最不可能是在配驗證折。</p>
+<p>不管怎麼選，這個旋鈕都是在沒有碰測試集的情況下決定的。而這件事為什麼重要，下一節就是答案。</p>
+<h2>Silent failure #7：你拿來挑的那一份，已經不是測試集了</h2>
+<p>在同一份有標籤的資料上評 <code>m</code> 個模型，留下最好的那一個，再把它拿到另一份同樣方式抽出來的資料上評一次。下面每一個模型都是擲銅板，每一個標籤也都是擲銅板，所以它們全部的真實 accuracy 都是 0.5：</p>
+<pre><code>試了幾個模型  在你拿來挑的那份上，最好的  同一個模型，新的一份
+------------  --------------------------  --------------------
+1             0.5061                      0.4940
+10            0.5563                      0.5044
+50            0.5800                      0.5064
+200           0.5981                      0.4952</code></pre>
+<img alt="day50_7" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2050%20-%20evaluation%20metrics%20and%20cross%20validation/imgs/day50_7.png">
+<p>沒有任何東西被學到，也沒有任何東西變好。第一欄會往上爬，是因為你報的是 <strong>m 個有雜訊的量測裡的最大值</strong>，而雜訊的最大值會隨著 m 長大。</p>
+<p>你掃的每一個超參數、調的每一個門檻、在同一份保留資料上試的每一個架構，都加進那個 m 裡。解法就是你本來就有的那個切分：在驗證折上做選擇，而測試集只在最後、在你停止選擇之後，看一次。</p>
+<h2>LeetCode 493 - Reverse Pairs（反轉對）</h2>
+<p><strong>題意。</strong> 給一個整數陣列，數出有幾組位置 <code>(i, j)</code> 滿足 <code>i</code> 在 <code>j</code> 前面、而且前面那個數大於後面那個數的兩倍——也就是 <code>nums[i] &gt; 2 * nums[j]</code>。</p>
+<p><strong>輸入／輸出。</strong> 輸入一個整數串列，回傳一個整數，就是這種組合的數量。</p>
+<p><strong>範例。</strong> <code>nums = [1, 3, 2, 3, 1]</code> 的答案是 <strong>2</strong>。逐對看：位置 1 是 3、位置 4 是 1，而 <code>3 &gt; 2 * 1</code>，所以這組算。位置 3 也是 3，也排在位置 4 前面，這是第二組。位置 2 是 2，而 <code>2 &gt; 2 * 1</code> 不成立，所以不算。另一個例子 <code>nums = [2, 4, 3, 5, 1]</code> 答案是 <strong>3</strong>：4、3、5 都大於最後那個 1 的兩倍。</p>
+<p><strong>限制。</strong> <code>1 &lt;= nums.length &lt;= 5 * 10^4</code>，<code>-2^31 &lt;= nums[i] &lt;= 2^31 - 1</code>。長度才是決定演算法的那個限制：50,000 個元素代表 1,249,975,000 組，所以任何「把每一組都看一遍」的做法都出局。數值範圍是第二個陷阱——在 32 位元整數的語言裡 <code>2 * nums[j]</code> 可能溢位，所以常見的建議是改成跟 <code>nums[i] / 2.0</code> 比、或是把型別放寬。Python 的整數不會溢位，所以這一關在這裡是免費的，在 C++ 或 Java 的面試裡不是。</p>
+<p><strong>關鍵動作。</strong> 先把兩半各自排好，然後在合併<strong>之前</strong>數跨兩半的對數。兩半都排好之後，只要左邊目前這個值大於 <code>2 * right[j]</code>，right 裡 <code>j</code> 之前的每一個也都成立——一次比較結算一整塊。而且因為左邊的值本身是遞增的，<code>j</code> 永遠不會退回去：整個 merge 裡它只走過右半一次，不是每個元素各走一次。</p>
+<p><strong>陷阱。</strong> 把計數塞進 merge 裡看起來是順手撿到的，而它是錯的。merge 的前進條件是 <code>left[i] &lt;= right[j]</code>，我們要的對是 <code>left[i] &gt; 2 * right[j]</code>——兩個不同的順序，所以指標會停在錯的位置。我把那個版本實作出來，跟暴力法在 2,000 個隨機陣列上比對：它錯了 <strong>1,051 次（52.5%）</strong>，而且<strong>多算的有 0 次</strong>——每一次不一致都是少算。第一個不一致是 <code>[5, 0, -10, -8, -19, -17, -20, -13]</code>，它說 23，答案是 28。計數走一趟，合併走另一趟。</p>
+<pre><code>class Solution:
+    def reversePairs(self, nums: list[int]) -&gt; int:
+        def sort_count(a):
+            if len(a) &lt; 2:
+                return a, 0
+            mid = len(a) // 2
+            left, cl = sort_count(a[:mid])
+            right, cr = sort_count(a[mid:])
+            count = cl + cr
+            j = 0
+            for v in left:                 # both halves are sorted,
+                while j &lt; len(right) and v &gt; 2 * right[j]:
+                    j += 1                 # so j only moves forward
+                count += j                 # a whole block at once
+            merged, i, j2 = [], 0, 0
+            while i &lt; len(left) and j2 &lt; len(right):
+                if left[i] &lt;= right[j2]:
+                    merged.append(left[i]); i += 1
+                else:
+                    merged.append(right[j2]); j2 += 1
+            merged.extend(left[i:]); merged.extend(right[j2:])
+            return merged, count
+        return sort_count(list(nums))[1]</code></pre>
+<p><a href="https://leetcode.com/problems/reverse-pairs/">leetcode.com/problems/reverse-pairs</a></p>
+<h2>LeetCode 169 - Majority Element（多數元素）</h2>
+<p><strong>題意。</strong> 給一個陣列，回傳出現次數超過 <code>n / 2</code> 的那個值。</p>
+<p><strong>輸入／輸出。</strong> 輸入一個整數串列，回傳那個佔多數的值。</p>
+<p><strong>範例。</strong> <code>nums = [2, 2, 1, 1, 1, 2, 2]</code> 答案是 <strong>2</strong>。總共七個元素，所以多數至少要四次；2 出現四次、1 出現三次，所以是 2。比較短的 <code>nums = [3, 2, 3]</code> 答案是 <strong>3</strong>——三個裡面佔兩個。</p>
+<p><strong>限制。</strong> <code>1 &lt;= n &lt;= 5 * 10^4</code>，<code>-10^9 &lt;= nums[i] &lt;= 10^9</code>，以及那個改變一切的條件：<strong>多數元素保證存在</strong>。有這個保證，你才可以跳過驗證。follow-up 要求 <code>O(n)</code> 時間、<code>O(1)</code> 空間，這就同時排除了排序和「用 hash map 數次數」。</p>
+<p><strong>關鍵動作。</strong> Boyer-Moore 投票法：留一個候選、一個計數。跟候選一樣就加一，不一樣就減一，計數歸零時下一個值接手當候選。一個佔超過一半的值，不管其他值怎麼排都消不掉，所以活到最後的那個就是答案。一趟掃完，記憶體只用一個整數。</p>
+<p><strong>跟今天的關係。</strong> 這就是文章開頭那條基準線。在那張 2,000 列的表上它回答 <code>0</code>，而這個答案有 0.9900 的機會是對的——你報出來的任何 accuracy 都得先贏過它才有意義。</p>
+<p><strong>拿掉那個保證。</strong> 沒有保證的時候，這個演算法還是會回傳東西。<code>[1, 2, 3]</code> 它回傳 <strong>3</strong>，而 3 在三列裡只出現一次。補一趟計數去驗候選，才會變成「沒有多數」。它兩種情況都回傳一個格式正確的數字、永遠不丟例外——跟這篇文章裡每一個失敗長得一模一樣。</p>
+<pre><code>class Solution:
+    def majorityElement(self, nums: list[int]) -&gt; int:
+        count, candidate = 0, None
+        for v in nums:
+            if count == 0:
+                candidate = v
+            count += 1 if v == candidate else -1
+        return candidate</code></pre>
+<p><a href="https://leetcode.com/problems/majority-element/">leetcode.com/problems/majority-element</a></p>
+<h2>複雜度</h2>
+<pre><code>操作                             時間                   空間
+-------------------------------  ---------------------  --------
+混淆矩陣與它衍生的每一個比值     O(n)                   O(1)
+ROC 或 PR 曲線，以及曲線下面積   O(n log n)             O(n)
+照定義數對數算 ROC-AUC           O(P x N)               O(P x N)
+從名次算 ROC-AUC                 O(n log n)             O(n)
+k-fold 交叉驗證                  k x（訓練一次的成本）  O(n)
+LeetCode 493，merge sort 數對數  O(n log n)             O(n)
+LeetCode 169，Boyer-Moore        O(n)                   O(1)</code></pre>
+<h2>這一天為什麼重要</h2>
+<p>每一個上線的模型，都是因為某個數字說它夠好才上線的，而今天就是在講那個數字。同一組分數可以被讀成 0.9895，也可以被讀成 0.9027；同樣兩個模型可以被排成完全相反的順序；同一條流程可以把一個實際值 0.4750 的模型報成 0.9900。這些都不會丟例外，因為它們都不是 bug——那些數字每一個都是「某個沒有人確認過自己在問的問題」的正確答案。</p>
+<p>活得下來的習慣很小：在讀任何分數之前，先寫下它要驅動哪一個決定。一天能審幾列。漏掉一個正樣本的代價，相對於浪費一次審查。測試列有沒有可能影響到任何被 fit 出來的東西。這三個答案會替你選好指標、門檻和切分方式——然後那個數字才會是它字面上的意思。</p>
+</body>
+</html>
