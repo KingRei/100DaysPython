@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 54 - Positional encodings: sinusoidal, RoPE, ALiBi, and FlexAttention / 位置編碼：sinusoidal、RoPE、ALiBi 與 FlexAttention</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='2' y='2' width='28' height='28' rx='7' fill='%23062434'/><circle cx='11' cy='12' r='4' fill='%2312b3b8'/><circle cx='21' cy='12' r='4' fill='%239d6bff'/><circle cx='16' cy='22' r='4' fill='%23ff9736'/></svg>">
+<style>
+:root{
+  --bg0:#04121c; --bg1:#062434; --card:rgba(6,36,52,.72);
+  --teal:#12b3b8; --teal-d:#0a6b74; --teal-l:#3fe0dd;
+  --purple:#9d6bff; --purple-d:#241542; --purple-l:#c7a6ff;
+  --orange:#ff9736; --orange-d:#3a2109; --orange-l:#ffbe6b;
+  --red:#ff5c5c; --grey:#8fa3ac; --pale:#dff2f5; --white:#ffffff;
+  --serif:"Latin Modern Roman","Liberation Serif",Georgia,"Times New Roman",serif;
+  --mono:"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:
+    radial-gradient(900px 520px at 12% -8%,rgba(157,107,255,.20) 0%,rgba(157,107,255,0) 62%),
+    radial-gradient(900px 520px at 88% -4%,rgba(255,151,54,.16) 0%,rgba(255,151,54,0) 60%),
+    radial-gradient(1200px 800px at 50% 30%,#083041 0%,var(--bg1) 45%,var(--bg0) 100%);
+  color:var(--pale); font-family:var(--serif); min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--teal-l)}
+.wrap{max-width:1180px;margin:0 auto;padding:26px 20px 60px}
+header{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-bottom:6px}
+h1{font-size:30px;margin:0;color:var(--white);letter-spacing:.4px;
+   text-shadow:0 0 16px rgba(63,224,221,.35)}
+.day{font-size:13px;letter-spacing:2.4px;text-transform:uppercase;color:var(--orange-l);
+     border:1px solid var(--orange);border-radius:999px;padding:4px 12px;
+     background:rgba(255,151,54,.10)}
+.sub{color:var(--grey);font-size:15px;margin:8px 0 20px;max-width:72ch;line-height:1.6}
+.spacer{flex:1}
+.lang{display:flex;border:1px solid var(--teal-d);border-radius:999px;overflow:hidden}
+.lang button{background:transparent;color:var(--teal-l);border:0;padding:5px 14px;
+  font-family:var(--serif);font-size:14px;cursor:pointer}
+.lang button.on{background:var(--teal);color:#022}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
+.tabs button{
+  background:rgba(6,40,58,.75);border:1px solid rgba(18,179,184,.45);color:var(--pale);
+  padding:9px 16px;border-radius:9px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  transition:.18s}
+.tabs button:hover{border-color:var(--teal-l);color:var(--white)}
+.tabs button.on{background:linear-gradient(135deg,var(--teal) 0%,var(--purple) 140%);
+  border-color:var(--teal-l);color:#03222a;box-shadow:0 0 18px rgba(18,179,184,.30)}
+.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:18px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid rgba(18,179,184,.28);border-radius:13px;
+      padding:14px 16px}
+.card h3{margin:0 0 10px;font-size:14px;letter-spacing:2px;text-transform:uppercase;
+         color:var(--teal-l);font-weight:normal}
+svg.stage{width:100%;height:auto;display:block;touch-action:none}
+svg.stage text{font-family:var(--serif);user-select:none}
+.narr{min-height:52px;margin-top:10px;padding:10px 12px;border-left:3px solid var(--orange);
+      background:rgba(255,151,54,.07);font-size:16px;line-height:1.55;color:var(--white)}
+.narr code{font-family:var(--mono);font-size:14px;color:var(--orange-l)}
+.narr b{color:var(--orange-l);font-weight:normal}
+.ctrl{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
+.ctrl button{background:rgba(6,40,58,.9);border:1px solid var(--teal-d);color:var(--teal-l);
+  border-radius:8px;padding:7px 13px;cursor:pointer;font-family:var(--serif);font-size:15px;
+  min-width:44px;transition:.15s}
+.ctrl button:hover:not(:disabled){background:var(--teal);color:#03222a}
+.ctrl button:disabled{opacity:.35;cursor:default}
+.ctrl .play{min-width:92px;font-weight:bold;border-color:var(--orange);color:var(--orange-l)}
+.ctrl .play:hover{background:var(--orange);color:#2a1400}
+.ctrl input[type=range]{width:120px;accent-color:var(--purple)}
+.stepno{color:var(--grey);font-size:14px;font-family:var(--mono)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;min-height:30px}
+.chip{border:1px solid var(--teal-d);border-radius:6px;padding:3px 9px;font-family:var(--mono);
+      font-size:14px;color:var(--pale);background:rgba(18,179,184,.10)}
+.chip.hot{border-color:var(--orange);color:var(--orange-l);background:rgba(255,151,54,.14)}
+.chip.act{border-color:var(--purple);color:var(--purple-l);background:rgba(157,107,255,.16)}
+.chip.ok{border-color:var(--teal-l);color:var(--teal-l);background:rgba(63,224,221,.12)}
+.chip.dim{border-color:#2f5661;color:var(--grey);background:transparent}
+.chip.bad{border-color:var(--red);color:#ff9a9a;background:rgba(255,92,92,.14)}
+.chip.empty{border-style:dashed;color:var(--grey);border-color:#2f5661}
+.panel+.panel{margin-top:12px}
+.panel .lbl{font-size:13px;letter-spacing:1.6px;text-transform:uppercase;color:var(--grey);
+  margin-bottom:5px}
+pre.code{margin:0;font-family:var(--mono);font-size:13.5px;line-height:1.72;overflow-x:auto;
+  color:#a8c8d0}
+pre.code .ln{display:block;padding:0 8px;border-left:3px solid transparent;white-space:pre}
+pre.code .ln.on{background:rgba(255,151,54,.12);border-left-color:var(--orange);color:var(--white)}
+pre.code .cm{color:#5f7b85;font-style:italic}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:13.5px;color:var(--grey)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;
+  vertical-align:-1px;border:1px solid rgba(255,255,255,.22)}
+.note{font-size:15px;line-height:1.65;color:var(--pale)}
+.note b{color:var(--purple-l);font-weight:normal}
+.note code{font-family:var(--mono);font-size:13.5px;color:var(--teal-l)}
+.toggle-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.toggle-row button{border:1px solid rgba(18,179,184,.45);border-radius:8px;padding:6px 13px;
+  cursor:pointer;font-family:var(--serif);font-size:14px;
+  background:rgba(6,40,58,.75);color:var(--pale)}
+.toggle-row button.on{background:var(--purple);border-color:var(--purple-l);color:#150a2b}
+footer{margin-top:32px;padding-top:16px;border-top:1px solid rgba(18,179,184,.25);
+  color:var(--grey);font-size:14px;display:flex;gap:18px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <span class="day">Day 54</span>
+  <h1 data-i18n="title">位置編碼：sinusoidal、RoPE、ALiBi 與 FlexAttention</h1>
+  <span class="spacer"></span>
+  <div class="lang">
+    <button id="btn-zh" class="on" onclick="setLang('zh')">中文</button>
+    <button id="btn-en" onclick="setLang('en')">EN</button>
+  </div>
+</header>
+<p class="sub" data-i18n="sub">attention 看不見順序——把 token 洗牌，輸出就跟著洗牌。三種把順序放回去的方法差別在「放在哪裡」，以及超出訓練長度之後還剩下什麼。</p>
+
+<div class="tabs" id="tabs"></div>
+
+<div class="grid">
+  <div>
+    <div class="card">
+      <h3 id="stage-title"></h3>
+      <svg class="stage" id="stage" viewBox="0 0 10 6.4" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="legend" id="legend"></div>
+      <div class="narr" id="narr"></div>
+      <div class="ctrl">
+        <button onclick="reset()" title="reset">⟲</button>
+        <button id="prev" onclick="step(-1)">◀</button>
+        <button class="play" id="play" onclick="togglePlay()" data-i18n="play">▶ 播放</button>
+        <button id="next" onclick="step(1)">▶</button>
+        <span class="stepno" id="stepno">0 / 0</span>
+        <span class="spacer"></span>
+        <span style="font-size:13px;color:var(--grey)" data-i18n="speed">速度</span>
+        <input type="range" id="speed" min="180" max="1600" step="20" value="820">
+      </div>
+      <div class="toggle-row" id="extra"></div>
+    </div>
+  </div>
+  <div>
+    <div class="card" id="state-card">
+      <h3 data-i18n="state">演算法狀態</h3>
+      <div id="panels"></div>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="code">程式碼</h3>
+      <pre class="code" id="code"></pre>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3 data-i18n="idea">重點</h3>
+      <div class="note" id="idea"></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <span>100 Days of Python — Day 54</span>
+  <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2054%20-%20positional%20encodings" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://medium.com/100-days-of-python" target="_blank" rel="noopener">Medium</a>
+</footer>
+</div>
+<script>
+// DAY: 54
+// TITLE_ZH: 位置編碼：sinusoidal、RoPE、ALiBi 與 FlexAttention
+// TITLE_EN: Positional encodings: sinusoidal, RoPE, ALiBi, and FlexAttention
+// SUB_ZH: attention 看不見順序——把 token 洗牌，輸出就跟著洗牌。三種把順序放回去的方法差別在「放在哪裡」，以及超出訓練長度之後還剩下什麼。
+// SUB_EN: Attention cannot see order: shuffle the tokens and the output shuffles with them. The three ways of putting the order back differ in where they inject it, and in what is left of it past the trained length.
+// FOLDER: day%2054%20-%20positional%20encodings
+// MEDIUM: https://medium.com/100-days-of-python
+const VIEW = [9.8, 6.4];
+function chip(t, cls){ return {t:t, cls:cls || ''}; }
+const curV = () => (typeof varIx !== 'undefined' ? varIx : 0);
+
+const isCJK = ch => { const c = ch.codePointAt(0);
+  return (c >= 0x2e80 && c <= 0x9fff) || (c >= 0xff00 && c <= 0xff60) || (c >= 0x3000 && c <= 0x303f); };
+function tw(str, fs){ let w = 0;
+  for (const ch of String(str)) w += isCJK(ch) ? 1.0 : .55;
+  return w * fs; }
+function fitT(x, y, s, opt){
+  opt = Object.assign({}, opt || {});
+  const fs = opt.fs || .32, a = opt.anchor || 'middle', pad = .20;
+  const room = a === 'start' ? VIEW[0] - pad - x
+             : a === 'end'   ? x - pad
+             : 2 * Math.min(x - pad, VIEW[0] - pad - x);
+  const strs = (typeof s === 'string') ? [s] : [s.zh, s.en].filter(t => t != null);
+  const w = Math.max.apply(null, strs.map(t => tw(t, fs)));
+  if (w > room) opt.fs = fs * room / w;
+  return S.t(x, y, s, opt);
+}
+function fitFs(lab, w, fs){
+  const strs = (typeof lab === 'string') ? [lab] : [lab.zh, lab.en];
+  const need = Math.max.apply(null, strs.map(t => tw(t, fs)));
+  return need > w - .08 ? fs * (w - .08) / need : fs;
+}
+const box = (x, y, w, h, s, lab, fs) => S.r(x, y, w, h, s, lab, {fs:fitFs(lab, w, fs || h * .5)});
+function caps(sh, o){
+  if (o.cap) sh.push(fitT(4.9, 5.62, o.cap, {c:o.capc || COL.pale, fs:.30}));
+  if (o.cap2) sh.push(fitT(4.9, 6.06, o.cap2, {c:COL.grey, fs:.26}));
+  return sh;
+}
+const side = (sh, x, y0, lines, dy) => (lines || []).forEach((l, k) =>
+  sh.push(fitT(x, y0 + k * (dy || .5), l[0], {anchor:'start', c:l[1] || COL.pale, fs:l[2] || .30})));
+const fmtN = x => x == null ? 'nan' : String(Math.round(x * 1e4) / 1e4);
+const PURPLE = '#b45cff';
+
+function barRow(sh, x0, base, bw, gap, vals, sts, labs, maxh, top){
+  const hi = top || Math.max.apply(null, vals.map(Math.abs));
+  vals.forEach((v, i) => {
+    const hgt = Math.max(.05, maxh * Math.abs(v) / hi), x = x0 + i * (bw + gap);
+    sh.push(S.r(x, base - hgt, bw, hgt, sts[i] || 'ok', null));
+    if (labs && labs[i] != null) sh.push(fitT(x + bw / 2, base - hgt - .20, labs[i], {c:COL.pale, fs:.24}));
+  });
+  return sh;
+}
+// a 0..1 x 0..1 plot box; data y grows upward, SVG y grows downward
+function Panel(x0, y0, w, h){ this.x0 = x0; this.y0 = y0; this.w = w; this.h = h; }
+Panel.prototype.px = function(p){
+  return [this.x0 + this.w * p[0], this.y0 + this.h * (1 - p[1])];
+};
+Panel.prototype.frame = function(sh){
+  sh.push(S.r(this.x0, this.y0, this.w, this.h, 'ghost', null));
+  return sh;
+};
+function polyline(sh, panel, pts, st, w){
+  for (let i = 1; i < pts.length; i++){
+    const a = panel.px(pts[i - 1]), b = panel.px(pts[i]);
+    sh.push(S.e(a[0], a[1], b[0], b[1], {s:st, arrow:false, w:w || .055}));
+  }
+  return sh;
+}
+const PERM = {"gap": 2.2e-16};
+const SIN = {"pe": [[0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0], [0.8415, 0.5403, 0.0998, 0.995, 0.01, 1.0, 0.001, 1.0], [0.9093, -0.4161, 0.1987, 0.9801, 0.02, 0.9998, 0.002, 1.0], [0.1411, -0.99, 0.2955, 0.9553, 0.03, 0.9996, 0.003, 1.0], [-0.7568, -0.6536, 0.3894, 0.9211, 0.04, 0.9992, 0.004, 1.0], [-0.9589, 0.2837, 0.4794, 0.8776, 0.05, 0.9988, 0.005, 1.0], [-0.2794, 0.9602, 0.5646, 0.8253, 0.06, 0.9982, 0.006, 1.0], [0.657, 0.7539, 0.6442, 0.7648, 0.0699, 0.9976, 0.007, 1.0]], "shift": 3.3e-15, "sim": [{"t": 1, "v": 0.483}, {"t": 2, "v": 0.442}, {"t": 4, "v": 0.374}, {"t": 8, "v": 0.35}, {"t": 16, "v": 0.303}, {"t": 32, "v": 0.306}]};
+const ROPE = {"a": -5.300637, "b": -5.300637, "gap": 2.7e-15, "fast": 6.28, "slow": 54410, "turnsTrain": 0.08, "turnsTarget": 0.6, "interp": 0.125, "ntk": 82685, "angles": [0.0, 3.0, 6.0, 9.0]};
+const ALIBI = [{"h": 0, "slope": 0.5, "window": 10}, {"h": 1, "slope": 0.25, "window": 19}, {"h": 2, "slope": 0.125, "window": 37}, {"h": 3, "slope": 0.0625, "window": 74}, {"h": 4, "slope": 0.0312, "window": 148}, {"h": 5, "slope": 0.0156, "window": 293}, {"h": 6, "slope": 0.0078, "window": 458}, {"h": 7, "slope": 0.0039, "window": 497}];
+const FAR = {"sinusoidal": 10.0, "rope": 93.5, "alibi": 0.0};
+const BLOCK = [{"name": "full", "live": 64, "total": 64, "skipped": 0.0}, {"name": "causal", "live": 36, "total": 64, "skipped": 43.8}, {"name": "sliding 256", "live": 21, "total": 64, "skipped": 67.2}];
+const TILES = {"causal": [[1, 0, 0, 0, 0, 0, 0, 0], [2, 1, 0, 0, 0, 0, 0, 0], [2, 2, 1, 0, 0, 0, 0, 0], [2, 2, 2, 1, 0, 0, 0, 0], [2, 2, 2, 2, 1, 0, 0, 0], [2, 2, 2, 2, 2, 1, 0, 0], [2, 2, 2, 2, 2, 2, 1, 0], [2, 2, 2, 2, 2, 2, 2, 1]], "sliding": [[1, 0, 0, 0, 0, 0, 0, 0], [2, 1, 0, 0, 0, 0, 0, 0], [1, 2, 1, 0, 0, 0, 0, 0], [0, 1, 2, 1, 0, 0, 0, 0], [0, 0, 1, 2, 1, 0, 0, 0], [0, 0, 0, 1, 2, 1, 0, 0], [0, 0, 0, 0, 1, 2, 1, 0], [0, 0, 0, 0, 0, 1, 2, 1]], "full": [[2, 2, 2, 2, 2, 2, 2, 2], [2, 2, 2, 2, 2, 2, 2, 2], [2, 2, 2, 2, 2, 2, 2, 2], [2, 2, 2, 2, 2, 2, 2, 2], [2, 2, 2, 2, 2, 2, 2, 2], [2, 2, 2, 2, 2, 2, 2, 2], [2, 2, 2, 2, 2, 2, 2, 2], [2, 2, 2, 2, 2, 2, 2, 2]]};
+const BUG = {"right": [0.1669, 0.0351, 0.1301, 0.3161, 0.1093, 0.2425], "wrong": [0.0808, 0.0391, 0.1214, 0.3489, 0.1837, 0.2262], "gap": 0.0862};
+
+
+/* ================================================================ tab 1: no order */
+const CODE_PERM = [
+  'out      = attention(X, X, X)',
+  'out_perm = attention(X[perm], X[perm], X[perm])',
+  '',
+  'assert max|out[perm] - out_perm| < 1e-12',
+  '',
+  '# nothing in softmax(Q K^T / sqrt(d)) V mentions an index'
+];
+function permStage(o){
+  const sh = [], cw = 1.12, X0 = 1.30;
+  const words = ['the', 'cat', 'sat', 'on', 'the', 'mat'];
+  const order = o.shuffled ? [2, 0, 5, 1, 4, 3] : [0, 1, 2, 3, 4, 5];
+  order.forEach((idx, j) => {
+    sh.push(box(X0 + j * cw, 3.40, cw * .88, .74, o.shuffled ? 'act' : 'ok',
+                words[idx], .30));
+  });
+  sh.push(fitT(4.9, 2.80, o.shuffled ? {zh:'洗過牌的輸入', en:'the shuffled input'}
+                                     : {zh:'原本的輸入', en:'the input as written'},
+               {c:COL.grey, fs:.28}));
+  side(sh, 1.30, 1.90, o.notes || [], .50);
+  return caps(sh, o);
+}
+function permFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:permStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({shuffled:false, line:0,
+    cap:{zh:'attention 看不見順序', en:'attention cannot see order'},
+    panels:[{lbl:'input', chips:[chip('(n, d)', 'ok')]}],
+    msg:{zh:'attention 的輸入是一組向量，不是一個序列。式子裡沒有任何東西提到 index：分數是 q 和 k 的內積、權重是 softmax、輸出是 V 的加權平均，從頭到尾沒有「第幾個」這回事。',
+         en:'What attention takes in is a set of vectors, not a sequence. Nothing in the formula mentions an index: the score is a dot product, the weights are a softmax, the output is a weighted average of V. There is no notion of "the third one" anywhere in it.'}});
+  p({shuffled:true, line:3,
+    cap:{zh:'把輸入洗牌，輸出就跟著洗牌', en:'shuffle the input and the output shuffles with it'},
+    panels:[{lbl:'max difference', chips:[chip(PERM.gap.toExponential(0), 'ok')]}],
+    msg:{zh:'把輸入的列重新排過，再跑一次 attention，輸出就是「原本輸出照同樣順序重排」——兩者最大差 ' + PERM.gap.toExponential(0) + '，也就是浮點雜訊。所以在加上任何位置資訊之前，模型分不出「the cat sat」和「sat cat the」。',
+         en:'Permute the input rows, run attention again, and the result is the original output permuted the same way - the two differ by ' + PERM.gap.toExponential(0) + ', which is floating-point noise. Until something adds position, the model cannot tell "the cat sat" from "sat cat the".'}});
+  p({shuffled:false, line:5,
+    cap:{zh:'所以要選的不是「要不要編位置」，而是「放在哪裡」', en:'so the choice is not whether to encode position, but where'},
+    panels:[{lbl:'sinusoidal', chips:[chip('on the embedding', 'hot')]},
+            {lbl:'RoPE', chips:[chip('on q and k', 'act')]},
+            {lbl:'ALiBi', chips:[chip('on the scores', 'ok')]}],
+    msg:{zh:'三個答案剛好落在流程的三個不同位置：sinusoidal（或學出來的表）在進 attention 之前把一個向量加到 embedding 上；RoPE 在 attention 裡面把 q 和 k 轉一個角度；ALiBi 等到分數算完、softmax 之前，直接加一個跟距離成正比的懲罰。後面三個分頁各看一個。',
+         en:'The three answers sit at three different points in the pipeline. Sinusoidal (or a learned table) adds a vector to the embedding before attention ever runs. RoPE rotates q and k inside attention. ALiBi waits until the scores exist and adds a penalty proportional to distance, just before the softmax. One tab each.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 2: sinusoidal */
+const CODE_SIN = [
+  'pos = arange(n)[:, None]',
+  'i   = arange(0, d, 2)[None, :]',
+  'ang = pos / (10000 ** (i / d))',
+  'pe[:, 0::2] = sin(ang)',
+  'pe[:, 1::2] = cos(ang)',
+  '',
+  '# x = embed(token) + pe[pos]'
+];
+function sinStage(o){
+  const sh = [], cw = .92, ch = .48, X0 = 1.55, Y0 = 2.05;
+  SIN.pe.forEach((row, i) => row.forEach((v, j) => {
+    const hot = o.col != null && j === o.col;
+    sh.push(box(X0 + j * cw, Y0 + (SIN.pe.length - 1 - i) * ch, cw * .9, ch * .88,
+                hot ? 'hot' : (v >= 0 ? 'ok' : 'act'), v.toFixed(2), .22));
+  }));
+  sh.push(fitT(X0, Y0 + 8 * ch + .02, {zh:'八個位置 x 八個通道（sin / cos 交錯）',
+                                       en:'eight positions by eight channels (sin, cos interleaved)'},
+               {anchor:'start', c:COL.grey, fs:.26}));
+  sh.push(fitT(X0 + 4 * cw, Y0 - .34, {zh:'左邊轉得快，右邊轉得慢', en:'the left pairs turn fast, the right ones slowly'},
+               {c:COL.grey, fs:.26}));
+  return caps(sh, o);
+}
+function sinFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:sinStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({line:4,
+    cap:{zh:'一張寫死的表：每個位置一列', en:'a fixed table: one row per position'},
+    panels:[{lbl:'rows', chips:[chip('positions', 'ok')]}, {lbl:'cols', chips:[chip('sin / cos pairs', 'act')]}],
+    msg:{zh:'每一列是一個位置的向量，直接加到那個位置的 token embedding 上。左邊的通道角度變化快、右邊的慢——最右邊那幾欄在這八個位置裡幾乎沒變，它們負責的是很長距離的差異。',
+         en:'Each row is the vector for one position, added straight onto that position\'s token embedding. The left-hand channels turn quickly and the right-hand ones slowly: the last columns barely move across these eight positions, because they are the ones carrying long-range differences.'}});
+  p({col:0, line:3,
+    cap:{zh:'為什麼是 sin 和 cos', en:'why sines and cosines'},
+    panels:[{lbl:'shift by k', chips:[chip(SIN.shift.toExponential(0), 'ok')]}],
+    msg:{zh:'因為「往後 k 個位置」變成一個固定的旋轉：把每個 (sin, cos) 配對轉一個只跟 k 有關的角度，就會得到 k 個位置之後那一列，誤差 ' + SIN.shift.toExponential(0) + '。同一個線性映射在任何位置都成立，所以模型只要學一次「相差五個 token」是什麼意思，而不是每個 index 各學一次。',
+         en:'Because "k positions later" becomes one fixed rotation: turn each (sin, cos) pair by an angle that depends only on k and you land exactly on the row k positions along, to ' + SIN.shift.toExponential(0) + '. The same linear map works at every position, so the model learns what "five tokens apart" means once, rather than once per index.'}});
+  p({line:6,
+    cap:{zh:'它的相似度隨距離衰減，但會晃', en:'similarity decays with distance, but it wobbles'},
+    panels:[{lbl:'distance / similarity', chips:SIN.sim.map(x => chip(x.t + ': ' + x.v.toFixed(3), 'dim'))}],
+    msg:{zh:'位置 0 的編碼跟距離 1/2/4/8/16/32 的內積是 ' + SIN.sim.map(x => x.v.toFixed(3)).join('、') + '。大致遞減，但不是單調的——它是一堆 cos 相加，會上下晃。這不是誰要求的性質，是這張表附帶的。',
+         en:'The dot product between position 0 and distances 1, 2, 4, 8, 16, 32 is ' + SIN.sim.map(x => x.v.toFixed(3)).join(', ') + '. It falls away, but not monotonically: it is a sum of cosines and it wobbles. That is a property the table happens to have, not one anybody asked for.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 3: RoPE */
+const CODE_ROPE = [
+  'ang = pos / (10000 ** (arange(0, d, 2) / d))',
+  'c, s = cos(ang), sin(ang)',
+  '',
+  'out[..., 0::2] = x[..., 0::2] * c - x[..., 1::2] * s',
+  'out[..., 1::2] = x[..., 1::2] * c + x[..., 0::2] * s',
+  '',
+  '# applied to q and k only - never to V'
+];
+function dial(sh, cx, cy, r, ang, st){
+  const N = 24;
+  for (let i = 0; i < N; i++){
+    const a0 = 2 * Math.PI * i / N, a1 = 2 * Math.PI * (i + 1) / N;
+    sh.push(S.e(cx + r * Math.cos(a0), cy + r * Math.sin(a0),
+                cx + r * Math.cos(a1), cy + r * Math.sin(a1),
+                {s:'ghost', arrow:false, w:.03}));
+  }
+  sh.push(S.e(cx, cy, cx + r * Math.cos(ang), cy + r * Math.sin(ang),
+              {s:st, arrow:true, w:.07}));
+  return sh;
+}
+function ropeStage(o){
+  const sh = [];
+  [0, 3, 6, 9].forEach((pos, i) => {
+    if (i > o.upto) return;
+    const cx = 1.75 + i * 2.35;
+    dial(sh, cx, 3.30, .78, pos, i === o.upto ? 'hot' : 'ok');
+    sh.push(fitT(cx, 2.20, {zh:'位置 ' + pos, en:'position ' + pos}, {c:COL.pale, fs:.28}));
+  });
+  sh.push(fitT(4.9, 4.70, {zh:'最快的那組通道：每個 token 大約轉一個弧度',
+                           en:'the fastest channel pair: about one radian per token'},
+               {c:COL.grey, fs:.26}));
+  side(sh, 1.05, 1.55, o.notes || [], .48);
+  return caps(sh, o);
+}
+function ropeFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:ropeStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({upto:0, line:3,
+    cap:{zh:'位置變成一個旋轉，而不是一個加法', en:'the position becomes a rotation, not an addition'},
+    panels:[{lbl:'applied to', chips:[chip('q', 'hot'), chip('k', 'hot')]},
+            {lbl:'V', chips:[chip('untouched', 'ok')]}],
+    msg:{zh:'RoPE 把 q 和 k 的每一組 (偶數, 奇數) 通道當成平面上的一個向量，轉一個跟位置成正比的角度。沒有任何東西被加上去，所以長度不變、V 完全沒被碰過——層算出來的 value 還是原來那個。',
+         en:'RoPE treats each (even, odd) pair of channels of q and k as a vector in a plane and turns it by an angle proportional to the position. Nothing is added, so lengths do not change and V is never touched: the values stay exactly what the layer computed.'}});
+  [1, 2, 3].forEach(i => {
+    p({upto:i, line:4,
+      cap:{zh:'位置越後面，轉得越多', en:'the further along, the further it turns'},
+      panels:[{lbl:'position', chips:[chip(String([0, 3, 6, 9][i]), 'hot')]}],
+      msg:{zh:'角度是 position 乘上那一組通道自己的頻率。快的通道幾個 token 就轉完一圈，慢的要幾萬個 token——所以同一個向量同時帶著「附近」和「很遠」兩種尺度的位置資訊。',
+           en:'The angle is the position times that channel pair\'s own frequency. Fast pairs complete a turn in a few tokens, slow ones take tens of thousands, so a single vector carries position at several scales at once.'}});
+  });
+  p({upto:3, line:6,
+    cap:{zh:'結果只跟「距離」有關', en:'what comes out depends only on the distance'},
+    panels:[{lbl:'<q@3, k@11>', chips:[chip(ROPE.a.toFixed(6), 'ok')]},
+            {lbl:'<q@100, k@108>', chips:[chip(ROPE.b.toFixed(6), 'ok')]},
+            {lbl:'difference', chips:[chip(ROPE.gap.toExponential(0), 'dim')]}],
+    msg:{zh:'把 q 轉到位置 3、k 轉到位置 11，內積是 ' + ROPE.a.toFixed(6) + '；換成 100 和 108，內積還是 ' + ROPE.b.toFixed(6) + '，差 ' + ROPE.gap.toExponential(0) + '。兩組都相距 8，而分數只看得到這件事——絕對位置在相減時抵消掉了。',
+         en:'Rotate q to position 3 and k to position 11 and the dot product is ' + ROPE.a.toFixed(6) + '; do it at 100 and 108 and it is ' + ROPE.b.toFixed(6) + ', a difference of ' + ROPE.gap.toExponential(0) + '. Both pairs are eight apart, and that is all the score can see: the absolute positions cancel.'}});
+  p({upto:3, line:0,
+    cap:{zh:'長 context 要處理的就是「沒轉完的那一圈」', en:'long context is about the turn that never finished'},
+    panels:[{lbl:'wavelengths', chips:[chip(ROPE.fast + ' tokens', 'act'),
+                                       chip(ROPE.slow.toLocaleString() + ' tokens', 'act')]},
+            {lbl:'turns at 4k / 32k', chips:[chip(ROPE.turnsTrain.toFixed(2), 'ok'),
+                                             chip(ROPE.turnsTarget.toFixed(2), 'bad')]}],
+    msg:{zh:'d = 128 時最快的一組每 ' + ROPE.fast + ' 個 token 轉一圈，最慢的要 ' + ROPE.slow.toLocaleString() + ' 個。訓練長度 4,096 時，最慢那組只走了 ' + ROPE.turnsTrain.toFixed(2) + ' 圈；要用到 32,768 就得走 ' + ROPE.turnsTarget.toFixed(2) + ' 圈——那是它從來沒見過的角度。兩個標準解法瞄準的都是這件事：position interpolation 把位置乘上 ' + ROPE.interp.toFixed(3) + '，或是把 base 從 10,000 拉到大約 ' + ROPE.ntk.toLocaleString() + ' 把波長拉長。',
+         en:'At d = 128 the fastest pair turns every ' + ROPE.fast + ' tokens and the slowest every ' + ROPE.slow.toLocaleString() + '. Trained at 4,096, that slowest pair gets through ' + ROPE.turnsTrain.toFixed(2) + ' of a turn; running at 32,768 would need ' + ROPE.turnsTarget.toFixed(2) + ' turns - angles it has never seen. Both standard fixes aim at exactly that: position interpolation multiplies positions by ' + ROPE.interp.toFixed(3) + ', and raising the base from 10,000 to about ' + ROPE.ntk.toLocaleString() + ' stretches the wavelengths instead.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 4: ALiBi */
+const CODE_ALIBI = [
+  'slopes = 2 ** (-8 / h) ** arange(1, h + 1)',
+  '',
+  'bias = slope * (k_index - q_index)   # negative into the past',
+  's    = Q @ K.T / sqrt(d) + bias',
+  '',
+  '# nothing to embed, nothing to train'
+];
+function alibiStage(o){
+  const sh = [], X0 = 1.45, Y0 = 1.60, WD = 7.0, HT = 2.55;
+  sh.push(S.e(X0, Y0, X0 + WD, Y0, {s:'ghost', arrow:false, w:.04}));
+  sh.push(S.e(X0, Y0, X0, Y0 + HT, {s:'ghost', arrow:false, w:.04}));
+  const top = Math.max.apply(null, ALIBI.map(r => r.window)) * 1.08;
+  const bw = WD / ALIBI.length * .6;
+  ALIBI.forEach((r, i) => {
+    if (i > o.upto) return;
+    const x = X0 + WD * (i + .5) / ALIBI.length - bw / 2;
+    const h = Math.max(.05, HT * r.window / top);
+    sh.push(S.r(x, Y0, bw, h, i < 4 ? 'hot' : 'ok', null));
+    sh.push(fitT(x + bw / 2, Y0 + h + .24, r.window.toLocaleString(),
+                 {c:i < 4 ? COL.hot : COL.tealL, fs:.26}));
+    sh.push(fitT(x + bw / 2, Y0 - .28, r.slope.toFixed(4), {c:COL.grey, fs:.22}));
+  });
+  sh.push(fitT(X0 + WD / 2, Y0 - .72, {zh:'每個 head 自己的 slope', en:'slope, one per head'},
+               {c:COL.grey, fs:.26}));
+  sh.push(fitT(X0 + .10, Y0 + HT + .30, {zh:'99% 的權重落在幾個 token 以內（沒有內容訊號時）',
+                                         en:'tokens holding 99% of the weight, with no content signal'},
+               {anchor:'start', c:COL.grey, fs:.25}));
+  return caps(sh, o);
+}
+function alibiFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:alibiStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({upto:0, line:2,
+    cap:{zh:'直接在分數上扣距離', en:'subtract the distance straight from the score'},
+    panels:[{lbl:'head 0 slope', chips:[chip(ALIBI[0].slope.toFixed(4), 'hot')]},
+            {lbl:'window', chips:[chip(ALIBI[0].window + ' tokens', 'hot')]}],
+    msg:{zh:'ALiBi 沒有任何要嵌入或要訓練的東西：算完分數之後、softmax 之前，每一對位置扣掉 slope × 距離就結束了。slope 最大的 head（' + ALIBI[0].slope.toFixed(4) + '）幾乎只看得到最近 ' + ALIBI[0].window + ' 個 token。',
+         en:'ALiBi has nothing to embed and nothing to train: after the scores exist and before the softmax, each pair loses slope times its distance. The head with the steepest slope (' + ALIBI[0].slope.toFixed(4) + ') effectively sees only the last ' + ALIBI[0].window + ' tokens.'}});
+  p({upto:ALIBI.length - 1, line:0,
+    cap:{zh:'每個 head 一個寬度，合起來蓋住好幾個尺度', en:'one width per head, several scales at once'},
+    cap2:{zh:'最後一列是被 512 的量測範圍截到，不是 slope 決定的', en:'the last bar is clipped by the 512-token probe, not by its slope'},
+    panels:[{lbl:'slopes', chips:[chip('2^(-8/h) geometric', 'dim')]},
+            {lbl:'windows', chips:[chip(ALIBI[0].window + ' .. ' + ALIBI[ALIBI.length - 1].window, 'ok')]}],
+    msg:{zh:'slope 是一條幾何數列，所以每個 head 變成一個不同寬度的「軟視窗」：' + ALIBI.map(r => r.window).join('、') + ' 個 token。沒有人規定誰看多遠，是 slope 自己決定的，而一層裡的 head 合起來就同時覆蓋了近程和遠程。',
+         en:'The slopes are a geometric sequence, so each head becomes a soft window of a different width: ' + ALIBI.map(r => r.window).join(', ') + ' tokens. Nobody assigns a head its range; the slope does, and a layer of heads covers several scales at once.'}});
+  p({upto:ALIBI.length - 1, line:3,
+    cap:{zh:'而它跟序列多長完全無關', en:'and none of it depends on how long the sequence is'},
+    panels:[{lbl:'far token wins', chips:[chip(FAR.alibi.toFixed(1) + '%', 'ok')]}],
+    msg:{zh:'懲罰是距離的函數，不是位置的函數，所以一個從沒看過第 10,000 個位置的模型，仍然看過「往前 400 個 token」。代價寫在同一行裡：距離越遠分數越低，永遠如此——ALiBi 沒辦法讓一個很遠的 token 贏過近的（量出來 0.0%），而那不見得總是你要的。',
+         en:'The penalty is a function of distance, not of position, so a model that has never seen position 10,000 has still seen "400 tokens back". The cost is written on the same line: further always means weaker, so ALiBi can never let a distant token outrank a near one (measured: 0.0%), and that is not always what you want.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 5: extrapolation */
+const CODE_FAR = [
+  'dist = arange(1, 513)',
+  'near, far = dist <= 32, dist > 32      # 32 = the trained length',
+  '',
+  'for 200 random (q, k):',
+  '    if score[far].max() > score[near].max():',
+  '        a token the model never trained on just won'
+];
+function farStage(o){
+  const sh = [], base = 1.75, maxh = 2.30;
+  const rows = [{k:'sinusoidal', v:FAR.sinusoidal, st:'hot'},
+                {k:'RoPE', v:FAR.rope, st:'act'},
+                {k:'ALiBi', v:FAR.alibi, st:'ok'}];
+  rows.forEach((r, i) => {
+    if (i > o.upto) return;
+    const x = 2.05 + i * 2.30, h = Math.max(.05, maxh * r.v / 100);
+    sh.push(S.r(x, base, 1.30, h, r.st, null));
+    sh.push(fitT(x + .65, base + h + .28, r.v.toFixed(1) + '%',
+                 {c:r.st === 'ok' ? COL.tealL : COL.hot, fs:.32}));
+    sh.push(fitT(x + .65, base - .32, r.k, {c:COL.grey, fs:.28}));
+  });
+  sh.push(fitT(4.9, 4.80, {zh:'超出訓練長度的 token 贏過訓練範圍內所有 token 的比例',
+                           en:'how often a token past the trained length out-scores everything inside it'},
+               {c:COL.grey, fs:.26}));
+  return caps(sh, o);
+}
+function farFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:farStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({upto:-1, line:1,
+    cap:{zh:'三種都是公式，所以都「算得出來」', en:'all three are formulas, so all three can be evaluated'},
+    panels:[{lbl:'learned table', chips:[chip('row 4097 does not exist', 'bad')]}],
+    msg:{zh:'先把學出來的絕對位置表分出去：它訓練到 4,096 列，第 4,097 列根本不存在，連算都算不出來。剩下三種都是位置的函數，隨便一個位置都代得進去——但「代得進去」跟「有意義」是兩回事。',
+         en:'Set the learned absolute table aside first: trained to 4,096 rows, row 4,097 simply does not exist, so there is nothing to evaluate. The other three are functions of position and can be evaluated anywhere - but being evaluable is not the same as being meaningful.'}});
+  [0, 1, 2].forEach(i => {
+    const r = [{k:'sinusoidal', v:FAR.sinusoidal}, {k:'RoPE', v:FAR.rope}, {k:'ALiBi', v:FAR.alibi}][i];
+    p({upto:i, line:4,
+      cap:{zh:'訓練長度 32，量到 512，200 組隨機 q/k', en:'trained length 32, distances to 512, 200 random q and k'},
+      panels:[{lbl:r.k, chips:[chip(r.v.toFixed(1) + '%', r.v > 50 ? 'bad' : (r.v === 0 ? 'ok' : 'dim'))]}],
+      msg:i === 2
+        ? {zh:'ALiBi 是 0.0%，而且是結構上的 0：分數隨距離單調下降，遠的永遠贏不了近的。這就是「ALiBi 免費外推」的實際內容，也同時是它放棄的東西。',
+           en:'ALiBi comes out at 0.0%, and it is a structural zero: the score falls monotonically with distance, so a far token can never beat a near one. That is what "ALiBi extrapolates for free" actually means - and it is also what it gives up.'}
+        : {zh:r.k + ' 有 ' + r.v.toFixed(1) + '% 的情況下，某個距離 33–512 的 token 分數比訓練範圍內所有 token 都高。因為 sin/cos 會一直震盪下去，遠處的分數不會自己變小——模型只能靠「訓練時看過」學會忽略它，而它沒看過那些距離。',
+           en:'For ' + r.k + ', in ' + r.v.toFixed(1) + '% of cases some token between 33 and 512 away scores higher than everything inside the trained range. Sines keep oscillating, so distant scores do not shrink on their own: the model has to learn to ignore them, and it only learned that for distances it saw.'}});
+  });
+  return F.list;
+}
+
+/* ================================================================ tab 6: FlexAttention */
+const CODE_FLEX = [
+  's = Q @ K.T / sqrt(d)',
+  's = score_mod(s, q_index, k_index)          # ALiBi, soft-capping, ...',
+  's = where(mask_mod(q_index, k_index), s, -inf)   # causal, window, ...',
+  'w = softmax(s)',
+  'out = w @ V',
+  '',
+  '# every scheme above is now an argument, not a kernel'
+];
+function flexStage(o){
+  const sh = [], cw = .30;
+  const show = o.which || ['causal'];
+  show.forEach((name, idx) => {
+    const T = TILES[name], x0 = show.length === 1 ? 3.60 : (1.50 + idx * 4.30);
+    T.forEach((row, i) => row.forEach((v, j) => {
+      sh.push(S.r(x0 + j * cw, 4.10 - i * cw, cw * .86, cw * .86,
+                  v === 2 ? 'ok' : (v === 1 ? 'hot' : 'idle'), null));
+    }));
+    const live = T.reduce((a, row) => a + row.filter(v => v > 0).length, 0);
+    sh.push(fitT(x0 + T.length * cw / 2, 4.62,
+                 name === 'sliding' ? 'sliding 256' : name, {c:COL.pale, fs:.28}));
+    sh.push(fitT(x0 + T.length * cw / 2, 1.55,
+                 {zh:live + ' / 64 塊要算', en:live + ' of 64 tiles computed'},
+                 {c:COL.tealL, fs:.26}));
+  });
+  sh.push(fitT(4.9, 1.05, {zh:'1,024 個 token、128 寬的塊', en:'1,024 tokens, 128-wide tiles'},
+               {c:COL.grey, fs:.26}));
+  return caps(sh, o);
+}
+function flexFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:flexStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({which:['full'], line:1,
+    cap:{zh:'兩個鉤子就夠了', en:'two hooks are enough'},
+    panels:[{lbl:'score_mod', chips:[chip('ALiBi', 'hot'), chip('soft-cap', 'hot')]},
+            {lbl:'mask_mod', chips:[chip('causal', 'act'), chip('window', 'act')]}],
+    msg:{zh:'前面每一種做法改的都是同樣兩件事之一：分數的值，或這一對到底准不准看。把這兩件事交出去變成函數，causal mask、ALiBi、sliding window、soft-capping 就都不再是各自一支 kernel，而是一個參數。',
+         en:'Every scheme above edits one of two things: the value of a score, or whether a pair is allowed at all. Hand those two out as functions and causal masking, ALiBi, sliding windows and soft-capping stop being separate kernels and become arguments.'}});
+  p({which:['causal'], line:2,
+    cap:{zh:'而且 kernel 不用被拆開', en:'and the fused kernel survives'},
+    panels:[{lbl:'causal', chips:[chip(BLOCK[1].live + ' / 64', 'ok'),
+                                  chip(BLOCK[1].skipped.toFixed(1) + '% skipped', 'ok')]}],
+    msg:{zh:'自己寫 mask 代表要生出一個 n×n 的布林矩陣再貼上去；寫成函數之後，kernel 可以先用塊為單位問「這一塊裡有任何一對是准的嗎」。1,024 個 token、128 寬的塊時，causal 只剩 ' + BLOCK[1].live + ' 塊要算，' + BLOCK[1].skipped.toFixed(1) + '% 的塊從頭到尾不存在。',
+         en:'Writing the mask by hand means materialising an n by n boolean matrix and applying it. Written as a function, the kernel can ask per tile whether anything inside is allowed at all: at 1,024 tokens with 128-wide tiles, causal leaves ' + BLOCK[1].live + ' tiles and ' + BLOCK[1].skipped.toFixed(1) + '% of them never exist.'}});
+  p({which:['causal', 'sliding'], line:2,
+    cap:{zh:'限制越強，跳掉的越多', en:'the tighter the rule, the more gets skipped'},
+    panels:[{lbl:'causal', chips:[chip(BLOCK[1].skipped.toFixed(1) + '%', 'ok')]},
+            {lbl:'sliding 256', chips:[chip(BLOCK[2].skipped.toFixed(1) + '%', 'ok')]}],
+    msg:{zh:'加上 256 的滑動視窗之後只剩 ' + BLOCK[2].live + ' 塊（跳掉 ' + BLOCK[2].skipped.toFixed(1) + '%）。深色的塊裡一對都不准，所以那些分數根本沒被算出來——這才是這個 API 存在的理由，不是寫起來比較漂亮。',
+         en:'Add a 256-token sliding window and only ' + BLOCK[2].live + ' tiles are left (' + BLOCK[2].skipped.toFixed(1) + '% skipped). The dark tiles contain no allowed pair at all, so those scores are never computed. That skipped work, not the tidier code, is why the API exists.'}});
+  p({which:['causal'], line:4,
+    cap:{zh:'而且結果逐位元相同', en:'and the result is identical to the last bit'},
+    panels:[{lbl:'causal hand vs flex', chips:[chip('0.0e+00', 'ok')]},
+            {lbl:'causal + ALiBi', chips:[chip('0.0e+00', 'ok')]}],
+    msg:{zh:'把手寫的 causal attention 和 causal+ALiBi 跟用這兩個鉤子組出來的版本相比，差是 0——它不是一種近似，而是同一個計算換一種寫法。',
+         en:'Comparing hand-written causal attention, and causal plus ALiBi, against the versions assembled from those two hooks gives a difference of exactly zero. It is not an approximation; it is the same computation, written differently.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 7: the bug */
+const CODE_BUG = [
+  '# prefill: positions 0..4 are already in the cache',
+  'k_cache = rope(K, arange(5))',
+  '',
+  '# decode: the new token is at position 5, not 0',
+  'q = rope(q_new, [len(cache)])     # right',
+  'q = rope(q_new, [0])              # one line, finite, wrong'
+];
+function bugStage(o){
+  const sh = [], cw = 1.22, X0 = 1.35, maxh = 1.00;
+  const rows = [{v:BUG.right, y:3.45, st:'ok', t:{zh:'pos 5', en:'pos 5'}},
+                {v:BUG.wrong, y:1.70, st:'bad', t:{zh:'pos 0', en:'pos 0'}}];
+  rows.forEach((r, k) => {
+    if (k > o.upto) return;
+    r.v.forEach((w, j) => {
+      const h = Math.max(.04, maxh * w / 0.36);
+      sh.push(S.r(X0 + j * cw, r.y, cw * .72, h, r.st, null));
+      sh.push(fitT(X0 + j * cw + cw * .36, r.y + h + .22, w.toFixed(4),
+                   {c:r.st === 'ok' ? COL.tealL : COL.red, fs:.24}));
+      if (k === 1) sh.push(fitT(X0 + j * cw + cw * .36, r.y - .26, 'k' + j,
+                                {c:COL.grey, fs:.22}));
+    });
+    sh.push(fitT(X0 - .18, r.y + .34, r.t,
+                 {anchor:'end', c:r.st === 'ok' ? COL.tealL : COL.red, fs:.26}));
+  });
+  return caps(sh, o);
+}
+function bugFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:bugStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({upto:0, line:4,
+    cap:{zh:'decode 時新 token 的位置是 cache 的長度', en:'while decoding, the new token sits at len(cache)'},
+    panels:[{lbl:'cache', chips:[chip('positions 0..4', 'ok')]},
+            {lbl:'new query', chips:[chip('position 5', 'hot')]}],
+    msg:{zh:'prefill 時 K 已經照位置 0..4 轉過了。接下來每生一個 token，新的 query 要照「它真正的絕對位置」轉——也就是 cache 的長度，不是 0。',
+         en:'During prefill the cached K was already rotated at positions 0 to 4. Each generated token then has to rotate its new query at its true absolute position, which is the length of the cache - not 0.'}});
+  p({upto:1, line:5,
+    cap:{zh:'把它當成「這一步的第 0 列」就錯了', en:'treating it as "row 0 of this step" is the bug'},
+    panels:[{lbl:'largest difference', chips:[chip(BUG.gap.toFixed(4), 'bad')]},
+            {lbl:'sums to', chips:[chip('1.0000', 'ok')]}],
+    msg:{zh:'兩排權重都是有限的、都加總為 1、都長得像正常的 attention 權重，最大差 ' + BUG.gap.toFixed(4) + '。不會丟例外、不會出現 nan，只是生出來的文字比較差。這種 bug 要用對拍抓：**先 prefill 整段、再一個一個 decode，兩條路徑算出來的東西必須逐 token 相等**。',
+         en:'Both rows are finite, both sum to 1, both look like attention weights, and they differ by ' + BUG.gap.toFixed(4) + '. Nothing raises, nothing is nan; the generated text is merely worse. The test that catches it is a differential one: prefill the whole prompt, then decode it token by token, and the two paths must agree at every step.'}});
+  return F.list;
+}
+
+/* ================================================================ meta */
+const DAY_META = {
+  title: {zh:'位置編碼：sinusoidal、RoPE、ALiBi', en:'Positional encodings: sinusoidal, RoPE, ALiBi'},
+  sub: {zh:'把順序放回一個看不見順序的運算，以及 FlexAttention 怎麼把它變成一個參數',
+        en:'putting order back into an operation that cannot see it, and how FlexAttention makes it an argument'},
+  tabs: [
+    {id:'perm', label:{zh:'看不見順序', en:'no order at all'},
+     stage:{zh:'洗牌輸入，輸出跟著洗', en:'shuffle the input, the output shuffles'},
+     view:VIEW, code:CODE_PERM, build:permFrames,
+     idea:{zh:'attention 的式子裡沒有任何東西提到 index，所以它是一個集合函數：把輸入的列重排，輸出就是同樣重排過的輸出（差 ' + PERM.gap.toExponential(0) + '）。位置資訊一定要另外加，而三種做法差在加在哪裡。',
+           en:'Nothing in the attention formula mentions an index, so it is a set function: permute the input rows and the output is the same permutation of the original (to ' + PERM.gap.toExponential(0) + '). Position has to be added separately, and the three schemes differ in where.'},
+     legend:[['#12b3b8', {zh:'原本的順序', en:'the original order'}],
+             ['#9d6bff', {zh:'洗過牌', en:'shuffled'}]]},
+    {id:'sin', label:{zh:'sinusoidal', en:'sinusoidal'},
+     stage:{zh:'加在 embedding 上的一張表', en:'a table added to the embedding'},
+     view:VIEW, code:CODE_SIN, build:sinFrames,
+     idea:{zh:'每個位置一個向量，直接加到 token embedding 上。用 sin/cos 的理由是「往後 k 個位置」變成一個固定旋轉（誤差 ' + SIN.shift.toExponential(0) + '），同一個線性關係在每個位置都成立；副作用是它跟距離的相似度會上下晃。',
+           en:'One vector per position, added onto the token embedding. The reason for sines is that "k positions later" becomes one fixed rotation (' + SIN.shift.toExponential(0) + '), the same linear relationship at every position; the side effect is that its similarity against distance wobbles.'},
+     legend:[['#12b3b8', {zh:'正值', en:'positive'}], ['#9d6bff', {zh:'負值', en:'negative'}],
+             ['#ff9736', {zh:'被標起來的通道', en:'the highlighted channel'}]]},
+    {id:'rope', label:{zh:'RoPE', en:'RoPE'},
+     stage:{zh:'把 q 和 k 轉一個角度', en:'rotate q and k'},
+     view:VIEW, code:CODE_ROPE, build:ropeFrames,
+     idea:{zh:'位置變成旋轉而不是加法：q 和 k 的每組 (偶, 奇) 通道轉一個跟位置成正比的角度，內積因此只跟距離有關（' + ROPE.gap.toExponential(0) + '）。長度不變、V 不被碰；長 context 的問題在於最慢的那組通道在訓練長度內只轉了 ' + ROPE.turnsTrain.toFixed(2) + ' 圈。',
+           en:'The position becomes a rotation instead of an addition: each (even, odd) pair of q and k turns by an angle proportional to position, so the dot product depends only on the distance (' + ROPE.gap.toExponential(0) + '). Lengths are unchanged and V is untouched; the long-context problem is that the slowest pair only gets through ' + ROPE.turnsTrain.toFixed(2) + ' of a turn inside the trained length.'},
+     legend:[['#ff9736', {zh:'目前這個位置', en:'the current position'}],
+             ['#12b3b8', {zh:'已經轉過的', en:'positions already shown'}]]},
+    {id:'alibi', label:{zh:'ALiBi', en:'ALiBi'},
+     stage:{zh:'在分數上扣掉距離', en:'subtract the distance from the score'},
+     view:VIEW, code:CODE_ALIBI, build:alibiFrames,
+     idea:{zh:'沒有東西要嵌入也沒有東西要訓練：分數減掉 slope × 距離就是全部。每個 head 一個 slope，於是變成寬度不同的軟視窗（' + ALIBI[0].window + ' 到 ' + ALIBI[ALIBI.length - 1].window + ' 個 token）；因為它是距離的函數，序列多長都一樣。',
+           en:'Nothing to embed and nothing to train: the score loses slope times the distance, and that is all of it. One slope per head turns each head into a soft window of its own width (' + ALIBI[0].window + ' to ' + ALIBI[ALIBI.length - 1].window + ' tokens), and because it is a function of distance, sequence length does not matter.'},
+     legend:[['#ff9736', {zh:'陡的 slope、短視窗', en:'steep slope, short window'}],
+             ['#12b3b8', {zh:'緩的 slope、長視窗', en:'shallow slope, long window'}]]},
+    {id:'far', label:{zh:'超出訓練長度', en:'past the trained length'},
+     stage:{zh:'算得出來不等於有意義', en:'evaluable is not the same as meaningful'},
+     view:VIEW, code:CODE_FAR, build:farFrames,
+     idea:{zh:'三種都是公式所以都算得出來（學出來的表連這點都做不到）。但在 200 組隨機 q/k 上，sinusoidal 有 ' + FAR.sinusoidal.toFixed(1) + '%、RoPE 有 ' + FAR.rope.toFixed(1) + '% 的情況會讓一個超出訓練長度的 token 贏過全部近的，ALiBi 則是結構上的 0%。',
+           en:'All three are formulas and can be evaluated anywhere (a learned table cannot even do that). But across 200 random query-key pairs, sinusoidal lets a token past the trained length beat everything inside it ' + FAR.sinusoidal.toFixed(1) + '% of the time and RoPE ' + FAR.rope.toFixed(1) + '%, while ALiBi is a structural 0%.'},
+     legend:[['#ff9736', {zh:'會讓遠的贏', en:'lets a far token win'}],
+             ['#12b3b8', {zh:'結構上不會', en:'structurally cannot'}]]},
+    {id:'flex', label:{zh:'FlexAttention', en:'FlexAttention'},
+     stage:{zh:'score_mod 與 mask_mod', en:'score_mod and mask_mod'},
+     view:VIEW, code:CODE_FLEX, build:flexFrames,
+     idea:{zh:'所有位置編碼改的都是「分數的值」或「這一對准不准」，所以把這兩件事變成函數之後，causal／ALiBi／sliding window／soft-capping 都只是參數。真正的好處不是寫起來漂亮，而是 kernel 不用被拆開：以塊為單位看，causal 跳掉 ' + BLOCK[1].skipped.toFixed(1) + '%、加上 256 視窗跳掉 ' + BLOCK[2].skipped.toFixed(1) + '%。',
+           en:'Every positional scheme edits either the value of a score or whether a pair is allowed, so turning those two into functions makes causal masking, ALiBi, sliding windows and soft-capping into arguments. The real benefit is not tidiness but that the fused kernel survives: per tile, causal skips ' + BLOCK[1].skipped.toFixed(1) + '% of the work and a 256-token window skips ' + BLOCK[2].skipped.toFixed(1) + '%.'},
+     legend:[['#12b3b8', {zh:'整塊都准', en:'every pair allowed'}],
+             ['#ff9736', {zh:'部分准', en:'partly allowed'}],
+             ['#8fa3ac', {zh:'整塊都不准：不用算', en:'nothing allowed: never computed'}]]},
+    {id:'bug', label:{zh:'decode 的位置錯位', en:'the decode offset bug'},
+     stage:{zh:'有限、加總為 1、而且是錯的', en:'finite, sums to one, and wrong'},
+     view:VIEW, code:CODE_BUG, build:bugFrames,
+     idea:{zh:'生成時新 token 的絕對位置是 cache 的長度；把它當成「這一步的第 0 列」而在位置 0 做 RoPE，是一行就寫錯的事。兩排權重都有限、都加總為 1、最大差 ' + BUG.gap.toFixed(4) + '，什麼都不會報錯。對拍才抓得到：先 prefill 再逐 token decode，兩條路徑要相等。',
+           en:'While generating, the new token\'s absolute position is the length of the cache; rotating it at position 0 because it is "row 0 of this step" is a one-line mistake. Both rows of weights are finite, both sum to 1, they differ by ' + BUG.gap.toFixed(4) + ', and nothing raises. Only a differential test catches it: prefill, then decode token by token, and require the two paths to agree.'},
+     legend:[['#12b3b8', {zh:'正確的位置', en:'the right position'}],
+             ['#ff5c5c', {zh:'位置 0', en:'position 0'}]]}
+  ]
+};
+
+</script>
+<script>
+/* =========================================================================
+   100 Days of Python - shared demo engine
+   palette: teal/blue-green base, purple pointers, orange "current step"
+   ========================================================================= */
+const T = {
+  title:{zh:DAY_META.title.zh, en:DAY_META.title.en},
+  sub:{zh:DAY_META.sub.zh, en:DAY_META.sub.en},
+  play:{zh:'▶ 播放', en:'▶ Play'}, pause:{zh:'❚❚ 暫停', en:'❚❚ Pause'},
+  speed:{zh:'速度', en:'Speed'}, state:{zh:'演算法狀態', en:'Algorithm state'},
+  code:{zh:'程式碼', en:'Code'}, idea:{zh:'重點', en:'The idea'}
+};
+let LANG = 'zh';
+const tr = o => (o == null ? '' : (typeof o === 'string' ? o : (o[LANG] != null ? o[LANG] : o.en)));
+const $ = id => document.getElementById(id);
+
+function setLang(l){
+  LANG = l;
+  document.documentElement.lang = l === 'zh' ? 'zh-Hant' : 'en';
+  $('btn-zh').classList.toggle('on', l === 'zh');
+  $('btn-en').classList.toggle('on', l === 'en');
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.getAttribute('data-i18n');
+    if (T[k]) el.textContent = tr(T[k]);
+  });
+  buildTabs(); render();
+}
+
+/* --------------------------------------------------------------- palette */
+const STY = {
+  idle :{fill:'#07293a', stroke:'#0a6b74', text:'#dff2f5', w:.045, glow:0},
+  soft :{fill:'#052330', stroke:'#0a6b74', text:'#a8c8d0', w:.035, glow:0},
+  hot  :{fill:'#3a2109', stroke:'#ff9736', text:'#ffbe6b', w:.075, glow:.65},
+  act  :{fill:'#241542', stroke:'#9d6bff', text:'#c7a6ff', w:.070, glow:.55},
+  ok   :{fill:'#08414a', stroke:'#3fe0dd', text:'#d9ffff', w:.070, glow:.5},
+  done :{fill:'#062430', stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0},
+  bad  :{fill:'#3a0d0d', stroke:'#ff5c5c', text:'#ff9a9a', w:.070, glow:.4},
+  ghost:{fill:'none',    stroke:'#2f5661', text:'#7f9aa3', w:.035, glow:0, dash:'.12 .10'}
+};
+const COL = {teal:'#12b3b8', tealL:'#3fe0dd', purple:'#9d6bff', purpleL:'#c7a6ff',
+             orange:'#ff9736', orangeL:'#ffbe6b', red:'#ff5c5c', grey:'#8fa3ac',
+             pale:'#dff2f5', white:'#ffffff'};
+const LEGEND = {
+  hot:[COL.orange, {zh:'目前這一步', en:'current step'}],
+  act:[COL.purple, {zh:'指標 / 走訪位置', en:'pointer / cursor'}],
+  ok:[COL.tealL,  {zh:'完成 / 結果', en:'done / result'}],
+  bad:[COL.red,   {zh:'失敗 / 要避開的寫法', en:'failure / the wrong way'}],
+  done:['#2f5661', {zh:'已處理完', en:'already done'}],
+  soft:['#0a6b74', {zh:'其他元素', en:'other items'}],
+  idle:['#0a6b74', {zh:'尚未處理', en:'untouched'}],
+  ghost:['#123f4d', {zh:'尚未處理', en:'not yet reached'}]
+};
+const leg = (...keys) => keys.map(k => LEGEND[k]);
+
+/* ---------------------------------------------------------- frame buffer */
+function Frames(){
+  this.list = [];
+  this.push = (o) => this.list.push({
+    shapes:JSON.parse(JSON.stringify(o.shapes || [])),
+    panels:JSON.parse(JSON.stringify(o.panels || [])),
+    view:(o.view || null), line:(o.line == null ? 0 : o.line), msg:o.msg
+  });
+}
+/* shape helpers - engines call these, the renderer just draws */
+const S = {
+  r:(x, y, w, h, s, lab, o) => Object.assign({t:'r', x:x, y:y, w:w, h:h, s:s || 'idle', lab:lab}, o || {}),
+  c:(x, y, r, s, lab, o) => Object.assign({t:'c', x:x, y:y, r:r, s:s || 'idle', lab:lab}, o || {}),
+  e:(x1, y1, x2, y2, o) => Object.assign({t:'e', x1:x1, y1:y1, x2:x2, y2:y2}, o || {}),
+  t:(x, y, s, o) => Object.assign({t:'t', x:x, y:y, s:s}, o || {})
+};
+/* a labelled row of array cells; returns shapes */
+function cellRow(vals, x0, y, w, h, opt){
+  opt = opt || {};
+  const out = [], st = opt.states || {};
+  vals.forEach((v, i) => {
+    out.push(S.r(x0 + i * w, y, w - (opt.gap == null ? .06 : opt.gap), h, st[i] || 'idle',
+                 v == null ? '' : String(v), {fs:opt.fs || h * .52}));
+    if (opt.index !== false)
+      out.push(S.t(x0 + i * w + (w - .06) / 2, y + h + (opt.ilift || .34),
+                   opt.labels ? opt.labels[i] : String(i),
+                   {c:st[i] && st[i] !== 'idle' ? COL.orangeL : COL.grey, fs:opt.ifs || .30}));
+  });
+  if (opt.title) out.push(S.t(x0 - .22, y + h * .62, opt.title, {c:COL.tealL, fs:.32, anchor:'end'}));
+  return out;
+}
+/* binary-tree layout from a heap-style array (index 0 = root, 2i+1 / 2i+2) */
+function heapTreeShapes(arr, x0, y0, w, rowH, states, opt){
+  opt = opt || {};
+  const n = arr.length, out = [], R = opt.r || .34;
+  const depth = i => Math.floor(Math.log2(i + 1));
+  const maxD = n ? depth(n - 1) : 0;
+  const px = i => {
+    const d = depth(i), first = Math.pow(2, d) - 1, k = i - first;
+    const slots = Math.pow(2, d), span = w;
+    return x0 + span * (k + .5) / slots;
+  };
+  const py = i => y0 + depth(i) * rowH;
+  for (let i = 1; i < n; i++){
+    if (arr[i] == null) continue;
+    const p = Math.floor((i - 1) / 2);
+    out.push(S.e(px(p), py(p), px(i), py(i), {pad:R + .04,
+      s:(states && (states[i] === 'hot' || states[i] === 'act')) ? states[i] : 'idle'}));
+  }
+  for (let i = 0; i < n; i++){
+    if (arr[i] == null) continue;
+    out.push(S.c(px(i), py(i), R, (states && states[i]) || 'idle', String(arr[i]), {fs:R * .95}));
+    if (opt.showIndex)
+      out.push(S.t(px(i), py(i) + R + .34, String(i), {c:COL.grey, fs:.26}));
+  }
+  return out;
+}
+
+/* -------------------------------------------------------------- renderer */
+const svgNS = 'http://www.w3.org/2000/svg';
+const mk = (tag, a) => { const e = document.createElementNS(svgNS, tag);
+  for (const k in a) e.setAttribute(k, a[k]); return e; };
+const clear = svg => { while (svg.firstChild) svg.removeChild(svg.firstChild); };
+
+function defs(svg){
+  const d = mk('defs', {});
+  const f = mk('filter', {id:'glow', x:'-70%', y:'-70%', width:'240%', height:'240%'});
+  f.appendChild(mk('feGaussianBlur', {stdDeviation:'.055', result:'b'}));
+  const m = mk('feMerge', {});
+  m.appendChild(mk('feMergeNode', {in:'b'}));
+  m.appendChild(mk('feMergeNode', {in:'SourceGraphic'}));
+  f.appendChild(m); d.appendChild(f);
+  Object.keys(STY).forEach(k => {
+    const mk2 = mk('marker', {id:'ar-' + k, viewBox:'0 0 10 10', refX:'8.5', refY:'5',
+      markerWidth:'5.2', markerHeight:'5.2', orient:'auto-start-reverse'});
+    mk2.appendChild(mk('path', {d:'M 0 1 L 9 5 L 0 9 z', fill:STY[k].stroke}));
+    d.appendChild(mk2);
+  });
+  svg.appendChild(d);
+}
+
+function drawShape(svg, sh){
+  const st = STY[sh.s || 'idle'];
+  if (sh.t === 'e'){
+    let {x1, y1, x2, y2} = sh;
+    if (sh.pad){
+      const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+      x1 += dx / L * sh.pad; y1 += dy / L * sh.pad;
+      x2 -= dx / L * sh.pad; y2 -= dy / L * sh.pad;
+    }
+    const a = {x1:x1.toFixed(3), y1:y1.toFixed(3), x2:x2.toFixed(3), y2:y2.toFixed(3),
+      stroke:st.stroke, 'stroke-width':(sh.w || st.w || .05), 'stroke-linecap':'round',
+      opacity:(sh.o == null ? (sh.s && sh.s !== 'idle' ? 1 : .75) : sh.o)};
+    if (sh.dash || st.dash) a['stroke-dasharray'] = sh.dash || st.dash;
+    if (sh.arrow !== false) a['marker-end'] = 'url(#ar-' + (sh.s || 'idle') + ')';
+    svg.appendChild(mk('line', a));
+    if (sh.lab != null)
+      svg.appendChild(txt((x1 + x2) / 2 + (sh.lx || 0), (y1 + y2) / 2 + (sh.ly || -.16),
+        tr(sh.lab), st.stroke, sh.fs || .30, 'middle'));
+    return;
+  }
+  if (sh.t === 't'){
+    svg.appendChild(txt(sh.x, sh.y, tr(sh.s), sh.c || COL.pale, sh.fs || .32,
+      sh.anchor || 'middle', sh.o));
+    return;
+  }
+  let node;
+  if (sh.t === 'c'){
+    node = mk('circle', {cx:sh.x.toFixed(3), cy:sh.y.toFixed(3), r:sh.r.toFixed(3),
+      fill:st.fill, stroke:st.stroke, 'stroke-width':st.w});
+  } else {
+    node = mk('rect', {x:sh.x.toFixed(3), y:sh.y.toFixed(3), width:sh.w.toFixed(3),
+      height:sh.h.toFixed(3), rx:(sh.rx == null ? .09 : sh.rx), fill:st.fill,
+      stroke:st.stroke, 'stroke-width':st.w});
+  }
+  if (st.dash || sh.dash) node.setAttribute('stroke-dasharray', sh.dash || st.dash);
+  if (st.glow) node.setAttribute('filter', 'url(#glow)');
+  if (sh.o != null) node.setAttribute('opacity', sh.o);
+  svg.appendChild(node);
+  const cx = sh.t === 'c' ? sh.x : sh.x + sh.w / 2;
+  const cy = sh.t === 'c' ? sh.y : sh.y + sh.h / 2;
+  if (sh.lab != null && sh.lab !== '')
+    svg.appendChild(txt(cx + (sh.dx || 0), cy + (sh.fs || .40) * .35, tr(sh.lab), st.text,
+      sh.fs || .40, 'middle'));
+  if (sh.sub != null)
+    svg.appendChild(txt(cx, cy + (sh.t === 'c' ? sh.r : sh.h) + .34, tr(sh.sub),
+      sh.subc || COL.grey, sh.subfs || .28, 'middle'));
+  if (sh.top != null)
+    svg.appendChild(txt(cx, cy - (sh.t === 'c' ? sh.r : sh.h / 2) - .22, tr(sh.top),
+      sh.topc || COL.purpleL, sh.topfs || .28, 'middle'));
+}
+function txt(x, y, s, c, fs, anchor, o){
+  const t = mk('text', {x:(+x).toFixed(3), y:(+y).toFixed(3), 'text-anchor':anchor || 'middle',
+    fill:c, 'font-size':(+fs).toFixed(3)});
+  if (o != null) t.setAttribute('opacity', o);
+  t.textContent = s;
+  return t;
+}
+
+function renderStage(frame){
+  const svg = $('stage');
+  clear(svg); defs(svg);
+  const v = frame.view || curTab().view || [10, 6.4];
+  svg.setAttribute('viewBox', '0 0 ' + v[0] + ' ' + v[1]);
+  (frame.shapes || []).forEach(sh => drawShape(svg, sh));
+}
+
+function drawPanels(frame){
+  const box = $('panels'); box.innerHTML = '';
+  (frame.panels || []).forEach(p => {
+    const d = document.createElement('div'); d.className = 'panel';
+    const l = document.createElement('div'); l.className = 'lbl'; l.textContent = tr(p.lbl);
+    const c = document.createElement('div'); c.className = 'chips';
+    (p.chips.length ? p.chips : [{t:'—', cls:'empty'}]).forEach(ch => {
+      const s = document.createElement('span');
+      s.className = 'chip ' + (ch.cls || ''); s.textContent = ch.t; c.appendChild(s);
+    });
+    d.appendChild(l); d.appendChild(c); box.appendChild(d);
+  });
+}
+function drawCode(frame){
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  $('code').innerHTML = curTab().code.map((ln, i) => {
+    const h = esc(ln).replace(/(#.*)$/, '<span class="cm">$1</span>');
+    return '<span class="ln' + (i === frame.line ? ' on' : '') + '">' + (h || ' ') + '</span>';
+  }).join('');
+}
+function drawLegend(){
+  const keys = curTab().legend || ['hot', 'act', 'ok', 'idle'];
+  $('legend').innerHTML = keys.map(k => {
+    const [c, txt] = Array.isArray(k) ? k : LEGEND[k];
+    return '<span><i style="background:' + c + '"></i>' + tr(txt) + '</span>';
+  }).join('');
+}
+
+let tabIx = 0, varIx = 0, frames = [], cur = 0, timer = null;
+const TABS = DAY_META.tabs;
+const curTab = () => TABS[tabIx];
+
+function render(){
+  if (!frames.length) return;
+  cur = Math.max(0, Math.min(cur, frames.length - 1));
+  const f = frames[cur];
+  $('stage-title').textContent = tr(curTab().stage);
+  renderStage(f); drawPanels(f); drawCode(f); drawLegend();
+  $('narr').innerHTML = tr(f.msg);
+  $('idea').innerHTML = tr(curTab().idea);
+  $('stepno').textContent = (cur + 1) + ' / ' + frames.length;
+  $('prev').disabled = cur === 0;
+  $('next').disabled = cur === frames.length - 1;
+}
+function buildTabs(){
+  $('tabs').innerHTML = '';
+  TABS.forEach((t, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(t.label);
+    if (i === tabIx) b.classList.add('on');
+    b.onclick = () => { tabIx = i; varIx = 0; load(); };
+    $('tabs').appendChild(b);
+  });
+  const ex = $('extra'); ex.innerHTML = '';
+  const vs = curTab().variants;
+  if (vs) vs.forEach((v, i) => {
+    const b = document.createElement('button');
+    b.textContent = tr(v);
+    if (i === varIx) b.classList.add('on');
+    b.onclick = () => { varIx = i; load(); };
+    ex.appendChild(b);
+  });
+}
+function load(){
+  stop();
+  frames = curTab().build(varIx) || [];
+  cur = 0; buildTabs(); render();
+}
+function step(d){ stop(); cur += d; render(); }
+function reset(){ stop(); cur = 0; render(); }
+function stop(){ if (timer){ clearInterval(timer); timer = null; $('play').textContent = tr(T.play); } }
+function togglePlay(){
+  if (timer){ stop(); return; }
+  if (cur >= frames.length - 1) cur = 0;
+  $('play').textContent = tr(T.pause);
+  timer = setInterval(() => {
+    if (cur >= frames.length - 1){ stop(); return; }
+    cur++; render();
+  }, Number($('speed').value));
+}
+$('speed').addEventListener('input', () => { if (timer){ stop(); togglePlay(); } });
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight'){ step(1); e.preventDefault(); }
+  else if (e.key === 'ArrowLeft'){ step(-1); e.preventDefault(); }
+  else if (e.key === ' '){ togglePlay(); e.preventDefault(); }
+});
+setLang('zh');
+load();
+
+</script>
+</body>
+</html>

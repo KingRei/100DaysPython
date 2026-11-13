@@ -1,0 +1,142 @@
+# Day 54 — 位置編碼：sinusoidal、RoPE 與 ALiBi，以及長 context 模型為什麼要重新縮放位置
+
+程式碼：[day 54 on GitHub](https://github.com/KingRei/100DaysPython/tree/master/day%2054%20-%20positional%20encodings)
+
+*100 Days of Python - day 54*
+
+語言模型並不是「讀」一個句子。tokenizer 先把句子變成一串整數，embedding 再把每個整數變成一個向量，從這裡開始，模型手上就只是一堆向量——每個 token 一個。而讓這些向量互相看來看去的那個運算（attention），完全不知道誰在前面誰在後面。
+
+這不是比喻。把輸入的列洗牌、再跑一次 attention，得到的就是「原本的輸出照同樣順序洗過」：「先算再洗」跟「先洗再算」的最大差是 2.2e-16，也就是浮點雜訊。模型分不出「the cat sat on the mat」和「mat the on sat cat the」，因為對它來說那是同一堆向量、只是排列不同。
+
+原因就寫在式子裡。`softmax(Q K^T / sqrt(d)) V` 只有內積、softmax 和加權求和三件事，而這三件事都沒有提到 index。裡面每一步問的都是「這兩個向量有多像」，沒有一步問「它們在第幾個位置」。
+
+所以順序必須另外放回去，而怎麼放回去是一個有名字的設計決定：**positional encoding（位置編碼）**。今天走過目前實際在用的三種答案，它們把位置注入在流程的三個不同地方：
+
+- **sinusoidal**（以及「學一張表」的變形）：每個位置一個固定向量，在 attention 跑之前就加到 embedding 上；
+- **RoPE**：在 attention 裡面，把 query 和 key 向量轉一個跟位置成正比的角度——現在多數開源模型用的是這個；
+- **ALiBi**：直接在 attention 分數上扣掉一個跟距離成正比的懲罰。
+
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2054%20-%20positional%20encodings/imgs/day54_0.png?raw=true)
+
+既然三種都能用，為什麼還要挑？因為當你要模型讀一段比它訓練時看過的任何東西都更長的文字時，最先壞掉的就是這一塊。每一個「現在支援 128k context」的發佈，底下講的其實都是「把位置編碼重新縮放」這件事——而下面的數字會指出被縮放的到底是哪個量，以及它為什麼會不夠用。
+
+最後一節是 FlexAttention，接在這三種後面看最順：一旦你注意到 RoPE、ALiBi、causal mask、sliding window 改的都只是兩個量之一，它們就不再是各自一支 attention kernel，而是同一支的參數。
+
+## sinusoidal：一張加在 embedding 上的 sin 表
+
+```python
+pos = np.arange(n)[:, None]
+i = np.arange(0, d, 2)[None, :]
+ang = pos / (10000.0 ** (i / d))
+pe[:, 0::2], pe[:, 1::2] = np.sin(ang), np.cos(ang)
+```
+
+每個位置一個向量，在 attention 跑之前就加到 token embedding 上。用 sin/cos 而不是直接用位置數字的理由是：**往後 k 個位置會變成一個固定的旋轉**——把位置 `t` 那一列的每組 (sin, cos) 轉一個只跟 `k` 有關的角度，就會落在位置 `t + k` 那一列，實測誤差 3.3e-15。同一個線性映射在任何位置都成立，所以「往前五個 token」是模型學一次的關係，而不是每個 index 各學一次。
+
+副作用直接寫在數字裡：位置 0 跟距離 1、2、4、8、16、32 的相似度是 +0.483、+0.442、+0.374、+0.350、+0.303、+0.306。大致隨距離遞減，但不是單調的——它是一堆 cos 相加，會上下晃。這不是誰要求的性質，是這張表附帶的。
+
+## RoPE：位置是 q 和 k 的一個旋轉
+
+```python
+out[..., 0::2] = x[..., 0::2] * c - x[..., 1::2] * s
+out[..., 1::2] = x[..., 1::2] * c + x[..., 0::2] * s
+```
+
+RoPE 把每一組 (偶數, 奇數) 通道當成平面上的一個向量，轉一個跟位置成正比的角度——只作用在 attention 裡的 `q` 和 `k`，從不碰 `V`。馬上有兩個結果：旋轉不改變向量長度，所以不會把什麼東西放大；而因為 value 沒被動過，位置影響的只是「讀到哪些 value」，不是 value 本身是什麼。
+
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2054%20-%20positional%20encodings/imgs/day54_1.png?raw=true)
+
+真正重要的性質是分數只跟距離有關：
+
+```
+<RoPE(q, 3),   RoPE(k, 11)>  = -5.300637
+<RoPE(q, 100), RoPE(k, 108)> = -5.300637      差 2.7e-15
+```
+
+兩組都相距 8，而內積看得到的就只有這件事——兩個旋轉碰在一起時，絕對位置被消掉了。
+
+長 context 的工作也都發生在這裡。`d = 128` 時最快的一組通道每 6.28 個 token 轉完一圈，最慢的要 54,410 個。訓練長度 4,096 時，最慢那組只走了 0.08 圈；同一個模型要跑 32,768，就是在要求它走 0.60 圈——那是它從來沒看過的角度。兩個標準解法瞄準的都是這件事：position interpolation 把位置乘上 0.125，讓舊的角度範圍剛好蓋住新的長度；而「NTK」那一路把 base 從 10,000 拉到大約 82,685，改成把波長拉長。
+
+## ALiBi：直接在分數上扣距離
+
+```python
+s = Q @ K.T / math.sqrt(d) + slope * (k_index - q_index)
+```
+
+沒有東西要嵌入，也沒有東西要訓練。每個 head 從一條幾何數列拿到一個 slope，而每一對位置的分數在 softmax 之前被扣掉 `slope × 距離`。在沒有內容訊號的情況下，這讓每個 head 變成一個寬度不同的軟視窗：
+
+| head | slope | 99% 權重落在幾個 token 內 |
+|---|---|---|
+| 0 | 0.5000 | 10 |
+| 2 | 0.1250 | 37 |
+| 4 | 0.0312 | 148 |
+| 6 | 0.0078 | 458 |
+
+（最後幾列是被 512 的量測範圍截到，不是 slope 決定的。）沒有人指派哪個 head 看多遠，是 slope 自己決定，而一層的 head 合起來就同時覆蓋了好幾個尺度。
+
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2054%20-%20positional%20encodings/imgs/day54_2.png?raw=true)
+
+## 超出訓練長度之後還剩下什麼
+
+三種都是公式，所以都**算得出來**——這點學出來的絕對位置表連做都做不到：訓練到 4,096 列，第 4,097 列根本不存在。但「算得出來」跟「有意義」是兩回事。
+
+這裡有一個分得開它們的量測，而且完全不用訓練：取 200 組隨機的 query/key，把訓練長度當成 32，問「有多常出現某個距離 33–512 的 token，分數比訓練範圍內所有 token 都高」：
+
+| 編碼方式 | 遠處的 token 贏的比例 |
+|---|---|
+| sinusoidal | 10.0% |
+| RoPE | 93.5% |
+| ALiBi | 0.0% |
+
+sin 會一直震盪下去，所以一個 400 個位置以外的 token 看起來可能比鄰居更吸引人。訓練過的模型會學著忽略它——但只對它真的看過的距離學會。ALiBi 則是結構上做不到：懲罰隨距離增加，所以「更遠」永遠等於「更弱」，不管序列多長。這就是「ALiBi 免費外推」的實際內容，而同一句話也是它的代價：一個寫死的 recency bias 不見得總是你要的。
+
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2054%20-%20positional%20encodings/imgs/day54_3.png?raw=true)
+
+## FlexAttention：把這個選擇變成一個參數
+
+看一下這三種各自改了什麼。sinusoidal 改的是輸入，而 RoPE 和 ALiBi——還有 causal mask、sliding window、soft-capping——改的都是剛好兩件事之一：**分數的值**，或**這一對准不准看**。把這兩件事交出去變成函數，整個家族就塌成同一個實作：
+
+```python
+def flex_attention(Q, K, V, score_mod=None, mask_mod=None):
+    s = Q @ K.T / math.sqrt(d)
+    qi, kj = np.arange(n)[:, None], np.arange(m)[None, :]
+    if score_mod is not None:
+        s = score_mod(s, qi, kj)
+    if mask_mod is not None:
+        s = np.where(mask_mod(qi, kj), s, -np.inf)
+    return softmax(s, axis=-1) @ V
+```
+
+causal 就是 `lambda qi, kj: kj <= qi`；滑動視窗再加 `& (qi - kj < window)`；ALiBi 是 `lambda s, qi, kj: s + slope * (kj - qi)`；soft-capping 是 `cap * tanh(s / cap)`。跟手寫版本對過，causal 與 causal+ALiBi 的差都是 0.0——它不是近似，是同一個計算換一種寫法。
+
+這件事重要的原因不是程式比較漂亮。自己寫 mask 代表要生出一個 `n x n` 的布林矩陣再貼上去，而那正是 FlashAttention 想避開的記憶體。寫成函數之後，kernel 可以以「塊」為單位先問「這一塊裡有任何一對是准的嗎」，不准的整塊跳過：
+
+| mask | 要算的塊 | 跳掉 |
+|---|---|---|
+| 沒有 | 64 / 64 | 0.0% |
+| causal | 36 / 64 | 43.8% |
+| sliding 256 | 21 / 64 | 67.2% |
+
+這是 1,024 個 token、128 寬的塊。深色的塊裡一對都不准，那些分數從頭到尾沒被算出來——而且你換規則的時候，attention kernel 仍然是融合的。
+
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2054%20-%20positional%20encodings/imgs/day54_4.png?raw=true)
+
+## 不會報錯的壞法：decode 時 RoPE 的位置錯了
+
+prefill 的時候，cache 裡的 key 已經照位置 0 到 4 轉過了。下一個生成的 token，它的 query 屬於位置 5——也就是 cache 的長度。把它照位置 0 轉（因為它是這一步張量的第一列），只是一行：
+
+```
+attention 權重，正確位置: [0.1669 0.0351 0.1301 0.3161 0.1093 0.2425]
+attention 權重，位置 0:   [0.0808 0.0391 0.1214 0.3489 0.1837 0.2262]
+最大差: 0.0862
+```
+
+兩排都是有限的、都加總為 1、都長得完全像 attention 權重。不會丟例外、形狀也沒錯，只是生出來的文字比較差。抓得到它的是**對拍測試**：先一次 prefill 整段 prompt，再把同一串 token 一個一個 decode，兩條路徑每一步都必須相等。
+
+## 這些東西之後會用在哪
+
+位置是 transformer 裡最常在訓練之後還被改的部分——每一次長 context 的發佈，故事都是「把位置重新縮放」。今天量的東西就是原因：用 RoPE 的話，被縮放的是一組角度，而要問的永遠是「最慢的那組通道是不是被要求走一圈它訓練時沒走過的」。
+
+而 FlexAttention 這個看法就算不用那個函式庫也值得留著：一旦你注意到位置編碼、causal 規則、視窗、soft cap 改的都是同樣兩個量，那麼看到任何新變體時該問的就是——它動的是哪一個，以及它還能不能讓整塊被跳掉。
+
+程式碼和互動式走查都在 repo：[day 54 on GitHub](https://github.com/KingRei/100DaysPython/tree/master/day%2054%20-%20positional%20encodings)。
