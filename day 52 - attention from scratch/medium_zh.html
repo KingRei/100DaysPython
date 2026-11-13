@@ -32,6 +32,15 @@ li     { margin: .3em 0; }
 <p>Attention 就是一個加權平均。整個模型就這件事：每個 query 位置對每個 key 位置算一個分數，把分數變成加總為 1 的權重，再用這些權重去平均 value 向量。四行 numpy。</p>
 <p>難的地方全部不在那條式子，而在「怎麼把這個平均算出來，又不要真的把它要平均的那個東西生出來」。context 長到 131,072 個 token 時，光是一層的分數矩陣在 fp16 下就是 1,024 GB，那不是一個你配置得出來的數字；而讓你不用重算過去的 KV cache，同樣的 context 下用一般的 multi-head attention 是 64.0 GB，用 MLA 是 4.5 GB。今天先把 attention 實作出來，看它兩種不會報錯的壞法，然後看所有推論系統都會對它做的四個改動：FlashAttention、PagedAttention、MQA/GQA/MLA 這一家，以及 delta rule 這種線性 attention。</p>
 <p>Day 51 把文字變成 token id，今天是模型拿到這些 id 之後做的事。</p>
+<h2>一張圖看懂 attention 在做什麼</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2052%20-%20attention%20from%20scratch/imgs/day52_0.png?raw=true">
+<pre><code>attention(Q, K, V) = softmax(Q K^T / sqrt(d)) V</code></pre>
+<p>從右往左讀，它就是一個對 <code>V</code> 的加權平均；從左往右讀，它是四個步驟，而圖上每一步都用真實數字跑過一次（4 個 query、6 個 key、head dimension 8）。</p>
+<p><strong>每一對位置一個分數。</strong> 第 0 列的 query 跟六個 key 各做一次內積，得到六個數字：+0.20、+0.03、−0.26、+0.69、+1.32、−0.12。內積在兩個向量方向一致時比較大，所以一個分數講的是「這個 query 有多想讀那個位置」。每一對位置都會有一個，這就是本文後面整篇在算的那個 <code>n x m</code> 矩陣。</p>
+<p><strong>除以 sqrt(d)。</strong> 一個分數是 <code>d</code> 個乘積的和，所以 head 越寬它散得越開。除以 <code>sqrt(d)</code> 可以讓數字不管 <code>d</code> 多大都維持在大約單位尺度——後面量到的是：不除的話，4096 寬的 head 平均會把 0.9688 的權重壓在單一個 key 上。</p>
+<p><strong>softmax 把分數變成權重。</strong> 取指數再除以總和，六個權重變成 0.1269、0.1065、0.0799、0.2059、0.3886、0.0923。它們非負、加總剛好是 1.00，而分數最高的位置 4 拿到最多。</p>
+<p><strong>乘上 V。</strong> 輸出那一列就是用這些權重去加權六列 value：<code>out = 0.1269 v0 + 0.1065 v1 + … + 0.0923 v5</code>。因為權重非負而且加總為 1，輸出是 value 的凸組合，永遠跑不出它們的範圍。attention 生不出新的值，它只能決定每一個既有的值要用多少。</p>
+<p>整個模型就這樣。<code>Q</code>、<code>K</code>、<code>V</code> 本身只是輸入的線性投影，mask 只是多一行，而這篇文章後面全部的內容，都是在講「怎麼把這個平均算出來，又不要真的把它要平均的那個矩陣生出來」。</p>
 <h2>一個加權平均</h2>
 <pre><code>def attention(Q, K, V, mask=None, scale=None):
     d = Q.shape[-1]

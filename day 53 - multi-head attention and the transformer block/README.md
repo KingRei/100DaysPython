@@ -11,9 +11,12 @@ both LeetCode problems.
 
 ![img](https://github.com/KingRei/100DaysPython/blob/master/day%2053%20-%20multi-head%20attention%20and%20the%20transformer%20block/imgs/day53_0.png?raw=true)
 
-Token ids in, one vector per token out of the embedding, N identical blocks editing that
-set of vectors, a final LayerNorm, and an unembedding that turns each vector into one
-score per vocabulary entry. Five decisions carry the design. Every block takes
+This is the decoder-only stack - what GPT-style language models are. The 2017 paper also
+had an encoder and a cross-attention sub-layer inside each decoder block, which is what a
+translation model needs; a model that only continues its own text drops both. Token ids in,
+one vector per token out of the embedding, N identical blocks editing that set of vectors,
+a final LayerNorm, and an unembedding that turns each vector into one score per vocabulary
+entry. Five decisions carry the design. Every block takes
 `(n, d_model)` and returns `(n, d_model)`, so stacking is free and there is one shape to
 shard. Blocks add into the stream rather than replacing it, so a new block starts as a
 no-op and only learns a correction - at the cost of a stream that grows with depth

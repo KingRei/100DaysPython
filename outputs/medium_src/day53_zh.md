@@ -16,7 +16,7 @@ Day 52 做的是 attention 本身，今天是包著它的那一層和那個 bloc
 
 ![img](https://github.com/KingRei/100DaysPython/blob/master/day%2053%20-%20multi-head%20attention%20and%20the%20transformer%20block/imgs/day53_0.png?raw=true)
 
-token id 進來，embedding 把每個 token 變成一個向量，N 個長得一模一樣的 block 輪流在這組向量上「改一點東西」，最後一個 LayerNorm 把它收住，unembedding 再把每個向量變成「每個詞表項目一個分數」。這裡真正在做事的只有五個設計決定，而每一個都換到很具體的東西。
+這是 **decoder-only** 的堆疊，也就是 GPT 這一類語言模型的長相。2017 年那篇論文還有一個 encoder，而且每個 decoder block 裡多一層 cross-attention 去讀 encoder 的輸出——那是翻譯模型需要的東西；只要模型做的事是「把自己的文字接下去」，這兩樣就都會被拿掉，剩下的就是上面這張圖。token id 進來，embedding 把每個 token 變成一個向量，N 個長得一模一樣的 block 輪流在這組向量上「改一點東西」，最後一個 LayerNorm 把它收住，unembedding 再把每個向量變成「每個詞表項目一個分數」。這裡真正在做事的只有五個設計決定，而每一個都換到很具體的東西。
 
 **一條固定寬度的流。** 每個 block 吃 `(n, d_model)`、吐 `(n, d_model)`——後面量的例子就是 `(16, 64)` 進、`(16, 64)` 出。「疊 32 層」因此只是一句話而不是一次重新設計：只有一種形狀要實作、只有一種形狀要切到多張卡上、而且任何地方都插得進一個新層。
 

@@ -16,7 +16,7 @@ Day 52 built attention. This is the layer and the block around it.
 
 ![img](https://github.com/KingRei/100DaysPython/blob/master/day%2053%20-%20multi-head%20attention%20and%20the%20transformer%20block/imgs/day53_0.png?raw=true)
 
-Token ids come in, one vector per token comes out of the embedding, N identical blocks each edit that set of vectors, a final LayerNorm bounds it, and an unembedding turns each vector into one score per vocabulary entry. Five design decisions do all the work here, and each one buys something specific.
+This is the decoder-only stack - what GPT-style language models are. The 2017 paper also had an encoder and a cross-attention sub-layer in each decoder block, which is what a translation model needs; a model that only continues its own text drops both, and what is left is the picture above. Token ids come in, one vector per token comes out of the embedding, N identical blocks each edit that set of vectors, a final LayerNorm bounds it, and an unembedding turns each vector into one score per vocabulary entry. Five design decisions do all the work here, and each one buys something specific.
 
 **One stream of a fixed width.** Every block takes `(n, d_model)` and returns `(n, d_model)` - measured below, `(16, 64)` in and `(16, 64)` out. That is what makes "stack 32 of them" a sentence rather than a redesign: there is exactly one shape to implement, one shape to shard across devices, and one place where a new layer can be inserted.
 

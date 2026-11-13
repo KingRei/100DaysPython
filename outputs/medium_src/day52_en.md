@@ -10,6 +10,26 @@ Everything that is hard about attention is about computing that average without 
 
 Day 51 turned text into token ids. This is what the model does with them.
 
+## How attention works, in one picture
+
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2052%20-%20attention%20from%20scratch/imgs/day52_0.png?raw=true)
+
+```
+attention(Q, K, V) = softmax(Q K^T / sqrt(d)) V
+```
+
+Read it right to left and it is a weighted average of `V`; read it left to right and it is four steps, each of which the figure shows with real numbers from a 4-query, 6-key, head-dimension-8 example.
+
+**One score per pair.** Query row 0 is dotted with each of the six key rows, giving six numbers: +0.20, +0.03, -0.26, +0.69, +1.32, -0.12. A dot product is large when two vectors point the same way, so a score says "how much does this query want to read from that position". Every pair of positions gets one, which is the `n x m` matrix the whole memory story of this article is about.
+
+**Divide by sqrt(d).** A score is a sum of `d` products, so its spread grows with the width of the head. Dividing by `sqrt(d)` keeps the numbers at roughly unit scale whatever `d` is - measured further down, without it a 4096-wide head puts an average largest weight of 0.9688 on a single key.
+
+**Softmax turns scores into weights.** Exponentiate and divide by the total: the six weights come out as 0.1269, 0.1065, 0.0799, 0.2059, 0.3886, 0.0923. They are non-negative and sum to 1.00, and position 4 - the one with the highest score - gets the most.
+
+**Multiply by V.** The output row is those weights applied to the six value rows: `out = 0.1269 v0 + 0.1065 v1 + ... + 0.0923 v5`. Because the weights are non-negative and sum to one, the output is a convex combination of the values and can never leave their range. Attention cannot invent a value; it can only decide how much of each existing one to use.
+
+That is the whole model. `Q`, `K` and `V` are themselves just linear projections of the input, the mask is one extra line, and everything else in this article is about computing that average without ever building the matrix it averages over.
+
 ## One weighted average
 
 ```python

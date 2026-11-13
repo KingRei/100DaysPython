@@ -35,7 +35,7 @@ li     { margin: .3em 0; }
 <p>Day 52 做的是 attention 本身，今天是包著它的那一層和那個 block。</p>
 <h2>整個架構長什麼樣，以及為什麼是這個樣子</h2>
 <img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2053%20-%20multi-head%20attention%20and%20the%20transformer%20block/imgs/day53_0.png?raw=true">
-<p>token id 進來，embedding 把每個 token 變成一個向量，N 個長得一模一樣的 block 輪流在這組向量上「改一點東西」，最後一個 LayerNorm 把它收住，unembedding 再把每個向量變成「每個詞表項目一個分數」。這裡真正在做事的只有五個設計決定，而每一個都換到很具體的東西。</p>
+<p>這是 <strong>decoder-only</strong> 的堆疊，也就是 GPT 這一類語言模型的長相。2017 年那篇論文還有一個 encoder，而且每個 decoder block 裡多一層 cross-attention 去讀 encoder 的輸出——那是翻譯模型需要的東西；只要模型做的事是「把自己的文字接下去」，這兩樣就都會被拿掉，剩下的就是上面這張圖。token id 進來，embedding 把每個 token 變成一個向量，N 個長得一模一樣的 block 輪流在這組向量上「改一點東西」，最後一個 LayerNorm 把它收住，unembedding 再把每個向量變成「每個詞表項目一個分數」。這裡真正在做事的只有五個設計決定，而每一個都換到很具體的東西。</p>
 <p><strong>一條固定寬度的流。</strong> 每個 block 吃 <code>(n, d_model)</code>、吐 <code>(n, d_model)</code>——後面量的例子就是 <code>(16, 64)</code> 進、<code>(16, 64)</code> 出。「疊 32 層」因此只是一句話而不是一次重新設計：只有一種形狀要實作、只有一種形狀要切到多張卡上、而且任何地方都插得進一個新層。</p>
 <p><strong>block 是往流上「加」而不是「換掉」。</strong> 一個輸出全零的分支會讓模型完全不變，所以新加的 block 一開始就是什麼都不做，它只需要學一個修正量。代價是這條流變成一個連加、會隨深度長大——後面量到 32 層從 32.0 長到 197.0——而那些 normalisation 和初始化縮放存在的理由就是控制這件事。</p>
 <p><strong>位置之間的資訊只在一個地方交換。</strong> 整個堆疊裡只有 attention 會去讀別的位置；MLP、norm、unembedding 全都是一次只處理一個位置。光是這一條限制就決定了三件事：一個 causal mask 就足以讓模型變成自迴歸的、KV cache 之所以可能（只有 attention 會回頭看），以及成本為什麼會乾淨地分成「跟 context 成正比」和「跟 context 平方成正比」兩半。</p>

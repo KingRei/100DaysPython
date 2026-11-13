@@ -44,6 +44,56 @@ def bars(ax, x0, base, bw, gap, vals, cols, labs, maxh, top=None):
             text(ax, x + bw / 2, base + hh + .22, labs[i], color=cols[i], size=11.5)
 
 
+# ---------------------------------------------------------------- figure 0
+def fig0():
+    """How one output row is produced: scores, softmax, weighted average."""
+    fig, ax = W(6.2)
+    Q, K, V, out, w = A.toy_attention()
+    d = Q.shape[1]
+    scores = Q[0] @ K.T / math.sqrt(d)
+    m = K.shape[0]
+    cw, X0 = 1.18, 1.95
+    text(ax, 5.0, 6.35, 'attention(Q, K, V)  =  softmax( Q K$^{T}$ / $\\sqrt{d}$ ) V',
+         color=TEAL_L, size=16, glowing=False)
+    text(ax, 5.0, 5.82, 'one output row, step by step: query 0 against 6 keys, head '
+                        f'dimension {d}', color=GREY_L, size=11.5, glowing=False)
+    box(ax, 0.35, 4.55, 1.35, 0.55, label='query 0', edge=AMBER, lw=1.7)
+    for j in range(m):
+        box(ax, X0 + j * cw, 4.55, cw * 0.86, 0.55, label=f'key {j}', edge=TEAL, lw=1.5)
+    text(ax, 1.02, 4.12, 'dot product', color=AMBER, size=11, glowing=False)
+    for j in range(m):
+        ax.annotate('', xy=(X0 + j * cw + cw * 0.43, 3.92), xytext=(1.02, 4.40),
+                    arrowprops=dict(arrowstyle='->', color=AMBER, lw=1.0, alpha=.55))
+    text(ax, 1.55, 3.62, 'score / $\\sqrt{d}$', color=TEAL, size=11.5, ha='right',
+         glowing=False)
+    for j in range(m):
+        text(ax, X0 + j * cw + cw * 0.43, 3.62, f'{scores[j]:+.2f}', color=TEAL_L,
+             size=12)
+    text(ax, 1.55, 3.12, 'softmax', color=TEAL, size=11.5, ha='right', glowing=False)
+    for j in range(m):
+        ax.annotate('', xy=(X0 + j * cw + cw * 0.43, 3.24),
+                    xytext=(X0 + j * cw + cw * 0.43, 3.42),
+                    arrowprops=dict(arrowstyle='->', color=TEAL, lw=1.1, alpha=.6))
+    base, maxh = 1.55, 1.35
+    for j in range(m):
+        hh = maxh * w[0, j] / w[0].max()
+        x = X0 + j * cw + cw * 0.10
+        ax.add_patch(Rectangle((x, base), cw * 0.66, hh, facecolor=TEAL,
+                               edgecolor=TEAL, lw=1.2, alpha=.85, zorder=3))
+        text(ax, x + cw * 0.33, base + hh + 0.24, f'{w[0, j]:.4f}', color=TEAL_L,
+             size=11.5)
+        text(ax, x + cw * 0.33, base - 0.26, f'v {j}', color=GREY_L, size=11,
+             glowing=False)
+    text(ax, 1.55, base + 0.55, 'weight', color=TEAL, size=11.5, ha='right',
+         glowing=False)
+    text(ax, 5.0, 0.92, f'the six weights sum to {w[0].sum():.2f}, so the output row is '
+                        f'a weighted average of the six value rows',
+         color=TEAL, size=11.5, glowing=False)
+    text(ax, 5.0, 0.46, 'attention cannot invent a value - it only decides how much of '
+                        'each one to use', color=CYAN, size=12.5)
+    save(fig, 'day52_0.png')
+
+
 # ---------------------------------------------------------------- figure 1
 def fig1():
     """The weight matrix: one number per pair, every row a distribution."""
@@ -238,6 +288,6 @@ def fig6():
 
 
 if __name__ == '__main__':
-    for f in (fig1, fig2, fig3, fig4, fig5, fig6):
+    for f in (fig0, fig1, fig2, fig3, fig4, fig5, fig6):
         f()
         print(f.__name__, 'ok')

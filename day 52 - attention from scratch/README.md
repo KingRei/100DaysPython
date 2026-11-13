@@ -8,6 +8,20 @@ Interactive walkthrough: [demo.html](demo.html) - a single self-contained page
 and the causal mask, the softmax overflow and the 1/sqrt(d), the FlashAttention block
 walk, the memory bill, paged KV allocation, the delta rule, and both LeetCode problems.
 
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2052%20-%20attention%20from%20scratch/imgs/day52_0.png?raw=true)
+
+```
+attention(Q, K, V) = softmax(Q K^T / sqrt(d)) V
+```
+
+Four steps, shown above with real numbers from a 4-query, 6-key, head-dimension-8 example.
+Query row 0 is dotted with each key row, giving one score per pair (+0.20, +0.03, -0.26,
++0.69, +1.32, -0.12); dividing by `sqrt(d)` keeps those scores at roughly unit scale
+whatever the head width; softmax turns them into non-negative weights that sum to 1.00
+(0.1269, 0.1065, 0.0799, 0.2059, 0.3886, 0.0923); and those weights are applied to the six
+value rows. `Q`, `K` and `V` are themselves linear projections of the input, and the causal
+mask is one extra line.
+
 Attention is a weighted average: score every pair of positions, softmax the scores into
 weights that sum to one, and average the value vectors with those weights. Because each
 row of weights is non-negative and sums to one, the output is always a convex combination

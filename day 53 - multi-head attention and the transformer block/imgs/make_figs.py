@@ -91,6 +91,8 @@ def fig0():
                 arrowprops=dict(arrowstyle='->', color=CYAN, lw=2.2))
     text(ax, SX - W2 / 2 - 1.15, (ytop + y) / 2, 'the residual stream:\nsame shape at\nevery point',
          color=CYAN, size=11.5, ha='right')
+    text(ax, SX, y + 0.95, 'a decoder-only stack (GPT-style): no encoder, no cross-attention',
+         color=GREY_L, size=11.5, glowing=False)
     p = T.block_params(4096)
     text(ax, 5.0, 0.18,
          f'every block is the same two edits to one stream: attention moves information '
