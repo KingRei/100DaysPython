@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The KV cache: what it stores, what it costs, and why prefill and decode are two different machines</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>The KV cache: what it stores, what it costs, and why prefill and decode are two different machines</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2056%20-%20kv%20cache">day 56 on GitHub</a></p>
+<p><em>100 Days of Python - day 56</em></p>
+<p>Yesterday&#x27;s mini-GPT generated text by running the whole model over the whole sequence for every single new character. That is the obvious implementation and it is quadratic: generating n tokens after a prompt of T costs work proportional to n(T + n).</p>
+<p>Keep the keys and values you already computed and it becomes nT. On the toy model in this file, 64 tokens after a 64-token prompt take 0.31 s recomputing and 0.04 s cached - and that ratio grows with the sequence, so it is the shape that matters rather than the 8.6x.</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2056%20-%20kv%20cache/imgs/day56_0.png?raw=true">
+<p>That one change also splits inference into two phases with completely different bottlenecks, which is the part worth understanding.</p>
+<h2>What is in the cache</h2>
+<p>Two arrays per layer: the keys and the values of every token so far. Allocated once at the maximum length, because growing a numpy array per token copies the whole thing every step - the cache&#x27;s own version of the problem it exists to solve.</p>
+<pre><code>class KVCache:
+    def __init__(self, cfg, max_len=None):
+        H, dh = cfg[&#x27;n_head&#x27;], cfg[&#x27;d_model&#x27;] // cfg[&#x27;n_head&#x27;]
+        self.k = [np.zeros((H, max_len, dh)) for _ in range(cfg[&#x27;n_layer&#x27;])]
+        self.v = [np.zeros((H, max_len, dh)) for _ in range(cfg[&#x27;n_layer&#x27;])]
+        self.length = 0</code></pre>
+<p>Note what is <em>not</em> in it: the queries. A query is used once, by the token that made it, and never read again. Keys and values are read by every token that comes after, which is exactly why they are the ones worth keeping.</p>
+<p>The size is <code>2 x layers x kv_heads x head_dim x bytes</code>, per token, per sequence:</p>
+<pre><code>model                           bytes/token  at a 128k context
+------------------------------  -----------  -----------------
+the toy model here              512          0.1 GB
+32 layers, 32 kv heads          524,288      64.0 GB
+32 layers, GQA with 8 kv heads  131,072      16.0 GB
+80 layers, GQA with 8 kv heads  327,680      40.0 GB</code></pre>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2056%20-%20kv%20cache/imgs/day56_1.png?raw=true">
+<h2>It is an optimisation, so it must change nothing</h2>
+<p>The acceptance test is differential: prefill the prompt, decode token by token, and require every step to equal what the full forward would have said.</p>
+<pre><code>largest difference between a cached step and the full forward: 3.75e-16
+sampling 24 tokens both ways gives the same tokens: True</code></pre>
+<p>Nearly every cache bug shows up here as a number that is finite, plausible, and not equal - an off-by-one in the write position, a stale entry, a rotation applied at the wrong offset. None of them raise anything.</p>
+<h2>Prefill and decode</h2>
+<p>Arithmetic intensity is multiply-accumulates per byte moved. It decides whether a phase is limited by the arithmetic units or by memory, and a GPU wants it in the hundreds.</p>
+<pre><code>context  prefill MACs/byte  decode MACs/byte
+-------  -----------------  ----------------
+128      64.3               0.50
+512      261.2              0.50
+2,048    1,107.9            0.50
+8,192    5,433.0            0.50</code></pre>
+<p>The 0.50 is not a coincidence, and it is the whole story in one number. In decode, every weight and every cached number is loaded to be used in exactly <strong>one</strong> multiply-accumulate, and an fp16 number is two bytes. One MAC per two bytes is 0.5. Prefill reuses each loaded weight across all T tokens, which is where its intensity comes from.</p>
+<p>This also says something precise about GQA: sharing K and V across heads cuts how many bytes decode has to read, but it cuts the multiply-accumulates by the same factor, so the intensity stays at 0.50. It makes decode cheaper without making it any less memory-bound.</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2056%20-%20kv%20cache/imgs/day56_2.png?raw=true">
+<h2>Which is why decode gets batched</h2>
+<p>The weights are read once per step no matter how many sequences are decoding, so adding sequences to the batch is close to free until the arithmetic catches up. Measured here (numpy on a CPU, so read the shape and not the milliseconds):</p>
+<pre><code>batch  ms per step  microseconds per sequence
+-----  -----------  -------------------------
+1      0.21         211
+8      0.96         120
+32     4.29         134
+128    17.3         135</code></pre>
+<p>Going from one sequence to eight cuts the cost per sequence almost in half; after that it flattens out, because with 512 tokens in the cache numpy is already spending its time on the attention einsum rather than on the weights. On a GPU that flat region runs much further, which is why serving systems fight so hard to keep the decode batch full.</p>
+<p>What stops the batch growing is the cache itself: every sequence carries its own, and they are what fills the memory. Bigger batch, better throughput, less room for caches - that tension is where every KV cache management technique starts.</p>
+<h2>The silent failure: a cache that was not reset</h2>
+<p>Start a second sequence while the first one is still in the cache - no reset, just carry on appending.</p>
+<pre><code>largest difference in the logits: 0.2731  (mean 0.1303)
+the most likely next token changes on 4 of 12 steps
+up to 67% of what the model could attend to belonged to the previous sequence</code></pre>
+<p>Nothing raises. The shapes are right, the logits are finite, the softmax still sums to one. The model is reading someone else&#x27;s conversation and the only symptom is that the output is slightly strange - which, in a chat server handling several users, is exactly the kind of bug that gets reported as &quot;the model seems confused sometimes&quot;. The differential test above catches it immediately; reading the generated text does not.</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2056%20-%20kv%20cache/imgs/day56_3.png?raw=true">
+<h2>The same cache in PyTorch and JAX</h2>
+<p>Everything above is one toy class. PyTorch and JAX are both array libraries you write a model in, and in both of them the cache is something your own code holds - only the names and the rules change.</p>
+<p><strong>PyTorch / transformers</strong> hands the cache back to you as <code>past_key_values</code>:</p>
+<pre><code>from transformers import AutoModelForCausalLM, AutoTokenizer
+model = AutoModelForCausalLM.from_pretrained(name, dtype=torch.float16).cuda()
+
+# prefill: the whole prompt in one pass, and the cache comes back with it
+out  = model(**tok(&quot;the cat sat&quot;, return_tensors=&quot;pt&quot;).to(&quot;cuda&quot;), use_cache=True)
+past = out.past_key_values           # one (k, v) pair per layer
+nxt  = out.logits[:, -1].argmax(-1, keepdim=True)
+
+# decode: one token in, one token out, cache grows by one row
+for _ in range(50):
+    out  = model(input_ids=nxt, past_key_values=past, use_cache=True)
+    past = out.past_key_values
+    nxt  = out.logits[:, -1].argmax(-1, keepdim=True)</code></pre>
+<p><code>past[0][0].shape</code> is <code>(batch, kv_heads, tokens_so_far, head_dim)</code> - our <code>cache.k[l]</code> with a batch dimension. <code>model.generate()</code> runs this loop for you; writing it out is only to see it. Forgetting to pass <code>past</code> does not raise: the model treats that single token as a brand new sequence. Reusing a <code>past</code> that belongs to another request is the stale-cache bug from the section above.</p>
+<p><strong>JAX</strong> cannot let the cache grow, because <code>jit</code> compiles against shapes - a cache one row longer every step would recompile every step. So it is allocated full and written by position:</p>
+<pre><code>cache_k = jnp.zeros((heads, MAX_LEN, head_dim))      # allocated once, full size
+
+def decode_step(params, cache_k, cache_v, q, token, pos):
+    k, v = project(params, token)
+    cache_k = cache_k.at[:, pos].set(k)              # functional write, same shape
+    cache_v = cache_v.at[:, pos].set(v)
+    live = jnp.arange(MAX_LEN) &lt;= pos                # mask the empty tail
+    att  = jnp.where(live, q @ cache_k.T / jnp.sqrt(d), -jnp.inf)
+    return jax.nn.softmax(att) @ cache_v, cache_k, cache_v
+
+step = jax.jit(decode_step)                          # compiled once, reused</code></pre>
+<p>Inside <code>jit</code>, <code>.at[].set()</code> becomes an in-place update rather than a copy. The slots past <code>pos</code> hold junk, so the mask is not optional - forget it and the model softmaxes over a pile of zeros, with perfect shapes and no error.</p>
+<h2>Now SGLang, which is a different kind of thing</h2>
+<p>PyTorch and JAX sit at the same level: libraries you write a model in. SGLang is not another one of those - it is an inference <strong>server</strong> built on top of them. You do not write a decode loop with it; you start a process that loads the weights once, accepts requests from many users over HTTP, decides which of them run in the same batch on each step, and owns all of the GPU memory. vLLM and TensorRT-LLM are the same kind of thing.</p>
+<p>Once a server is doing that job, the cache cannot be a variable in your loop any more. Hundreds of requests arrive and finish at unrelated times, so allocating a fresh array per request would fragment the memory within minutes. Instead SGLang carves everything that is not weights into fixed-size token slots at startup, and hands slots out:</p>
+<pre><code>python -m sglang.launch_server --model-path meta-llama/Llama-3.1-8B \
+    --mem-fraction-static 0.9 \     # share of HBM the KV pool may take
+    --max-running-requests 256 \    # cap on the decode batch
+    --chunked-prefill-size 8192     # split long prefills into chunks</code></pre>
+<p>That pool (<code>token_to_kv_pool</code>) <em>is</em> the cache, and each request keeps an index table (<code>req_to_token</code>) pointing at the slots it owns - our <code>cache.length</code> becomes a row in a table rather than a field on an object. The capacity that matters is counted in tokens: <code>(HBM - weights) / bytes_per_token</code>, with <code>bytes_per_token</code> the number from the table above. That one division decides how many users fit on the machine, which is why <code>--mem-fraction-static</code> is the first flag anyone touches.</p>
+<p>The other two flags are this day&#x27;s two measurements turned into policy. <code>--max-running-requests</code> caps the decode batch, because decode is memory-bound and wants a large batch while every sequence in it costs slots. <code>--chunked-prefill-size</code> exists because a long prefill is compute-bound and holds the GPU for tens of milliseconds, during which every decoding request sits still - so prefills get cut into pieces that run between decode steps.</p>
+<h2>Why this matters later</h2>
+<p>Almost everything in LLM serving is a consequence of the two facts above. The cache is per sequence and large, so memory management becomes the scheduling problem. Decode is memory-bound at 0.50 MACs per byte, so throughput comes from batching rather than from faster arithmetic, and anything that reduces bytes - GQA, quantised caches, sharing a prefix between requests - buys real time.</p>
+<p>Code and the interactive walkthrough are in the repo: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2056%20-%20kv%20cache">day 56 on GitHub</a>.</p>
+</body>
+</html>

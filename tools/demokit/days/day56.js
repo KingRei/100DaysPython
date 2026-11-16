@@ -1,0 +1,538 @@
+// DAY: 56
+// TITLE_ZH: KV cache：它存什麼、要多少記憶體，以及 prefill 和 decode 為什麼是兩台不同的機器
+// TITLE_EN: The KV cache: what it stores, what it costs, and why prefill and decode are two different machines
+// SUB_ZH: 生成一個 token 要看過前面所有 token。沒有 cache 就得把整個模型在整段序列上重跑一次——每生一個字都重跑一次。把 key 和 value 留著，二次方的迴圈就變成線性的，而推論也從此分成兩個瓶頸完全不同的階段。
+// SUB_EN: Generating one token means looking at every earlier token. Without a cache that means rerunning the whole model over the whole sequence, once per generated token. Keeping the keys and values turns a quadratic loop into a linear one, and splits inference into two phases with completely different bottlenecks.
+// FOLDER: day%2056%20-%20kv%20cache
+// MEDIUM: https://medium.com/100-days-of-python
+const VIEW = [9.8, 6.4];
+function chip(t, cls){ return {t:t, cls:cls || ''}; }
+const curV = () => (typeof varIx !== 'undefined' ? varIx : 0);
+
+const isCJK = ch => { const c = ch.codePointAt(0);
+  return (c >= 0x2e80 && c <= 0x9fff) || (c >= 0xff00 && c <= 0xff60) || (c >= 0x3000 && c <= 0x303f); };
+function tw(str, fs){ let w = 0;
+  for (const ch of String(str)) w += isCJK(ch) ? 1.0 : .55;
+  return w * fs; }
+function fitT(x, y, s, opt){
+  opt = Object.assign({}, opt || {});
+  const fs = opt.fs || .32, a = opt.anchor || 'middle', pad = .20;
+  const room = a === 'start' ? VIEW[0] - pad - x
+             : a === 'end'   ? x - pad
+             : 2 * Math.min(x - pad, VIEW[0] - pad - x);
+  const strs = (typeof s === 'string') ? [s] : [s.zh, s.en].filter(t => t != null);
+  const w = Math.max.apply(null, strs.map(t => tw(t, fs)));
+  if (w > room) opt.fs = fs * room / w;
+  return S.t(x, y, s, opt);
+}
+function fitFs(lab, w, fs){
+  const strs = (typeof lab === 'string') ? [lab] : [lab.zh, lab.en];
+  const need = Math.max.apply(null, strs.map(t => tw(t, fs)));
+  return need > w - .08 ? fs * (w - .08) / need : fs;
+}
+const box = (x, y, w, h, s, lab, fs) => S.r(x, y, w, h, s, lab, {fs:fitFs(lab, w, fs || h * .5)});
+function caps(sh, o){
+  if (o.cap) sh.push(fitT(4.9, 5.62, o.cap, {c:o.capc || COL.pale, fs:.30}));
+  if (o.cap2) sh.push(fitT(4.9, 6.06, o.cap2, {c:COL.grey, fs:.26}));
+  return sh;
+}
+const side = (sh, x, y0, lines, dy) => (lines || []).forEach((l, k) =>
+  sh.push(fitT(x, y0 + k * (dy || .5), l[0], {anchor:'start', c:l[1] || COL.pale, fs:l[2] || .30})));
+const fmtN = x => x == null ? 'nan' : String(Math.round(x * 1e4) / 1e4);
+const PURPLE = '#b45cff';
+
+function barRow(sh, x0, base, bw, gap, vals, sts, labs, maxh, top){
+  const hi = top || Math.max.apply(null, vals.map(Math.abs));
+  vals.forEach((v, i) => {
+    const hgt = Math.max(.05, maxh * Math.abs(v) / hi), x = x0 + i * (bw + gap);
+    sh.push(S.r(x, base - hgt, bw, hgt, sts[i] || 'ok', null));
+    if (labs && labs[i] != null) sh.push(fitT(x + bw / 2, base - hgt - .20, labs[i], {c:COL.pale, fs:.24}));
+  });
+  return sh;
+}
+// a 0..1 x 0..1 plot box; data y grows upward, SVG y grows downward
+function Panel(x0, y0, w, h){ this.x0 = x0; this.y0 = y0; this.w = w; this.h = h; }
+Panel.prototype.px = function(p){
+  return [this.x0 + this.w * p[0], this.y0 + this.h * (1 - p[1])];
+};
+Panel.prototype.frame = function(sh){
+  sh.push(S.r(this.x0, this.y0, this.w, this.h, 'ghost', null));
+  return sh;
+};
+function polyline(sh, panel, pts, st, w){
+  for (let i = 1; i < pts.length; i++){
+    const a = panel.px(pts[i - 1]), b = panel.px(pts[i]);
+    sh.push(S.e(a[0], a[1], b[0], b[1], {s:st, arrow:false, w:w || .055}));
+  }
+  return sh;
+}
+const CORE = {"equiv": 3.7e-16, "same": true, "tNo": 0.31, "tYes": 0.04, "speed": 8.6, "layers": 2, "heads": 4, "dh": 16};
+const MEM = [{"name": "toy model here", "bytes": 512, "gb": 0.1}, {"name": "32 layers, 32 kv heads", "bytes": 524288, "gb": 64.0}, {"name": "32 layers, GQA 8", "bytes": 131072, "gb": 16.0}, {"name": "80 layers, GQA 8", "bytes": 327680, "gb": 40.0}];
+const AI = [{"T": 128, "pre": 64.3, "dec": 0.5}, {"T": 512, "pre": 261.2, "dec": 0.5}, {"T": 2048, "pre": 1107.9, "dec": 0.5}, {"T": 8192, "pre": 5433.0, "dec": 0.5}, {"T": 32768, "pre": 37449.1, "dec": 0.5}];
+const BATCH = [{"b": 1, "ms": 0.21, "us": 210.6}, {"b": 8, "ms": 0.96, "us": 120.1}, {"b": 32, "ms": 4.29, "us": 134.2}, {"b": 128, "ms": 17.64, "us": 137.8}];
+const STALE = {"worst": 0.2731, "mean": 0.1303, "flips": 4, "steps": 12, "stale": 67.0};
+
+
+/* ================================================================ tab 1: why */
+const CODE_WHY = [
+  '# without a cache',
+  'for each new token:',
+  '    logits = forward(whole sequence so far)[-1]',
+  '',
+  '# with a cache',
+  'for each new token:',
+  '    logits = forward_step(one token, reading K and V from the cache)'
+];
+function triStage(o){
+  const sh = [], n = 8, cw = .40;
+  [[0, .95, 'bad'], [1, 5.75, 'ok']].forEach(side => {
+    const idx = side[0], x0 = side[1], col = side[2];
+    for (let step = 0; step <= o.upto && step < n; step++){
+      for (let j = 0; j <= step; j++){
+        const fresh = (idx === 0) || (j === step);
+        sh.push(S.r(x0 + j * cw, 4.25 - step * cw, cw * .86, cw * .86,
+                    fresh ? col : 'idle', null));
+      }
+    }
+    sh.push(fitT(x0 + n * cw / 2, 4.85,
+                 idx === 0 ? {zh:'沒有 cache：每一步重算全部', en:'no cache: every step redoes everything'}
+                           : {zh:'有 cache：每一步只多一列', en:'with a cache: one new row per step'},
+                 {c:idx === 0 ? COL.red : COL.tealL, fs:.28}));
+  });
+  sh.push(fitT(.95 + n * cw / 2, 1.00, {zh:'每步的工作量隨序列變長', en:'work per step grows with the sequence'},
+               {c:COL.red, fs:.26}));
+  sh.push(fitT(5.75 + n * cw / 2, 1.00, {zh:'每步的工作量固定', en:'work per step stays constant'},
+               {c:COL.tealL, fs:.26}));
+  return caps(sh, o);
+}
+function whyFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:triStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  [1, 3, 7].forEach((k, i) => {
+    p({upto:k, line:i === 2 ? 6 : 2,
+      cap:{zh:'每一列是一個生成出來的 token，每一格是一組算出來的 key 和 value',
+           en:'each row is one generated token; each cell is a key and value that had to be computed'},
+      panels:[{lbl:'tokens', chips:[chip(String(k + 1), 'hot')]},
+              {lbl:'recomputed vs cached',
+               chips:[chip(String((k + 1) * (k + 2) / 2), 'bad'), chip(String(k + 1), 'ok')]}],
+      msg:i === 2
+        ? {zh:'生成 n 個 token、prompt 長 T 時，沒有 cache 的工作量正比於 n×(T+n)，有 cache 是 n×T。這個玩具模型上（64 個 prompt、生 64 個）量到 ' + CORE.tNo.toFixed(2) + ' 秒 對 ' + CORE.tYes.toFixed(2) + ' 秒＝' + CORE.speed.toFixed(1) + ' 倍——但倍率本身不重要，它會隨序列變長而變大。重要的是形狀：二次方變線性。',
+           en:'Generating n tokens after a prompt of T costs work proportional to n(T+n) without a cache and nT with one. On this toy model (64-token prompt, 64 generated) that is ' + CORE.tNo.toFixed(2) + ' s against ' + CORE.tYes.toFixed(2) + ' s, ' + CORE.speed.toFixed(1) + 'x - but the ratio is not the point, since it grows with the sequence. The shape is: quadratic becomes linear.'}
+        : {zh:'左邊每一步都把整段序列重算一次，所以第 k 步要做 k 組 key/value；右邊只算新的那一個，其他直接從 cache 讀出來（灰色的格子）。',
+           en:'On the left every step recomputes the whole sequence, so step k does k keys and values; on the right only the new one is computed and the rest are read out of the cache (the grey cells).'}});
+  });
+  return F.list;
+}
+
+/* ================================================================ tab 2: what it holds */
+const CODE_WHAT = [
+  'class KVCache:',
+  '    self.k = [zeros((H, max_len, dh)) for _ in layers]',
+  '    self.v = [zeros((H, max_len, dh)) for _ in layers]',
+  '    self.length = 0',
+  '',
+  '# allocated once at the maximum length: growing per token would copy',
+  '# the whole array every step - the cache\'s own quadratic problem'
+];
+function memStage(o){
+  const sh = [], base = 2.40, maxh = 2.00, bw = 1.55;
+  const top = Math.max.apply(null, MEM.map(m => m.bytes));
+  MEM.forEach((m, i) => {
+    if (i > o.upto) return;
+    const x = .85 + i * 2.25;
+    const h = Math.max(.05, maxh * m.bytes / top);
+    sh.push(S.r(x, base, bw, h, i === o.upto ? 'hot' : 'ok', null));
+    sh.push(fitT(x + bw / 2, base + h + .26, (m.bytes / 1024).toFixed(0) + ' KB',
+                 {c:i === o.upto ? COL.hot : COL.tealL, fs:.28}));
+    sh.push(fitT(x + bw / 2, base - .30, m.gb.toFixed(1) + ' GB at 128k',
+                 {c:COL.grey, fs:.24}));
+    sh.push(fitT(x + bw / 2, base - .66, m.name, {c:COL.grey, fs:.22}));
+  });
+  sh.push(fitT(4.9, 5.05, {zh:'每個 token 的 KV cache（fp16），而且是每條序列各一份',
+                           en:'KV cache per token, fp16 - and one per sequence'},
+               {c:COL.grey, fs:.26}));
+  return caps(sh, o);
+}
+function whatFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:memStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({upto:0, line:1,
+    cap:{zh:'每層兩個陣列：key 和 value', en:'two arrays per layer: the keys and the values'},
+    panels:[{lbl:'shape', chips:[chip('(H, max_len, d_head)', 'ok')]},
+            {lbl:'layers', chips:[chip(String(CORE.layers), 'dim')]}],
+    msg:{zh:'cache 裡只有 key 和 value，沒有 query。query 只被製造它的那個 token 用一次就丟掉；key 和 value 會被後面每一個 token 讀，所以值得留。陣列要一次配置到最大長度——每個 token 重新配置會整個複製一次，那就是 cache 自己的二次方問題。',
+         en:'The cache holds keys and values, and no queries. A query is used once, by the token that made it, and never again; keys and values are read by every token that follows, which is exactly why they are the ones worth keeping. The arrays are allocated once at the maximum length, because growing them per token would copy the whole thing every step - the cache\'s own version of the problem it exists to solve.'}});
+  MEM.forEach((m, i) => {
+    if (i === 0) return;
+    p({upto:i, line:0,
+      cap:{zh:'它是一個很大的數字，而且是「每條序列」', en:'it is a big number, and it is per sequence'},
+      panels:[{lbl:m.name, chips:[chip((m.bytes / 1024).toFixed(0) + ' KB/token', 'hot')]},
+              {lbl:'128k context', chips:[chip(m.gb.toFixed(1) + ' GB', m.gb > 10 ? 'bad' : 'ok')]}],
+      msg:i === 1
+        ? {zh:'32 層、32 個 kv head、head_dim 128、fp16：每個 token ' + (MEM[1].bytes / 1024).toFixed(0) + ' KB，128k context 就是 ' + MEM[1].gb.toFixed(1) + ' GB——一條序列。同時服務幾十條就知道記憶體是怎麼沒的。',
+           en:'32 layers, 32 kv heads, head dimension 128, fp16: ' + (MEM[1].bytes / 1024).toFixed(0) + ' KB per token, which is ' + MEM[1].gb.toFixed(1) + ' GB at a 128k context - for one sequence. Serve a few dozen at once and that is where the memory goes.'}
+        : {zh:'GQA 把 kv head 從 32 降到 8，同樣的 context 從 ' + MEM[1].gb.toFixed(1) + ' GB 降到 ' + MEM[2].gb.toFixed(1) + ' GB。' + (i === 3 ? '80 層的大模型即使用了 GQA 仍然是 ' + MEM[3].gb.toFixed(1) + ' GB：層數也在分子上。' : '這是把這個數字變小最便宜的做法。'),
+           en:'GQA takes the kv heads from 32 to 8 and the same context from ' + MEM[1].gb.toFixed(1) + ' GB to ' + MEM[2].gb.toFixed(1) + ' GB.' + (i === 3 ? ' An 80-layer model is still ' + MEM[3].gb.toFixed(1) + ' GB even with GQA: the layer count is in the numerator too.' : ' It is the cheapest way to make this number smaller.')}});
+  });
+  p({upto:MEM.length - 1, line:5,
+    cap:{zh:'而且它必須完全不改變答案', en:'and it has to change nothing at all'},
+    panels:[{lbl:'cached vs full forward', chips:[chip(CORE.equiv.toExponential(0), 'ok')]},
+            {lbl:'same sampled tokens', chips:[chip(CORE.same ? 'yes' : 'no', 'ok')]}],
+    msg:{zh:'cache 是純粹的最佳化，所以唯一的驗收標準是「跟完整重算逐位元相同」：量到 ' + CORE.equiv.toExponential(0) + '，而且用同一個 seed 取樣 24 個 token 兩邊字字相同。這個對拍測試（prefill 一次 → 逐 token decode → 每步都要等於完整 forward）會抓到幾乎所有 cache bug：寫錯位置、沒清乾淨、RoPE 位置錯。',
+         en:'The cache is pure optimisation, so the only acceptance test is that it matches the full recomputation bit for bit: measured at ' + CORE.equiv.toExponential(0) + ', and sampling 24 tokens with the same seed gives the same tokens either way. That differential test - prefill, then decode step by step, requiring each step to equal the full forward - catches nearly every cache bug: a wrong write position, a stale entry, a rotation applied at the wrong offset.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 3: two machines */
+const CODE_AI = [
+  'weights = layers * (4*d*d + 2*d*d_ff)',
+  '',
+  'prefill: T * weights MACs,  weights*2 bytes read   -> grows with T',
+  'decode:  1 * weights MACs,  weights*2 + T*kv bytes -> 0.50, always',
+  '',
+  '# every number loaded in decode is used in exactly one MAC,',
+  '# and an fp16 number is two bytes'
+];
+function aiStage(o){
+  const sh = [], X0 = 1.55, Y0 = 1.65, WD = 6.9, HT = 2.70;
+  sh.push(S.e(X0, Y0, X0 + WD, Y0, {s:'ghost', arrow:false, w:.04}));
+  sh.push(S.e(X0, Y0, X0, Y0 + HT, {s:'ghost', arrow:false, w:.04}));
+  const ly = (v) => Y0 + HT * (Math.log10(Math.max(v, .1)) + 1) / 6;
+  const xs = AI.map((_, i) => X0 + WD * i / (AI.length - 1));
+  for (let i = 1; i < AI.length; i++){
+    if (o.upto != null && i > o.upto) break;
+    sh.push(S.e(xs[i - 1], ly(AI[i - 1].pre), xs[i], ly(AI[i].pre), {s:'ok', arrow:false, w:.06}));
+    sh.push(S.e(xs[i - 1], ly(AI[i - 1].dec), xs[i], ly(AI[i].dec), {s:'bad', arrow:false, w:.06}));
+  }
+  sh.push(S.e(X0, ly(100), X0 + WD, ly(100), {s:'hot', arrow:false, w:.035}));
+  sh.push(fitT(X0 + .12, ly(100) + .24, {zh:'GPU 大約在這條線以上才不是記憶體受限',
+                                         en:'roughly where a GPU stops being memory-bound'},
+               {anchor:'start', c:COL.hot, fs:.24}));
+  [[.1, '0.1'], [1, '1'], [100, '100'], [10000, '10,000']].forEach(v => {
+    sh.push(fitT(X0 - .18, ly(v[0]), v[1], {anchor:'end', c:COL.grey, fs:.24}));
+  });
+  AI.forEach((a, i) => sh.push(fitT(xs[i], Y0 - .28, a.T.toLocaleString(), {c:COL.grey, fs:.22})));
+  sh.push(fitT(X0 + WD / 2, Y0 - .66, {zh:'context 裡的 token 數', en:'tokens in the context'},
+               {c:COL.grey, fs:.26}));
+  sh.push(fitT(X0 + .10, Y0 + HT + .30, {zh:'每搬一個 byte 做幾次乘加', en:'multiply-accumulates per byte moved'},
+               {anchor:'start', c:COL.grey, fs:.25}));
+  return caps(sh, o);
+}
+function aiFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:aiStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({upto:AI.length - 1, line:2,
+    cap:{zh:'prefill：一次處理整段 prompt', en:'prefill: the whole prompt at once'},
+    panels:[{lbl:'context 2,048', chips:[chip(AI[2].pre.toFixed(1) + ' MACs/byte', 'ok')]},
+            {lbl:'context 32,768', chips:[chip(AI[4].pre.toFixed(0), 'ok')]}],
+    msg:{zh:'prefill 把權重讀進來之後，同一份權重給 T 個 token 一起用，所以 context 越長，每搬一個 byte 做的運算越多：2,048 時 ' + AI[2].pre.toFixed(1) + '、32,768 時 ' + AI[4].pre.toFixed(0) + '。這是 GPU 喜歡的形狀——計算單元有事做。',
+         en:'Prefill loads the weights once and uses them for all T tokens, so the longer the context the more arithmetic it does per byte moved: ' + AI[2].pre.toFixed(1) + ' at 2,048 and ' + AI[4].pre.toFixed(0) + ' at 32,768. That is the shape a GPU likes - the arithmetic units have something to do.'}});
+  p({upto:AI.length - 1, line:3,
+    cap:{zh:'decode：永遠是 0.50，跟 context 無關', en:'decode: 0.50, at every context length'},
+    panels:[{lbl:'decode', chips:[chip('0.50 MACs/byte', 'bad')]},
+            {lbl:'ratio at 8,192', chips:[chip((AI[3].pre / AI[3].dec).toFixed(0) + 'x', 'bad')]}],
+    msg:{zh:'decode 每一步只處理一個 token，所以讀進來的每一個權重、每一個 cache 裡的數字都只被用在**一次**乘加上；fp16 一個數字兩個 byte，所以強度剛好是 0.5——不管 context 多長。它不是「比較慢」，它是另一種瓶頸：時間花在把資料搬進來，不是算。',
+         en:'Decode handles one token per step, so every weight and every cached number it loads is used in exactly ONE multiply-accumulate; an fp16 number is two bytes, so the intensity is exactly 0.5 whatever the context. It is not "slower", it is a different bottleneck: the time goes into moving data, not computing with it.'}});
+  p({upto:AI.length - 1, line:5,
+    cap:{zh:'所以 GQA 省的是「量」不是「強度」', en:'so GQA cuts the volume, not the intensity'},
+    panels:[{lbl:'MHA / GQA bytes', chips:[chip(MEM[1].gb.toFixed(1) + ' GB', 'bad'),
+                                           chip(MEM[2].gb.toFixed(1) + ' GB', 'ok')]},
+            {lbl:'intensity', chips:[chip('0.50 either way', 'dim')]}],
+    msg:{zh:'GQA 讓多個 head 共用同一份 K/V，要讀的 byte 少了四倍——但要做的乘加也少了同樣四倍，所以強度還是 0.50。它讓 decode 變便宜，但沒有讓它變得不是記憶體受限。這也是為什麼 prefill 和 decode 在實務上會被分開調、分開 batch，甚至排到不同機器上。',
+         en:'GQA shares one set of K and V across heads, so decode reads four times fewer bytes - and does four times fewer multiply-accumulates, leaving the intensity at 0.50. It makes decode cheaper without making it any less memory-bound. This is also why prefill and decode get tuned separately, batched separately, and sometimes scheduled onto different machines.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 4: batching */
+const CODE_BATCH = [
+  '# one decode step, B sequences at once',
+  'q = x @ Wqkv                      # the weights are read ONCE',
+  'att = einsum("bhd,bhnd->bhn", q, K)   # each sequence has its own cache',
+  '',
+  '# so adding sequences is nearly free until the arithmetic catches up'
+];
+function batchStage(o){
+  const sh = [], base = 2.50, maxh = 1.95, bw = 1.45;
+  const top = Math.max.apply(null, BATCH.map(b => b.us));
+  BATCH.forEach((b, i) => {
+    if (i > o.upto) return;
+    const x = .95 + i * 2.25;
+    const h = Math.max(.05, maxh * b.us / top);
+    sh.push(S.r(x, base, bw, h, i === o.upto ? 'hot' : 'ok', null));
+    sh.push(fitT(x + bw / 2, base + h + .26, b.us.toFixed(0) + ' us',
+                 {c:i === o.upto ? COL.hot : COL.tealL, fs:.28}));
+    sh.push(fitT(x + bw / 2, base - .30, 'batch ' + b.b, {c:COL.grey, fs:.26}));
+    sh.push(fitT(x + bw / 2, base - .66, b.ms.toFixed(2) + ' ms/step', {c:COL.grey, fs:.22}));
+  });
+  sh.push(fitT(4.9, 5.05, {zh:'每條序列每步的時間（numpy、CPU，看形狀不要看絕對值）',
+                           en:'time per sequence per step (numpy on a CPU: read the shape, not the milliseconds)'},
+               {c:COL.grey, fs:.25}));
+  return caps(sh, o);
+}
+function batchFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:batchStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({upto:0, line:1,
+    cap:{zh:'decode 的權重一步只讀一次', en:'decode reads the weights once per step'},
+    panels:[{lbl:'batch 1', chips:[chip(BATCH[0].us.toFixed(0) + ' us/seq', 'hot')]}],
+    msg:{zh:'一步 decode 不管同時有幾條序列，權重都只被讀一次。既然瓶頸是搬資料，多塞幾條序列進同一步幾乎不用多花錢——它們共用那一次權重讀取。',
+         en:'A decode step reads the weights once however many sequences are in it. Since the bottleneck is moving data, adding sequences to the same step is close to free: they share that one read of the weights.'}});
+  BATCH.forEach((b, i) => {
+    if (i === 0) return;
+    p({upto:i, line:4,
+      cap:{zh:'所以 decode 要 batch', en:'which is why decode gets batched'},
+      panels:[{lbl:'batch ' + b.b, chips:[chip(b.ms.toFixed(2) + ' ms/step', 'act'),
+                                          chip(b.us.toFixed(0) + ' us/seq', i === 1 ? 'ok' : 'dim')]}],
+      msg:i === 1
+        ? {zh:'從 1 條變 8 條：每步 ' + BATCH[0].ms.toFixed(2) + ' → ' + b.ms.toFixed(2) + ' ms，但每條序列從 ' + BATCH[0].us.toFixed(0) + ' → ' + b.us.toFixed(0) + ' µs。',
+           en:'From 1 sequence to 8: the step goes from ' + BATCH[0].ms.toFixed(2) + ' to ' + b.ms.toFixed(2) + ' ms, while the cost per sequence falls from ' + BATCH[0].us.toFixed(0) + ' to ' + b.us.toFixed(0) + ' microseconds.'}
+        : {zh:'再往上就在這裡壓平了（' + b.us.toFixed(0) + ' µs），因為 cache 裡有 512 個 token 時 numpy 的時間已經花在 attention 那個 einsum 上而不是權重上。在 GPU 上這段平坦區會長很多——而這正是服務系統拼命把 decode batch 塞滿的理由。',
+           en:'Beyond that it flattens out here (' + b.us.toFixed(0) + ' microseconds), because with 512 tokens in the cache numpy is already spending its time on the attention einsum rather than on the weights. On a GPU that flat region runs much further - which is exactly why serving systems fight to keep the decode batch full.'}});
+  });
+  p({upto:BATCH.length - 1, line:2,
+    cap:{zh:'而擋住 batch 變大的，就是 cache 本身', en:'and what stops the batch growing is the cache itself'},
+    panels:[{lbl:'per sequence', chips:[chip(MEM[2].gb.toFixed(1) + ' GB at 128k', 'bad')]}],
+    msg:{zh:'batch 裡每一條序列都帶著自己的一份 KV cache。所以「batch 開大一點」不是免費的：它要的是記憶體，而記憶體正好就是 cache 吃掉的那個東西。這條張力——batch 越大吞吐越好、但 cache 越多記憶體越緊——就是之後所有 KV cache 管理技巧的起點。',
+         en:'Every sequence in the batch carries its own KV cache. So "just use a bigger batch" is not free: it costs memory, and memory is exactly what the cache consumes. That tension - bigger batches give better throughput, more caches give less room - is where every KV cache management technique starts.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 5: the bug */
+const CODE_STALE = [
+  'cache = KVCache(cfg)',
+  'prefill(cache, conversation_one)',
+  '',
+  '# new request arrives',
+  '# cache.reset()   <- the line that is missing',
+  'forward_step(cache, first_token_of_conversation_two, pos=0)'
+];
+function staleStage(o){
+  const sh = [];
+  const w1 = 24 * .17, w2 = 12 * .17;
+  sh.push(S.r(1.15, 3.20, w1, .56, o.dirty ? 'done' : 'idle', null));
+  sh.push(fitT(1.15 + w1 / 2, 3.48, {zh:'序列 1', en:'sequence 1'}, {c:COL.pale, fs:.26}));
+  sh.push(S.r(1.30 + w1, 3.20, w2, .56, 'ok', null));
+  sh.push(fitT(1.30 + w1 + w2 / 2, 3.48, {zh:'序列 2', en:'sequence 2'}, {c:COL.pale, fs:.26}));
+  sh.push(fitT(1.15, 2.80, o.dirty ? {zh:'還留在 cache 裡', en:'still in the cache'}
+                                   : {zh:'已經清掉', en:'cleared'},
+               {anchor:'start', c:o.dirty ? COL.red : COL.grey, fs:.26}));
+  side(sh, 1.15, 1.40, o.notes || [], .48);
+  return caps(sh, o);
+}
+function staleFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:staleStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({dirty:false, line:1,
+    cap:{zh:'正常情況：新的請求從空的 cache 開始', en:'normally: a new request starts from an empty cache'},
+    panels:[{lbl:'cache length', chips:[chip('0', 'ok')]}],
+    msg:{zh:'每條序列應該有自己的 cache，或是重用同一塊但先把長度歸零。',
+         en:'Each sequence should get its own cache, or reuse the same memory with the length reset to zero.'}});
+  p({dirty:true, line:4,
+    notes:[[{zh:'最大 logit 差：' + STALE.worst.toFixed(4) + '（平均 ' + STALE.mean.toFixed(4) + '）',
+             en:'largest logit difference: ' + STALE.worst.toFixed(4) + ' (mean ' + STALE.mean.toFixed(4) + ')'}, COL.red, .28],
+           [{zh:'最可能的下一個 token 在 ' + STALE.steps + ' 步裡有 ' + STALE.flips + ' 步不一樣',
+             en:'the most likely next token changes on ' + STALE.flips + ' of ' + STALE.steps + ' steps'}, COL.red, .28],
+           [{zh:'新 token 能看到的東西裡最多有 ' + STALE.stale.toFixed(0) + '% 屬於上一條序列',
+             en:'up to ' + STALE.stale.toFixed(0) + '% of what the new tokens could attend to belonged to sequence 1'}, COL.grey, .26]],
+    cap:{zh:'少了一行 reset', en:'the missing reset'},
+    panels:[{lbl:'logit gap', chips:[chip(STALE.worst.toFixed(4), 'bad')]},
+            {lbl:'argmax flips', chips:[chip(STALE.flips + ' / ' + STALE.steps, 'bad')]}],
+    msg:{zh:'沒有 reset，新序列的 token 就直接接在舊序列後面：它們的 attention 看得到別人的對話。logits 最大差 ' + STALE.worst.toFixed(4) + '，而且 ' + STALE.steps + ' 步裡有 ' + STALE.flips + ' 步連「最可能的下一個 token」都變了。形狀全對、數值有限、softmax 照樣加總為 1——什麼都不會報錯，只是輸出有點怪。第 2 個分頁那個對拍測試會立刻抓到它；用眼睛看生成結果不會。',
+         en:'Without the reset the new sequence simply continues from the old one, and its attention can read someone else\'s conversation. The logits differ by up to ' + STALE.worst.toFixed(4) + ', and on ' + STALE.flips + ' of ' + STALE.steps + ' steps even the most likely next token changes. The shapes are right, the values are finite, the softmax still sums to one - nothing raises, the output is just a bit odd. The differential test from the second tab catches it immediately; reading the generated text does not.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 6: real frameworks */
+const CODE_TORCH = [
+  'from transformers import AutoModelForCausalLM, AutoTokenizer',
+  'model = AutoModelForCausalLM.from_pretrained(name, dtype=torch.float16).cuda()',
+  '',
+  '# prefill: the whole prompt in one pass, cache comes back with it',
+  'out  = model(**tok("the cat sat", return_tensors="pt").to("cuda"), use_cache=True)',
+  'past = out.past_key_values            # one (k, v) pair per layer',
+  'nxt  = out.logits[:, -1].argmax(-1, keepdim=True)',
+  '',
+  '# decode: one token in, one token out, cache grows by one row',
+  'for _ in range(50):',
+  '    out  = model(input_ids=nxt, past_key_values=past, use_cache=True)',
+  '    past = out.past_key_values',
+  '    nxt  = out.logits[:, -1].argmax(-1, keepdim=True)',
+  '',
+  '# k.shape == (batch, kv_heads, tokens_so_far, head_dim)'
+];
+const CODE_JAX = [
+  'import jax, jax.numpy as jnp',
+  '',
+  '# jit needs shapes that never change, so the cache is allocated full',
+  'cache_k = jnp.zeros((heads, MAX_LEN, head_dim))',
+  '',
+  'def decode_step(params, cache_k, cache_v, token, pos):',
+  '    k, v = project(params, token)',
+  '    cache_k = cache_k.at[:, pos].set(k)      # functional write, same shape',
+  '    cache_v = cache_v.at[:, pos].set(v)',
+  '    live = jnp.arange(MAX_LEN) <= pos        # mask the empty tail',
+  '    att  = jnp.where(live, q @ cache_k.T / jnp.sqrt(d), -jnp.inf)',
+  '    return jax.nn.softmax(att) @ cache_v, cache_k, cache_v',
+  '',
+  'step = jax.jit(decode_step)   # one compile, reused for every position'
+];
+const CODE_SGLANG = [
+  'python -m sglang.launch_server --model-path meta-llama/Llama-3.1-8B \\',
+  '    --mem-fraction-static 0.9 \\     # share of HBM the KV pool may take',
+  '    --max-running-requests 256 \\    # cap on the decode batch',
+  '    --chunked-prefill-size 8192      # split long prefills into chunks',
+  '',
+  '# the real limit is the pool, counted in token slots:',
+  '#   slots = (HBM - weights) / bytes_per_token',
+  '#   bytes_per_token = 2 * layers * kv_heads * head_dim * dtype_size',
+  '',
+  '# so a 128k-token request costs the pool 128k slots, whatever the',
+  '# batch size - and the scheduler admits requests until the slots run out'
+];
+const REALMAP = [
+  [{zh:'我們的 KVCache.k / .v', en:'our KVCache.k / .v'},
+   {zh:'past_key_values（每層一對）', en:'past_key_values, one pair per layer'},
+   {zh:'jnp 陣列 ＋ .at[].set()', en:'a jnp array and .at[].set()'},
+   {zh:'token_to_kv_pool 這座池子', en:'token_to_kv_pool, one arena'}],
+  [{zh:'cache.length', en:'cache.length'},
+   {zh:'tensor 自己變長', en:'the tensor just gets longer'},
+   {zh:'pos（形狀不能變）', en:'pos: shapes cannot change'},
+   {zh:'req_to_token 索引表', en:'the req_to_token table'}],
+  [{zh:'cache.reset()', en:'cache.reset()'},
+   {zh:'past=None 重新開始', en:'pass past=None again'},
+   {zh:'pos 歸零即可', en:'just reset pos'},
+   {zh:'把 slot 還給池子', en:'free the slots back to the pool'}],
+  [{zh:'prefill() 迴圈', en:'our prefill() loop'},
+   {zh:'一次 forward 整段 prompt', en:'one forward over the prompt'},
+   {zh:'一次 scan 整段 prompt', en:'one scan over the prompt'},
+   {zh:'chunked prefill 切塊', en:'chunked prefill, in pieces'}]
+];
+function realStage(o){
+  const sh = [], col = o.which + 1;
+  REALMAP.forEach((row, i) => {
+    if (i > o.upto) return;
+    const y = 4.10 - i * .92;
+    sh.push(box(.70, y, 3.55, .62, 'idle', row[0], .26));
+    sh.push(S.e(4.40, y + .31, 5.00, y + .31, {s:'ghost', arrow:true, w:.05}));
+    sh.push(box(5.15, y, 4.05, .62, i === o.upto ? 'hot' : 'ok', row[col], .26));
+  });
+  sh.push(fitT(2.47, 5.02, {zh:'這個檔案裡的寫法', en:'what this file calls it'},
+               {c:COL.grey, fs:.26}));
+  sh.push(fitT(7.17, 5.02, [{zh:'PyTorch / transformers', en:'PyTorch / transformers'},
+                            {zh:'JAX', en:'JAX'},
+                            {zh:'SGLang 伺服器', en:'the SGLang server'}][o.which],
+               {c:COL.tealL, fs:.28}));
+  return caps(sh, o);
+}
+function sglangFrames(){ return realFrames(2); }
+function realFrames(v){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:realStage(Object.assign({which:v}, o)),
+                           panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  if (v === 0){
+    p({upto:1, line:5,
+      cap:{zh:'PyTorch：cache 就是 past_key_values', en:'PyTorch: the cache is past_key_values'},
+      panels:[{lbl:'prefill', chips:[chip('whole prompt', 'ok')]},
+              {lbl:'returns', chips:[chip('past_key_values', 'hot')]}],
+      msg:{zh:'`use_cache=True` 的那一次 forward 就是 prefill：整段 prompt 一起進去，回來的 `past_key_values` 是每層一對 (k, v) tensor，形狀 (batch, kv_heads, 目前長度, head_dim)——跟我們的 `cache.k[l]` 完全同一個東西，只是多了 batch 那一維。',
+           en:'That first forward with `use_cache=True` is the prefill: the whole prompt goes in at once and `past_key_values` comes back, one (k, v) pair per layer with shape (batch, kv_heads, tokens so far, head dim). It is exactly our `cache.k[l]`, with a batch dimension added.'}});
+    p({upto:3, line:10,
+      cap:{zh:'decode 迴圈：一次只送一個 token 進去', en:'the decode loop: one token in per step'},
+      panels:[{lbl:'input_ids', chips:[chip('(batch, 1)', 'hot')]},
+              {lbl:'bug if omitted', chips:[chip('re-prefill', 'bad')]}],
+      msg:{zh:'decode 時 `input_ids` 只有一個 token，過去全部靠 `past_key_values` 提供。**忘了傳 past 不會報錯**：它會把這一個 token 當成全新的序列，答案變成「只看得到自己」——而重複用別的請求留下來的 past，就是我們第 5 個分頁那個沒清 cache 的 bug。另外 `model.generate()` 預設就幫你做這整個迴圈，自己寫出來只是為了看清楚它在做什麼。',
+           en:'In decode `input_ids` holds a single token and everything before it comes from `past_key_values`. Forgetting to pass `past` does not raise: the model treats that token as a brand new sequence and attends only to itself. Reusing a `past` left over from another request is exactly the stale-cache bug from the previous tab. `model.generate()` does this whole loop for you; writing it out is only to see what it is doing.'}});
+    return F.list;
+  }
+  if (v === 1){
+    p({upto:1, line:3,
+      cap:{zh:'JAX：形狀不能變，所以 cache 一開始就配滿', en:'JAX: shapes may not change, so the cache starts full'},
+      panels:[{lbl:'jit', chips:[chip('static shapes', 'hot')]},
+              {lbl:'cache', chips:[chip('(heads, MAX_LEN, dh)', 'ok')]}],
+      msg:{zh:'`jax.jit` 是對「形狀」編譯的：長度每多一個就重新編譯一次，第一百個 token 之前你已經編譯了一百份。所以 JAX 的 cache 一律配置到最大長度、用 `pos` 寫進去——這跟我們在 numpy 裡預先配置的理由一模一樣，只是 JAX 會強迫你這樣做。',
+           en:'`jax.jit` compiles against shapes, so a cache that grows by one every step triggers a fresh compile every step - a hundred compiles before the hundredth token. JAX code therefore allocates the cache at its maximum length and writes into it by position, which is the same reason our numpy version preallocates, except that JAX makes it compulsory.'}});
+    p({upto:3, line:8,
+      cap:{zh:'寫入是 functional 的，尾巴用 mask 擋掉', en:'the write is functional, and the empty tail is masked'},
+      panels:[{lbl:'write', chips:[chip('.at[:, pos].set(k)', 'hot')]},
+              {lbl:'mask', chips:[chip('arange(MAX_LEN) <= pos', 'ok')]}],
+      msg:{zh:'`.at[].set()` 看起來像在複製整個陣列，但在 jit 裡面 XLA 會把它變成就地更新。還沒寫到的位置是垃圾，所以 attention 一定要用 `arange(MAX_LEN) <= pos` 把尾巴遮掉——**忘了這個 mask，模型就會對一堆零做 softmax，而且不會報錯**，形狀完全正確。',
+           en:'`.at[].set()` reads like a whole-array copy, but inside jit XLA turns it into an in-place update. The slots past `pos` are junk, so attention has to mask them with `arange(MAX_LEN) <= pos`. Forget that mask and the model happily softmaxes over a pile of zeros - no error, and the shapes are perfect.'}});
+    return F.list;
+  }
+  p({upto:1, line:1,
+    cap:{zh:'SGLang 不是函式庫，是推論伺服器', en:'SGLang is not a library, it is an inference server'},
+    panels:[{lbl:'--mem-fraction-static', chips:[chip('0.9', 'hot')]},
+            {lbl:'pool', chips:[chip('token slots', 'ok')]}],
+    msg:{zh:'先講清楚它是什麼：PyTorch 和 JAX 是你拿來「寫模型」的函式庫，SGLang 不是它們的同類，而是蓋在上面的**推論伺服器**——一個行程，把權重載入一次、用 HTTP 接很多使用者的請求、決定每一步哪些請求放進同一個 batch、並且掌管整張卡的顯存（vLLM、TensorRT-LLM 同一類）。一旦變成這種角色，cache 就不可能是你迴圈裡的一個變數：幾百個請求在不同時間進來又結束，每個配一塊新陣列幾分鐘就把記憶體碎掉。所以它開機時把「權重以外」的顯存切成固定大小的 token slot（`token_to_kv_pool`），每個請求用一張索引表 `req_to_token` 指到自己佔的那些格子——我們的 `cache.length` 在這裡變成表上的一列。',
+         en:'First, what it is: PyTorch and JAX are libraries you write a model in, and SGLang is not another one of those. It is an inference server built on top of them - a process that loads the weights once, takes requests from many users over HTTP, decides which of them share each batch, and owns all of the GPU memory (vLLM and TensorRT-LLM are the same kind of thing). Once something is doing that job, the cache cannot be a variable in your loop: hundreds of requests start and finish at unrelated times, and a fresh array each would fragment the memory within minutes. So at startup it carves everything that is not weights into fixed-size token slots (`token_to_kv_pool`), and each request keeps an index table (`req_to_token`) pointing at the slots it owns - our `cache.length` becomes a row in a table.'}});
+  p({upto:3, line:3,
+    cap:{zh:'而 chunked prefill 就是第 3、4 分頁的結論', en:'and chunked prefill is the conclusion of the two tabs above'},
+    panels:[{lbl:'--max-running-requests', chips:[chip('256', 'ok')]},
+            {lbl:'--chunked-prefill-size', chips:[chip('8192', 'ok')]}],
+    msg:{zh:'一個很長的 prefill 會把 GPU 佔住好幾十毫秒，期間所有正在 decode 的請求都停著——因為 prefill 是算力受限、decode 是記憶體受限，兩者搶的是同一顆晶片。`--chunked-prefill-size` 把長 prompt 切成一塊一塊，夾在 decode 步之間跑；`--max-running-requests` 則是 decode batch 的上限，而真正擋住它的是池子裡還有多少 slot。今天量到的那兩件事（0.50 MACs/byte、cache 每序列一份），就是這些旋鈕存在的理由。',
+         en:'One long prefill occupies the GPU for tens of milliseconds, and every request that is decoding sits still while it does - prefill is compute-bound, decode is memory-bound, and they are fighting over the same chip. `--chunked-prefill-size` cuts a long prompt into pieces that run between decode steps; `--max-running-requests` caps the decode batch, and what really caps it is how many slots are left in the pool. The two measurements from today - 0.50 MACs per byte, and one cache per sequence - are why these knobs exist.'}});
+  return F.list;
+}
+
+/* ================================================================ meta */
+const DAY_META = {
+  title: {zh:'KV cache', en:'The KV cache'},
+  sub: {zh:'把二次方的生成迴圈變成線性的，然後把推論切成兩個瓶頸完全不同的階段',
+        en:'turning a quadratic generation loop into a linear one, and splitting inference into two different bottlenecks'},
+  tabs: [
+    {id:'why', label:{zh:'為什麼要 cache', en:'why cache at all'},
+     stage:{zh:'重算一個三角形 vs 多加一列', en:'recomputing a triangle vs appending a row'},
+     view:VIEW, code:CODE_WHY, build:whyFrames,
+     idea:{zh:'沒有 cache 時，生成 n 個 token 的工作量正比於 n×(prompt+n)；留下 key 和 value 之後變成 n×prompt。這個玩具模型上量到 ' + CORE.tNo.toFixed(2) + ' 秒對 ' + CORE.tYes.toFixed(2) + ' 秒（' + CORE.speed.toFixed(1) + ' 倍），而倍率會隨序列長度繼續變大。',
+           en:'Without a cache, generating n tokens costs work proportional to n times (prompt + n); keeping the keys and values makes it n times prompt. On this toy model that is ' + CORE.tNo.toFixed(2) + ' s against ' + CORE.tYes.toFixed(2) + ' s (' + CORE.speed.toFixed(1) + 'x), and the ratio keeps growing with the sequence.'},
+     legend:[['#ff5c5c', {zh:'這一步重新算的', en:'computed again this step'}],
+             ['#12b3b8', {zh:'這一步新算的', en:'computed once, this step'}],
+             ['#8fa3ac', {zh:'從 cache 讀的', en:'read from the cache'}]]},
+    {id:'what', label:{zh:'它存什麼、多大', en:'what it holds, and how big'},
+     stage:{zh:'key 和 value，不含 query', en:'keys and values, and no queries'},
+     view:VIEW, code:CODE_WHAT, build:whatFrames,
+     idea:{zh:'每層兩個陣列，每個 token 一筆。query 用完就丟所以不存。大小是 2×層×kv head×head_dim×2 bytes：32 層的模型每 token ' + (MEM[1].bytes / 1024).toFixed(0) + ' KB＝128k context 下 ' + MEM[1].gb.toFixed(1) + ' GB（GQA 之後 ' + MEM[2].gb.toFixed(1) + ' GB），而且是每條序列一份。它必須跟完整重算逐位元相同（量到 ' + CORE.equiv.toExponential(0) + '）。',
+           en:'Two arrays per layer, one entry per token; queries are used once and never kept. The size is 2 x layers x kv heads x head dim x 2 bytes: ' + (MEM[1].bytes / 1024).toFixed(0) + ' KB per token for a 32-layer model, so ' + MEM[1].gb.toFixed(1) + ' GB at a 128k context (' + MEM[2].gb.toFixed(1) + ' GB with GQA) - per sequence. And it has to match the full recomputation bit for bit, measured at ' + CORE.equiv.toExponential(0) + '.'},
+     legend:[['#ff9736', {zh:'目前這個設定', en:'the configuration shown'}],
+             ['#12b3b8', {zh:'其他設定', en:'the others'}]]},
+    {id:'ai', label:{zh:'prefill vs decode', en:'prefill vs decode'},
+     stage:{zh:'每搬一個 byte 做幾次運算', en:'arithmetic per byte moved'},
+     view:VIEW, code:CODE_AI, build:aiFrames,
+     idea:{zh:'prefill 把一份權重給 T 個 token 用，所以每 byte 的運算量隨 context 長大（2,048 時 ' + AI[2].pre.toFixed(0) + '）；decode 一步只處理一個 token，讀進來的每個數字只用一次乘加，fp16 兩個 byte ⇒ **永遠 0.50**。GQA 讓它讀得更少，但強度不變。',
+           en:'Prefill uses one set of weights for T tokens, so its arithmetic per byte grows with the context (' + AI[2].pre.toFixed(0) + ' at 2,048). Decode handles one token per step and uses every loaded number in exactly one multiply-accumulate, and an fp16 number is two bytes, so it sits at 0.50 forever. GQA makes it read less; it does not change the intensity.'},
+     legend:[['#12b3b8', {zh:'prefill', en:'prefill'}], ['#ff5c5c', {zh:'decode', en:'decode'}],
+             ['#ff9736', {zh:'GPU 的大致分界', en:'roughly where a GPU turns over'}]]},
+    {id:'batch', label:{zh:'為什麼 decode 要 batch', en:'why decode gets batched'},
+     stage:{zh:'權重一步只讀一次', en:'the weights are read once per step'},
+     view:VIEW, code:CODE_BATCH, build:batchFrames,
+     idea:{zh:'既然 decode 的時間花在搬權重上，同一步多放幾條序列幾乎不用多花錢：batch 1→8 時每條序列從 ' + BATCH[0].us.toFixed(0) + ' 降到 ' + BATCH[1].us.toFixed(0) + ' µs。擋住它的是 cache——每條序列都帶一份，而那正是記憶體被吃掉的地方。',
+           en:'Since decode spends its time moving the weights, putting more sequences in the same step is nearly free: from batch 1 to 8 the cost per sequence falls from ' + BATCH[0].us.toFixed(0) + ' to ' + BATCH[1].us.toFixed(0) + ' microseconds. What limits it is the cache, because every sequence carries one and that is where the memory goes.'},
+     legend:[['#ff9736', {zh:'目前這個 batch', en:'the batch size shown'}],
+             ['#12b3b8', {zh:'其他 batch', en:'the others'}]]},
+    {id:'real', label:{zh:'PyTorch 與 JAX 裡', en:'in PyTorch and JAX'},
+     stage:{zh:'同一個東西的兩種名字', en:'the same thing under two names'},
+     view:VIEW, build:realFrames,
+     variants:[{zh:'PyTorch', en:'PyTorch'}, {zh:'JAX', en:'JAX'}],
+     get code(){ return [CODE_TORCH, CODE_JAX][curV()]; },
+     idea:{zh:'PyTorch 和 JAX 是同一個層級：你拿來寫模型的函式庫，cache 是你自己的程式碼握著的東西。PyTorch 把它當 `past_key_values` 回傳給你（每層一對 tensor）；JAX 因為 jit 是對形狀編譯的，所以一定要預先配滿再用 `pos` 寫進去，而且尾巴要自己 mask 掉。',
+           en:'PyTorch and JAX sit at the same level - libraries you write a model in, where the cache is something your own code holds. PyTorch hands it back as `past_key_values`, one pair of tensors per layer; JAX has to preallocate it and write by position, because jit compiles against shapes, and the empty tail has to be masked by hand.'},
+     legend:[['#ff9736', {zh:'目前這一列', en:'the row being shown'}],
+             ['#12b3b8', {zh:'函式庫裡的名字', en:'what the library calls it'}],
+             ['#8fa3ac', {zh:'這個檔案裡的名字', en:'what this file calls it'}]]},
+    {id:'sglang', label:{zh:'再來看 SGLang', en:'now SGLang'},
+     stage:{zh:'推論伺服器，不是函式庫', en:'an inference server, not a library'},
+     view:VIEW, code:CODE_SGLANG, build:sglangFrames,
+     idea:{zh:'SGLang 跟前一個分頁不是同一個層級：它是蓋在 PyTorch 上的**推論伺服器**——載入一次權重、接很多使用者的 HTTP 請求、決定每一步誰跟誰同一個 batch、掌管整張卡的顯存。所以 cache 變成一座開機就切好的 token slot 池子加一張索引表，而旋鈕 `--mem-fraction-static`／`--max-running-requests`／`--chunked-prefill-size` 正好就是今天量到的那兩件事變成的政策。',
+           en:'SGLang is not at the same level as the previous tab: it is an inference server built on PyTorch - it loads the weights once, takes HTTP requests from many users, decides which of them share each batch, and owns the GPU memory. So the cache becomes a pool of token slots carved at startup plus an index table, and the flags `--mem-fraction-static`, `--max-running-requests` and `--chunked-prefill-size` are exactly today\'s two measurements turned into policy.'},
+     legend:[['#ff9736', {zh:'目前這一列', en:'the row being shown'}],
+             ['#12b3b8', {zh:'伺服器裡的名字', en:'what the server calls it'}],
+             ['#8fa3ac', {zh:'這個檔案裡的名字', en:'what this file calls it'}]]},
+    {id:'stale', label:{zh:'忘了清 cache', en:'a cache that was not reset'},
+     stage:{zh:'形狀全對、數值有限、而且是別人的對話', en:'right shapes, finite numbers, someone else\'s conversation'},
+     view:VIEW, code:CODE_STALE, build:staleFrames,
+     idea:{zh:'新請求沒有清掉上一條序列的 cache：新 token 的 attention 直接讀得到舊對話。logits 最大差 ' + STALE.worst.toFixed(4) + '、' + STALE.steps + ' 步裡 ' + STALE.flips + ' 步連 argmax 都變，而且什麼都不會報錯。對拍測試（prefill vs 逐 token decode）會抓到，看輸出不會。',
+           en:'A new request starts without clearing the previous sequence out of the cache, so the new tokens can attend to the old conversation. The logits differ by up to ' + STALE.worst.toFixed(4) + ', the argmax changes on ' + STALE.flips + ' of ' + STALE.steps + ' steps, and nothing raises. The differential test catches it; reading the output does not.'},
+     legend:[['#8fa3ac', {zh:'上一條序列留下的', en:'left over from the previous sequence'}],
+             ['#12b3b8', {zh:'這一條序列的 token', en:'the tokens of this sequence'}]]}
+  ]
+};
