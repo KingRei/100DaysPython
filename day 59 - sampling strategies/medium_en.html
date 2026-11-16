@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Temperature, top-k and top-p: choosing the next token without wrecking the sentence</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Temperature, top-k and top-p: choosing the next token without wrecking the sentence</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2059%20-%20sampling%20strategies">day 59 on GitHub</a></p>
+<p><em>100 Days of Python - day 59</em></p>
+<p>Here are three ways of using the same model on the same prompt. Always take the most likely character, and it writes one sentence - the same one, every time, out of the 1,250 that its grammar allows. Draw from the distribution with the temperature turned up to 2.0, and 100 samples produce zero correct sentences. Keep that same temperature of 2.0 and add one line of filtering, and the 100 samples contain 96 different sentences and every one of them parses.</p>
+<p>Nothing about the model changed between those three runs. What changed is the rule for turning its output into a token, which is the whole subject of today.</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2059%20-%20sampling%20strategies/imgs/day59_1.png?raw=true">
+<h2>Where this sits</h2>
+<p>The previous days built the thing that produces the logits and then made serving it cheap: a KV cache, a radix tree over shared prefixes, a paging allocator for GPU memory. All of that work ends at the same place - a vector with one score per token in the vocabulary - and stops. Sampling is the step after it, and it is the only knob on this list that changes what the model <em>says</em> rather than how fast it says it.</p>
+<p>To make &quot;what it says&quot; measurable, the model here is a character 8-gram trained on 1,500 sentences generated from a small grammar: a determiner, an optional adjective, one of five nouns, one of five verbs, one of five places. That grammar admits exactly 1,250 sentences, and a parser can check any generated line against it. So instead of judging samples by how they feel, every number below is a rate over 100 samples: how many parsed, and how many distinct sentences came out.</p>
+<h2>One step, and the tail</h2>
+<p>Take the context <code>&#x27;the small cat &#x27;</code>. The model&#x27;s next-character distribution puts 0.61 on <code>s</code>, 0.22 on <code>r</code>, 0.16 on <code>w</code> - and 0.31% spread over the other 21 characters. The entropy is 1.39 bits and the smallest set of characters whose probability adds up to 0.9 has three members.</p>
+<p>That 0.31% is the problem, and it does not look like a problem until you multiply it out. A sentence takes about 30 steps, so the chance of drawing at least one impossible character on the way is 1 − 0.9969³⁰ = 9.0%. And one is enough: after an impossible character the model has to continue from a prefix it has never seen, so the rest of the sentence is guesswork too. On a real model the tail is not 21 characters, it is a hundred thousand tokens, each individually hopeless.</p>
+<p>The obvious fix is to never draw from the tail at all - take the maximum every step. That works, in the sense that 100 greedy samples are 100% grammatical. They are also 1 distinct sentence. Greedy is not worse sampling; it is the absence of sampling.</p>
+<h2>Greedy is not even the most likely sentence</h2>
+<p>Before leaving greedy behind, it is worth seeing exactly how badly it does at the thing it looks like it is doing. The grammar admits 1,250 sentences, which is few enough to enumerate and score every one of them exactly - a sentence&#x27;s log probability is just the sum of its per-step log probabilities.</p>
+<pre><code>most likely sentence   &#x27;a small dog sat in the garden.&#x27;   log p = -6.244
+greedy produces        &#x27;the red cat sang in the garden.&#x27;  log p = -6.717, rank 44 of 1,250</code></pre>
+<p>Greedy takes the highest-probability character at every step and lands on the 44th most likely sentence, 1.61x less likely than the best one. The reason is structural, not a quirk of this model: a locally attractive character leads into a prefix from which no very good ending exists, and a step-wise rule cannot go back. <strong>argmax per step is not argmax over sequences.</strong> That gap is the entire reason searching over sequences is a separate decoding strategy rather than a parameter you can tune here.</p>
+<p>The enumeration buys two free checks on the measuring rig as well. Those 1,250 sentences hold 90.9% of the model&#x27;s sentence-level probability, and sampling at t = 1.0 measures a grammatical rate of 90%. And the number of distinct sentences expected from 100 draws of that distribution is 87.3, against 88 measured. Theory and sampling agree, so the rates in the rest of this article can be trusted.</p>
+<h2>Temperature</h2>
+<p>Temperature divides the logits before the softmax. Below 1 it magnifies the gaps and sharpens the distribution; above 1 it shrinks them and flattens it; at 0 every implementation takes a separate argmax path rather than dividing by zero.</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2059%20-%20sampling%20strategies/imgs/day59_2.png?raw=true">
+<p>Read the two columns together. At t = 0.7 the model produces 98 different sentences out of 100 samples and every one parses, which is why real defaults sit around 0.6 to 0.9: in that range the added randomness lands almost entirely on branch points the model was genuinely undecided about. At t = 1.3 the grammatical rate is 55%, at t = 1.7 it is 5%.</p>
+<p>The interesting part is that the purple bars fall too. Past a point you stop buying variety at all - a broken sentence is not a different sentence - so this is not a trade between correctness and diversity, it is both losing together. And it happens fast: between t = 1.0 and t = 1.7 the entropy only moves from 0.34 to 1.18 bits while correctness falls from 90% to 5%.</p>
+<h2>Truncation: keep the heat, drop the tail</h2>
+<p>So pin the temperature at 2.0 - the setting that scored worst - and change only which tokens are allowed to be drawn.</p>
+<pre><code>rule               grammatical   distinct
+no truncation             0%          0
+top-k 1 (greedy)        100%          2
+top-k 3                   0%          0
+top-p 0.9                 2%          2
+top-p 0.7                89%         85
+top-p 0.5               100%         80
+min-p 0.1               100%         96
+typical 0.9               2%          2
+typical 0.5              94%         84</code></pre>
+<p>The randomness was never the problem. What was removed is the part of it that could never have been right.</p>
+<p>Two honest caveats about this table. <code>top-k 1</code> is greedy wearing a different name, so its perfect score is worthless. And this vocabulary is 24 characters, not 150,000 tokens, so the thresholds do not transfer - p = 0.5 would be severe on a real model. What transfers is the shape: a rule that adapts beats a rule that counts.</p>
+<h2>Why a mass and not a count</h2>
+<p>Sweep the corpus and next-token distributions fall into two kinds. In 249 steps one character is above 90% - the model is certain, because the grammar leaves it no choice. In 61 steps no character is above 90% - the model is at a branch point and four or five options are nearly tied.</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2059%20-%20sampling%20strategies/imgs/day59_3.png?raw=true">
+<p>Now put one <code>k</code> on both. With k = 1, the certain steps lose 0.45% of their mass, which is pure smoothing noise and entirely fine; the unsure steps lose 54%, which is the model&#x27;s actual opinion being thrown away. Raise k until the unsure steps are happy and the certain steps start admitting junk - and that junk is exactly what the tail section was about.</p>
+<p>top-p asks a different question: keep the smallest set of tokens whose probability adds up to p. The <em>count</em> then follows the shape of the step - 2 candidates on the certain step above, 5 on the unsure one, averaging 1.0 against 3.46 over the corpus. That is what &quot;nucleus sampling&quot; means: the size of the nucleus is decided by the distribution, not by you.</p>
+<p>min-p takes a third position: keep every token worth at least a fraction of the best one. It tightens and loosens the same way top-p does, and it costs one comparison per token - no sort, no cumulative sum - which is why it is the row that survived temperature 2.0 above.</p>
+<h2>A third question: typical sampling</h2>
+<p>top-k asks for a count and top-p asks for a mass. Locally typical sampling asks for neither: keep the tokens whose surprise, −log p, is closest to the entropy of this step. The argument behind it is that natural language does not consist of the most predictable word at every position - it carries a roughly constant amount of information per word - so a token far more obvious than this step&#x27;s average is as atypical as one far less.</p>
+<p>On this corpus the two rules never actually separate. Over 1,875 steps, typical sampling at 0.9 kept exactly the same number of tokens as top-p every single time and never dropped the most likely token, which is why its rows in the table above track the top-p rows so closely. That is worth stating rather than hiding: with 24 characters there is no room for the two rules to disagree, and it is precisely the kind of difference a toy model cannot show.</p>
+<p>So here is a distribution built to make them disagree - one dominant token, a middle group, and a long flat tail, with an entropy of 2.28 nats:</p>
+<pre><code>dominant, p=0.60     surprise 0.51    distance from entropy 1.77
+middle,   p=0.03     surprise 3.51    distance from entropy 1.23
+tail,     p=0.0001   surprise 9.21    distance from entropy 6.93</code></pre>
+<p>Ask each rule for 0.25 of the mass. top-p keeps 1 token, the dominant one. Typical sampling keeps 9 - and drops the most likely token entirely, because the middle group is the one carrying a typical amount of information. top-p ranks by probability; typical sampling ranks by distance from the expected surprise. On a 150,000-token vocabulary that is a real difference in behaviour, and it is the same hook as everything else here: one predicate, applied to logits, before the softmax.</p>
+<h2>The order changes the answer</h2>
+<p>Set both <code>temperature=2.5</code> and <code>top_p=0.9</code> and there are two ways to run them, which give different distributions:</p>
+<ul><li>temperature first, then top-p: 18 candidates, top probability 0.394</li><li>top-p first, then temperature: 2 candidates, top probability 0.545</li></ul>
+<p>Flattening first means it takes more tokens to accumulate 0.9, so the nucleus widens with the heat. Truncating first fixes the candidate set on the cold shape and only then spreads probability inside it. The two results are 0.276 apart in total variation - not a rounding difference, a different sampler.</p>
+<p>Every server I know of applies penalties, then temperature, then top-k, then top-p. That is a convention, not a theorem, and it explains the table above: <code>top-p 0.9</code> failed to rescue <code>t = 2.0</code> precisely because the nucleus was measured after the flattening.</p>
+<h2>The bug that does not raise</h2>
+<p>Truncation zeroes out tokens, and the mass that was in them has to go somewhere:</p>
+<pre><code>cut = np.partition(p, -k)[-k]
+q = np.where(p &gt;= cut, p, 0.0)      # 0.9969 of the mass
+# q /= q.sum()                      &lt;- forgetting this line</code></pre>
+<p>Hand the unnormalised <code>q</code> to a cumulative-sum sampler and 0.27% of draws fall past the end of the array. In C++ that reads off the end; in Python it silently becomes whichever index the clamp lands on, which means a rare, non-reproducible bias toward one particular token. Every filter has to end with a division by the kept mass.</p>
+<h2>On a GPU, top-p does not sort</h2>
+<p>A real vocabulary is around 150,000 tokens and sampling runs once per sequence per decode step, so the obvious implementation - sort, take a cumulative sum, cut - is on the critical path of every token the server emits. A full sort is about 2.6M element comparisons; a partial top-50 selection is about 0.15M.</p>
+<p>But top-p does not need an order at all. Rewrite it as: <em>find the probability threshold whose surviving mass is just above p</em>. That is monotone in one variable, so it bisects:</p>
+<pre><code>lo, hi = 0.0, p.max()
+for _ in range(24):
+    mid = (lo + hi) / 2
+    mass = p[p &gt;= mid].sum()        # one reduction over the vocabulary
+    lo, hi = (mid, hi) if mass &gt;= thr else (lo, mid)</code></pre>
+<p>Twenty-four rounds of compare-and-sum, no ordering anywhere, and the surviving set is the same one the sorted version returns.</p>
+<h2>In vLLM</h2>
+<p>Everything above is one object:</p>
+<pre><code>from vllm import LLM, SamplingParams
+
+out = LLM(&quot;Qwen/Qwen3-8B&quot;).generate(prompts, SamplingParams(
+    temperature=0.8, top_k=50, top_p=0.95, min_p=0.0,
+    repetition_penalty=1.1, seed=1234,
+    n=4, logprobs=5, max_tokens=256, stop=[&quot;\n\n&quot;]))</code></pre>
+<p><code>temperature=0</code> takes the argmax path rather than dividing. <code>repetition_penalty</code> edits the logits <em>before</em> temperature, dividing the score of tokens already seen. <code>seed</code> gives the request its own generator, which is usually the only handle you have when reproducing a complaint. <code>logprobs=5</code> returns the top five rows of the first chart in this article. <code>n=4</code> draws four samples from one prompt - the KV side of that was the previous day&#x27;s reference counting and copy-on-write, and today&#x27;s addition is four different dice.</p>
+<p><code>SamplingParams</code> is per request while the sampler itself runs once per step for the whole batch: every running sequence goes through one kernel carrying its own temperature and thresholds.</p>
+<h2>In SGLang</h2>
+<p>The same knobs arrive over HTTP, applied in the same order:</p>
+<pre><code>curl localhost:30000/generate -d &#x27;{
+  &quot;text&quot;: &quot;...&quot;,
+  &quot;sampling_params&quot;: {&quot;temperature&quot;: 0.8, &quot;top_k&quot;: 50, &quot;top_p&quot;: 0.95,
+                      &quot;min_p&quot;: 0.0, &quot;repetition_penalty&quot;: 1.1,
+                      &quot;frequency_penalty&quot;: 0.2, &quot;n&quot;: 4}}&#x27;</code></pre>
+<p>What is worth looking at on this side is the kernel. <code>--sampling-backend pytorch</code> is the reference path and really sorts; <code>--sampling-backend flashinfer</code> runs fused top-k/top-p kernels built on the threshold search above. Same distribution, different cost - and because decode samples on every single step, the difference shows up directly in inter-token latency rather than in a benchmark somewhere.</p>
+<p>SGLang also exposes a custom logit processor, and that hook is more interesting than it sounds. Every rule in this article is the same operation: set some logits to minus infinity before the softmax. Change the predicate from &quot;too unlikely&quot; to &quot;this token would make the JSON invalid&quot; and you have structured output; change it to &quot;this phrase is banned&quot; and you have content filtering. One hook, different conditions.</p>
+<h2>Where this comes back</h2>
+<p>A softmax over values with a temperature, used to decide whether to take the best option or explore a worse one, is exactly Boltzmann exploration in a multi-armed bandit - and the entropy column from the temperature table is the same quantity that appears as an entropy bonus in policy-gradient objectives, for the same reason: to stop a policy from collapsing onto one action the way greedy decoding collapses onto one sentence.</p>
+<p>Speculative decoding needs something stronger than anything here. A draft model proposes several tokens and the real model accepts or rejects them, and the acceptance rule has to leave today&#x27;s distribution exactly unchanged - sampling faster without sampling differently.</p>
+<p>Code, notebook and an interactive walkthrough: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2059%20-%20sampling%20strategies">day 59 on GitHub</a>.</p>
+</body>
+</html>

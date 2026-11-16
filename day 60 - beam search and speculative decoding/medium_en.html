@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Beam search and speculative decoding: finding a better sentence, and getting the same one faster</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Beam search and speculative decoding: finding a better sentence, and getting the same one faster</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding">day 60 on GitHub</a></p>
+<p><em>100 Days of Python - day 60</em></p>
+<p>The previous day ended on a number I have not stopped thinking about. Greedy decoding - take the highest-probability character at every step - produces the 44th most likely sentence out of the 1,250 the grammar admits. Every step is optimal and the result is not. No temperature, top-k or top-p setting fixes that, because it is not a sampling problem.</p>
+<p>Today is two answers to it, pulling in opposite directions. Beam search changes the output to find a more probable sentence, and costs more. Speculative decoding changes nothing at all about the output and costs less. Both get checked against the enumeration, so neither gets to be plausible instead of correct.</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding/imgs/day60_1.png?raw=true">
+<h2>The ground truth</h2>
+<p>The grammar is small enough to enumerate: 1,250 sentences, each scored exactly by summing its per-step log probabilities.</p>
+<pre><code>most likely    &#x27;a small dog sat in the garden.&#x27;    log p = -6.244
+greedy gives   &#x27;the red cat sang in the garden.&#x27;   log p = -6.717,  rank 44
+least likely   &#x27;a cat slept on the mat.&#x27;           log p = -9.173</code></pre>
+<p>Greedy walks into a prefix from which no very good ending exists and cannot go back. Worth noticing the scale too: best to worst spans 2.9 log units, about 18x in probability, and greedy sits 0.47 below the top. There is a ceiling on what search can buy here, and everything below is climbing inside it.</p>
+<h2>Beam search</h2>
+<p>Instead of keeping one prefix alive, keep <code>width</code> of them. At every step expand all of them, score all the candidates, keep the best <code>width</code> again.</p>
+<pre><code>width       rank found  log p
+----------  ----------  ------
+1 (greedy)  44          -6.717
+2           44          -6.717
+4           10          -6.502
+8, 16, 32   5           -6.407</code></pre>
+<p>Two things in that table deserve more than a glance.</p>
+<p>The first is that width 1 is greedy - which took me a debugging detour to reproduce. This model has <em>exact ties</em>: two characters with identical probability to the last bit. <code>np.argmax</code> returns the first; <code>np.argsort</code> with the default quicksort does not promise to. The sort has to be stable, or the two algorithms disagree for no reason anyone would ever guess from the output.</p>
+<p>The second is that it stops at rank 5. Widening further never reaches rank 1, because the best sentence&#x27;s prefix was pruned early and nothing brings it back. Beam search is a heuristic, not a maximiser - the asserts in the file only check that no beam beats the enumerated optimum, not that it finds it. And the cost is linear in the width: width 8 runs the model on 8 sequences at every step, which is 8 KV caches and 8 times the attention work from the previous days.</p>
+<h2>Two things beam search gets wrong</h2>
+<p><strong>Wider is not monotonically better.</strong> On a model trained on a smaller corpus, scanning the width one value at a time:</p>
+<pre><code>width  1   log p  -6.188
+width  2   log p  -6.188
+width  3   log p  -6.422   &lt;- worse than the narrower beam
+width  4   log p  -6.224</code></pre>
+<p>Not an implementation bug. A wider beam keeps more prefixes alive, and a prefix that looks mediocre early can survive long enough to crowd out the one that would have won later. Translation papers call the version of this that shows up in quality scores the beam search curse: past a width of roughly 5 to 10, BLEU falls while model probability keeps rising - which says something uncomfortable about the model, not just the search.</p>
+<p><strong>Highest total probability means shortest.</strong> Every character multiplies the score by something below 1, so a total-probability search is partly a search for short outputs. Here the effect is mild because every sentence is 21 to 38 characters (the correlation is 0.061), but the direction is visible: the top 10 sentences by total log probability average 28.8 characters, against 36.5 for the top 10 by log probability per character. In translation, where candidates differ by tens of tokens, an uncorrected beam truncates. The standard patch is dividing by <code>length ** alpha</code>, which has a convention behind it and no derivation - which is why papers report the alpha they used as a hyperparameter. It is one.</p>
+<p><strong>And asking a beam for n answers gives n neighbours.</strong> Its 16 best sentences are all different strings, so counting distinct sentences says nothing. Counting subjects does: those 16 share only 8 distinct determiner-adjective-noun subjects, against 12.8 for 16 sentences sampled from the same model. That is not a flaw to fix. A beam searches for the most probable output, and the most probable outputs resemble each other by construction. Beam search belongs where exactly one answer is correct - translation, speech recognition, constrained extraction - and a chat model needs the previous day&#x27;s sampling.</p>
+<h2>Speculative decoding: changing nothing, faster</h2>
+<p>Decode is slow for a reason that has nothing to do with arithmetic: every step re-reads the entire model from memory to produce one token. So the question is not &quot;how do we compute faster&quot; but &quot;how do we get more tokens out of one pass over the weights&quot;.</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding/imgs/day60_2.png?raw=true">
+<p>A cheap draft model proposes gamma tokens, one at a time - fine, it is cheap. Then the expensive model verifies <strong>all of them in a single forward pass</strong>, because scoring gamma positions is one pass while generating them would have been gamma. Each proposal is accepted with probability <code>min(1, p(x) / q(x))</code>: if the target likes the token at least as much as the draft did, it is always kept; if less, it is kept with probability p/q. The first rejection ends the round, and the rejected token is replaced by a draw from the normalised positive part of <code>p - q</code>. If nothing was rejected, the round emits a free bonus token, because the verification pass already produced the distribution for the next position.</p>
+<h2>Why that is free rather than usually fine</h2>
+<pre><code>acc   = minimum(1, p / q)
+kept  = q * acc                      # mass that survives the coin flip
+rest  = 1 - kept.sum()               # probability of rejecting
+resid = maximum(p - q, 0); resid /= resid.sum()
+out   = kept + rest * resid          # == p</code></pre>
+<p>Measured on three contexts, the maximum difference between <code>out</code> and <code>p</code> is 1e-16. That is floating point, not approximation: the model you deployed is the model that answers, token for token, at any draft quality.</p>
+<p>Two shortcuts sound equivalent and are not.</p>
+<p>Trusting the draft - &quot;it is a good model, just take its tokens&quot; - moves the distribution by up to 0.367. Obviously wrong once written down.</p>
+<p>Dropping the coin flip - accept whenever the target likes the token at least as much as the draft did, reject otherwise - does not look wrong at all, and still moves the distribution by up to 0.043. The randomised accept is what makes the accepted mass come out as <code>min(p, q)</code> at every token, and the residual draw is what puts the remainder back in the right places. Both halves are load-bearing, and getting it wrong raises no exception anywhere. The model just quietly becomes a slightly different model.</p>
+<h2>The two knobs</h2>
+<p>How good the draft is:</p>
+<pre><code>draft order  accept rate  tokens / round  grammatical
+-----------  -----------  --------------  -----------
+1            0.173        1.69            93%
+2            0.605        3.42            93%
+3            0.837        4.35            90%
+5            0.929        4.72            88%</code></pre>
+<p>Read the last column first: it does not move, and it is not supposed to. The output distribution does not depend on the draft at all, so a terrible draft costs speed and never correctness. That property is what makes speculative decoding something you can turn on by default rather than an accuracy trade to negotiate.</p>
+<p>How far ahead to guess:</p>
+<pre><code>gamma  accept  measured tokens/round  iid theory  speedup
+-----  ------  ---------------------  ----------  -------
+1      0.911   1.91                   1.91        1.74x
+2      0.910   2.82                   2.74        2.35x
+4      0.842   4.37                   3.65        3.12x
+8      0.760   7.08                   3.82        3.94x</code></pre>
+<p>The theory column is the textbook <code>(1 - a^(gamma+1)) / (1 - a)</code>, the expected tokens per round if every proposal were accepted independently with probability a. At gamma=8 the measurement is 7.08 against a predicted 3.82. The formula is not wrong; its assumption is. Acceptances are strongly correlated - the draft is right through a whole predictable stretch (<code>...in the gar|den.</code>) and wrong only at branch points - so long runs of acceptance are far more common than a coin with the same average would give. This is exactly why deployments report accepted <em>length</em> per round rather than an acceptance rate.</p>
+<h2>In vLLM</h2>
+<p>Beam search is no longer a sampling parameter. It was moved out of <code>SamplingParams</code> into its own call:</p>
+<pre><code>llm.beam_search(prompts, BeamSearchParams(beam_width=4, max_tokens=64))</code></pre>
+<p>and the reason is the cost line above: it is a search over sequences that forks and frees w KV caches, not a per-token rule, so it does not belong in the same object as <code>temperature</code>.</p>
+<p>Speculative decoding is server configuration:</p>
+<pre><code>vllm serve meta-llama/Llama-3.1-70B-Instruct \
+  --speculative-config &#x27;{&quot;model&quot;: &quot;meta-llama/Llama-3.1-8B-Instruct&quot;,
+                         &quot;num_speculative_tokens&quot;: 5}&#x27;
+
+# or with no draft model at all:
+  --speculative-config &#x27;{&quot;method&quot;: &quot;ngram&quot;, &quot;num_speculative_tokens&quot;: 4,
+                         &quot;prompt_lookup_max&quot;: 4}&#x27;</code></pre>
+<p>The <code>ngram</code> method is this article&#x27;s draft model in production, and it runs no network whatsoever: it finds a matching span in the prompt and proposes whatever followed it last time. On summarisation, code editing and RAG - anywhere the answer repeats long spans of the input - it is close to free and works startlingly well. EAGLE and Medusa are the other end of the range: a small head trained on the target model&#x27;s own hidden states, which buys a much higher acceptance rate without a second full model.</p>
+<h2>In SGLang</h2>
+<pre><code>python -m sglang.launch_server --model ... \
+    --speculative-algorithm EAGLE3 \
+    --speculative-draft-model-path &lt;eagle head&gt; \
+    --speculative-num-steps 3 \        # draft depth
+    --speculative-eagle-topk 4 \       # branches kept per step
+    --speculative-num-draft-tokens 8   # nodes verified per round</code></pre>
+<p>The flag worth understanding is <code>--speculative-eagle-topk</code>. It means the draft is a <em>tree</em>, not a chain: several branches per level, all verified in one target pass using an attention mask that lets every node attend only to its own ancestors. The same single expensive forward carries more candidates - the trade above with a better shape. And <code>--speculative-algorithm NEXTN</code> is the same mechanism for models that ship their own extra prediction head, like the MTP layers in DeepSeek-V3 and GLM: the draft is built into the target.</p>
+<p>One thing the tables here cannot show. On a real server the number to watch is the accepted length per round <em>against the batch size</em>. Speculation spends compute to save memory bandwidth, so it wins when decode is bandwidth-bound - small batches, long contexts - and can lose at large batch sizes, where the GPU was already saturated and every rejected proposal is compute that bought nothing.</p>
+<h2>Where this comes back</h2>
+<p>Beam search over sequences is the same shape as the search problems from the graph days: expand the frontier, score it, prune it, and accept that pruning is where the errors live. And the accept/reject rule in speculative decoding is rejection sampling, which will turn up again whenever an algorithm needs samples from a distribution it can only evaluate pointwise - reinforcement learning is full of them.</p>
+<p>Code, notebook and an interactive walkthrough: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding">day 60 on GitHub</a>.</p>
+</body>
+</html>

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 60 — Beam search 與 speculative decoding：一個去找更好的句子，一個讓同一句話來得更快</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 60 — Beam search 與 speculative decoding：一個去找更好的句子，一個讓同一句話來得更快</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding">day 60 on GitHub</a></p>
+<p><em>100 Days of Python - day 60</em></p>
+<p>前一天結束在一個我一直想著的數字：greedy decoding——每一步都取機率最高的字元——產生的是文法允許的 1,250 句裡的<strong>第 44 名</strong>。每一步都最佳，結果卻不是。而且 temperature、top-k、top-p 怎麼調都補不起來，因為這根本不是取樣問題。</p>
+<p>今天是對這件事的兩個回答，而且方向完全相反。beam search 改變輸出去找一句更可能的話，代價是更貴；speculative decoding 則是輸出一個位元都不改，只是更快。兩個都拿全列舉來對答案，所以誰都不能只是「聽起來合理」。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding/imgs/day60_1.png?raw=true">
+<h2>標準答案</h2>
+<p>文法小到可以全部列出來：1,250 句，每一句的機率都用逐步 log 機率相加精確算出。</p>
+<pre><code>整句最高    &#x27;a small dog sat in the garden.&#x27;    log p = -6.244
+greedy 給   &#x27;the red cat sang in the garden.&#x27;   log p = -6.717，第 44 名
+整句最低    &#x27;a cat slept on the mat.&#x27;           log p = -9.173</code></pre>
+<p>greedy 會走進一個「之後沒有好結尾」的前綴，而且回不了頭。順帶看一下尺度：最好與最差之間差 2.9 個 log 單位（機率約 18 倍），而 greedy 只比最好的低 0.47。所以搜尋能買到的東西本來就有上限，底下都是在這個區間裡爬。</p>
+<h2>Beam search</h2>
+<p>不要只留一個前綴，留 <code>width</code> 個。每一步把存活的前綴全部展開、全部計分，再整體取分數最高的 <code>width</code> 個。</p>
+<pre><code>width          找到的名次  log p
+-------------  ----------  ------
+1（＝greedy）  44          -6.717
+2              44          -6.717
+4              10          -6.502
+8、16、32      5           -6.407</code></pre>
+<p>這張表有兩件事值得多看一眼。</p>
+<p>第一件：width 1 就是 greedy——而我為了讓它真的相等繞了一段 debug。這個模型有<strong>真正的平手</strong>：兩個字元的機率一模一樣到最後一位。<code>np.argmax</code> 會回傳第一個，<code>np.argsort</code> 預設的 quicksort 不保證。排序必須是 stable 的，否則兩個演算法會給出不同的句子，而且從輸出上你永遠猜不到原因是排序法。</p>
+<p>第二件：它停在第 5 名。再怎麼加寬都到不了第 1 名，因為最佳句的前綴早就被剪掉、而且沒有任何機制把它救回來。beam search 是<strong>啟發式</strong>不是最大化器——程式裡的 assert 只保證「沒有任何 beam 會超過列舉出來的最佳解」，不保證會找到它。成本則是線性的：width 8 等於每一步都在跑 8 條序列，8 份 KV cache、8 倍 attention（前幾天那些東西）。</p>
+<h2>Beam search 的兩個毛病</h2>
+<p><strong>更寬不保證更好。</strong> 換一個用比較小語料訓練的模型，一格一格掃 width：</p>
+<pre><code>width  1   log p  -6.188
+width  2   log p  -6.188
+width  3   log p  -6.422   &lt;- 比更窄的 beam 還差
+width  4   log p  -6.224</code></pre>
+<p>這不是實作 bug。beam 變寬會讓更多前綴活著，而一個早期看起來普通的前綴，可能活到後面把真正該贏的那條擠掉。翻譯文獻把這個現象在品質分數上的版本叫 <strong>beam search curse</strong>：width 超過大約 5～10 之後 BLEU 開始下降，而模型機率還在上升——這件事講的其實是模型本身，不只是搜尋。</p>
+<p><strong>總機率最高＝偏好短的。</strong> 每多一個字元就多乘一個小於 1 的數，所以「找總機率最高」同時也在「找比較短的」。這裡效果很小，因為每句都是 21～38 個字元（相關係數只有 0.061），但方向看得到：總分前 10 名平均 28.8 個字元，改用每字元平均之後的前 10 名是 36.5。在翻譯那種候選長度差好幾十個 token 的場合，沒修正的 beam 會直接把句子砍短。修正法是除以 <code>length ** alpha</code>——一個有慣例、沒有推導的 heuristic，所以論文才會把 alpha 當超參數報出來。它就是。</p>
+<p><strong>而且跟 beam 要 n 個答案，它給你 n 個鄰居。</strong> 它的 16 個最佳句全都是不同字串，所以數「幾句不重複」什麼也看不出來；數主詞就看得出來：那 16 句只有 8 個不同的「冠詞＋形容詞＋名詞」主詞，而從同一個模型抽 16 句有 12.8 個。這不是要修的缺陷：beam 在找最可能的輸出，而最可能的那些輸出本來就彼此相似。所以 beam search 適合<strong>只有一個正確答案</strong>的任務（翻譯、語音辨識、受限抽取），聊天模型要用前一天的取樣。</p>
+<h2>Speculative decoding：什麼都不改，只是更快</h2>
+<p>decode 慢的原因跟算術無關：每產生一個 token，都要把整個模型的權重從記憶體讀過一遍。所以問題不是「怎麼算得更快」，而是「一次把權重讀過去，能多吐幾個 token」。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding/imgs/day60_2.png?raw=true">
+<p>便宜的 draft 模型一個一個抽出 gamma 個提議——沒關係，它便宜。然後昂貴的 target 模型<strong>一次 forward 就驗證全部 gamma 個</strong>，因為「對 gamma 個位置計分」是一次 forward，而「產生它們」本來要 gamma 次。每個提議以 <code>min(1, p(x)/q(x))</code> 的機率被接受：target 覺得它至少跟 draft 一樣可能就一定收，覺得比較不可能就以 p/q 收。第一個被拒的地方結束這一輪，而被拒的那格改從 <code>p − q</code> 的正部正規化後抽一個。如果全中，這一輪還白賺一個 token——因為那次驗證本來就算出了下一格的分佈。</p>
+<h2>為什麼這是免費的，而不是「通常還好」</h2>
+<pre><code>acc   = minimum(1, p / q)
+kept  = q * acc                      # 撐過硬幣的那部分質量
+rest  = 1 - kept.sum()               # 拒絕的機率
+resid = maximum(p - q, 0); resid /= resid.sum()
+out   = kept + rest * resid          # == p</code></pre>
+<p>在三個 context 上實測，<code>out</code> 跟 <code>p</code> 的最大差距是 1e-16。那是浮點數，不是近似：你部署的模型就是回答使用者的模型，逐個 token 都是，而且跟 draft 有多爛無關。</p>
+<p>有兩個聽起來等價的捷徑，都不是。</p>
+<p>「draft 夠好就直接收」——寫出來就知道不對，實測最多把分佈搬動 0.367。</p>
+<p>「把硬幣拿掉：只要 target 覺得不比 draft 差就收，否則拒絕」——這個看起來一點問題都沒有，而它仍然把分佈搬動最多 0.043。隨機接受才讓每個 token 被接受的質量剛好是 <code>min(p, q)</code>，殘差抽樣才把剩下的補回正確的位置；兩半都是承重的。而且弄錯不會噴任何例外，模型只是默默變成另一個模型。</p>
+<h2>兩個旋鈕</h2>
+<p>第一個：draft 有多好。</p>
+<pre><code>draft order  接受率  每輪 token  合文法
+-----------  ------  ----------  ------
+1            0.173   1.69        93%
+2            0.605   3.42        93%
+3            0.837   4.35        90%
+5            0.929   4.72        88%</code></pre>
+<p>先看最後一欄：它不動，而且<strong>本來就不該動</strong>。輸出分佈完全不依賴 draft，所以爛 draft 只會讓你慢，不會讓你錯。正是這個性質讓 speculative decoding 可以預設打開，而不是一個要跟品質談判的交易。</p>
+<p>第二個：猜多遠。</p>
+<pre><code>gamma  接受率  實測每輪 token  獨立假設的理論  加速
+-----  ------  --------------  --------------  -----
+1      0.911   1.91            1.91            1.74x
+2      0.910   2.82            2.74            2.35x
+4      0.842   4.37            3.65            3.12x
+8      0.760   7.08            3.82            3.94x</code></pre>
+<p>理論那欄是教科書的 <code>(1 − a^(γ+1))/(1 − a)</code>，假設每個提議<strong>獨立</strong>以 a 的機率被接受。gamma=8 時實測 7.08，理論只有 3.82。公式沒錯，是假設錯了：接受是高度<strong>相關</strong>的——draft 在可預測的整段（<code>…in the gar|den.</code>）會連續全中，只在分岔點出錯，所以長串連續接受比同樣平均的硬幣常見得多。這也正是實務上大家報「每輪平均接受長度」而不是接受率的原因。</p>
+<h2>在 vLLM 裡</h2>
+<p>beam search 已經不是取樣參數了，它被搬出 <code>SamplingParams</code>，變成自己的呼叫：</p>
+<pre><code>llm.beam_search(prompts, BeamSearchParams(beam_width=4, max_tokens=64))</code></pre>
+<p>理由就是上面那行成本：它是對序列的搜尋，要分叉與釋放 w 份 KV cache，而不是「每個 token 一條規則」，所以不該跟 <code>temperature</code> 放在同一個物件裡。</p>
+<p>speculative decoding 則是伺服器端設定：</p>
+<pre><code>vllm serve meta-llama/Llama-3.1-70B-Instruct \
+  --speculative-config &#x27;{&quot;model&quot;: &quot;meta-llama/Llama-3.1-8B-Instruct&quot;,
+                         &quot;num_speculative_tokens&quot;: 5}&#x27;
+
+# 或者，根本不用 draft 模型：
+  --speculative-config &#x27;{&quot;method&quot;: &quot;ngram&quot;, &quot;num_speculative_tokens&quot;: 4,
+                         &quot;prompt_lookup_max&quot;: 4}&#x27;</code></pre>
+<p><code>ngram</code> 就是本文那個 draft 模型在生產環境的樣子，而且它不跑任何神經網路：直接在 prompt 裡找相同的字串，把上次接在後面的那一段當提議。摘要、改程式碼、RAG——任何「答案大量重複輸入」的場合——幾乎是免費的而且效果好得驚人。EAGLE 與 Medusa 則是另一端：用 target 模型自己的 hidden state 訓一個小頭，接受率高很多，而且不需要第二個完整模型。</p>
+<h2>在 SGLang 裡</h2>
+<pre><code>python -m sglang.launch_server --model ... \
+    --speculative-algorithm EAGLE3 \
+    --speculative-draft-model-path &lt;eagle head&gt; \
+    --speculative-num-steps 3 \        # draft 深度
+    --speculative-eagle-topk 4 \       # 每層保留幾個分支
+    --speculative-num-draft-tokens 8   # 每輪驗證幾個節點</code></pre>
+<p>值得理解的是 <code>--speculative-eagle-topk</code>：它讓 draft 變成一棵<strong>樹</strong>而不是一條鏈——每層留好幾個分支，然後用一個「只看得到自己祖先」的 attention mask，一次 target forward 驗證整棵樹。同一次昂貴的 forward 裡塞進更多候選，跟上面那個取捨一樣，只是形狀更好。而 <code>--speculative-algorithm NEXTN</code> 是給自己帶額外預測頭的模型用的（DeepSeek-V3、GLM 的 MTP 層），draft 內建在 target 裡。</p>
+<p>還有一件這些表格顯示不出來的事。在真實伺服器上，要看的數字是「每輪接受長度」<strong>對 batch size</strong>。speculative decoding 是拿算力換記憶體頻寬，所以在 decode 被頻寬卡住的時候會贏（小 batch、長 context），在大 batch 下可能反而輸——GPU 本來就滿載，每個被拒絕的提議都是花掉而什麼也沒買到的算力。</p>
+<h2>這一天之後會在哪裡再出現</h2>
+<p>對序列做 beam search，形狀跟圖論那幾天的搜尋是同一個：展開邊界、計分、剪枝，而錯誤永遠住在剪枝那一步。而 speculative decoding 的接受／拒絕規則就是 rejection sampling，往後只要有演算法需要「從一個只能逐點求值的分佈抽樣」就會再看到它——強化學習裡到處都是。</p>
+<p>程式碼、notebook 與互動版走查：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding">day 60 on GitHub</a>。</p>
+</body>
+</html>
