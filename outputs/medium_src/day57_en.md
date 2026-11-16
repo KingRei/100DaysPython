@@ -77,6 +77,35 @@ Prefix matching belongs on token ids, after the tokeniser. Day 51's tokeniser is
 
 ![img](https://github.com/KingRei/100DaysPython/blob/master/day%2057%20-%20radix%20attention/imgs/day57_3.png?raw=true)
 
+## One pool is not enough: HiCache and Mooncake
+
+Everything above assumed one pool on one GPU. A busier server has several tenants, and then the tree stops fitting: with 144 requests across six different system prompts the tree wants 15,175 slots while the GPU pool has 800, and the hit rate falls from 82.3% to **68.7%** - with 26,205 tokens thrown away to be recomputed later.
+
+The fix is to change what eviction means. Instead of dropping a cold branch, demote it: keep it in the tree and move its slots to somewhere slower.
+
+```python
+if self.l2_capacity:
+    victim.tier = 2              # demote: stays in the tree, leaves the GPU
+    self.size  -= len(victim.key)
+    self.size2 += len(victim.key)
+else:
+    drop(victim)                 # gone for good: the next request re-prefills
+```
+
+| tier 2 (host memory) | hit rate | served from tier 2 | dropped entirely |
+|---|---|---|---|
+| none | 68.7% | 0 | 26,205 |
+| 1,600 slots (2x) | 82.3% | 10,672 | 7,405 |
+| 6,400 slots (8x) | 82.3% | 10,672 | 0 |
+
+A host-memory tier eight times the size of the GPU pool brings the hit rate back to 82.3% - exactly what keeping the whole tree on the GPU would give - with nothing dropped at all. The price is that 10,672 of those tokens are copied back over the bus instead of being computed: **bandwidth instead of compute**, a trade that pays off precisely when prefill is expensive, which is when the shared prefix is long.
+
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2057%20-%20radix%20attention/imgs/day57_4.png?raw=true)
+
+This is what SGLang calls **HiCache**: the same radix tree, but a node may live in the GPU pool, in host DRAM, or in an optional remote store on SSD or other machines, with branches promoted and demoted in the background. The interface does not change; what changes is that a cache miss stops meaning "recompute" and starts meaning "fetch from somewhere slower".
+
+**Mooncake**, the architecture behind Kimi, takes the same observation to the cluster. Prefill is compute-bound and decode is memory-bound - the two different machines from the previous day - so run them on separate pools of machines, and make the KV cache a shared store built from the CPU memory and SSDs of the whole fleet, moved around over RDMA. Scheduling can then be inverted: send a request to the machine where its prefix already lives, rather than sending the prefix to the machine. They call the design KVCache-centric, and that phrase is the summary of this whole day: once you measure how much of the work is a repeated prefix, the cache stops being a side effect and becomes the thing the system is organised around.
+
 ## In PyTorch and JAX: the compute is saved, the space is not
 
 `transformers` has no cross-request prefix sharing. What you can do by hand is compute the system prompt once and copy its cache for each request:

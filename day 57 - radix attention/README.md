@@ -59,6 +59,29 @@ request is decoding on are pinned by a reference count.
 
 ![img](https://github.com/KingRei/100DaysPython/blob/master/day%2057%20-%20radix%20attention/imgs/day57_2.png?raw=true)
 
+## One pool is not enough: HiCache and Mooncake
+
+With several tenants the tree stops fitting: 144 requests over six system prompts want
+15,175 slots against a GPU pool of 800, and the hit rate falls to 68.7% with 26,205 tokens
+thrown away. Turn eviction into demotion - keep the branch in the tree, move its slots to
+host memory - and it comes back:
+
+| tier 2 (host) | hit rate | served from tier 2 | dropped |
+|---|---|---|---|
+| none | 68.7% | 0 | 26,205 |
+| 1,600 (2x) | 82.3% | 10,672 | 7,405 |
+| 6,400 (8x) | 82.3% | 10,672 | 0 |
+
+82.3% is exactly what keeping the whole tree on the GPU would give, and 10,672 tokens came
+back over the bus instead of being recomputed: bandwidth instead of compute. That is
+SGLang's **HiCache** (GPU pool, host DRAM, optional remote store, promoted and demoted in
+the background). **Mooncake**, the architecture behind Kimi, takes it cluster-wide: prefill
+and decode run on separate pools of machines and the KV cache becomes a shared store built
+from the fleet's CPU memory and SSDs over RDMA, so a request can be sent to wherever its
+prefix already is - a design they call KVCache-centric.
+
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2057%20-%20radix%20attention/imgs/day57_4.png?raw=true)
+
 ## The trap
 
 ```
@@ -95,5 +118,7 @@ blocks instead (`--enable-prefix-caching`).
 
 ## References
 - [SGLang: Efficient Execution of Structured Language Model Programs (RadixAttention)](https://arxiv.org/abs/2312.07104)
+- [Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving](https://arxiv.org/abs/2407.00079)
+- [SGLang HiCache (hierarchical KV cache) docs](https://docs.sglang.ai/advanced_features/hicache.html)
 - [Efficient Memory Management for LLM Serving with PagedAttention](https://arxiv.org/abs/2309.06180)
 - [Wikipedia: Radix tree](https://en.wikipedia.org/wiki/Radix_tree)

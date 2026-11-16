@@ -77,6 +77,35 @@ def match(self, tokens):
 
 ![img](https://github.com/KingRei/100DaysPython/blob/master/day%2057%20-%20radix%20attention/imgs/day57_3.png?raw=true)
 
+## 一層不夠：HiCache 與 Mooncake
+
+上面都假設「一張卡、一座池子」。但比較忙的伺服器會有好幾個租戶，這時樹就塞不下了：144 個請求、6 種不同的 system prompt，整棵樹要 15,175 個 slot，而 GPU 池只有 800——命中率從 82.3% 掉到 **68.7%**，而且有 26,205 個 token 被真的丟掉、之後要重算。
+
+解法是改變「淘汰」的意思。與其把冷掉的分支丟掉，不如**降級**：讓它留在樹上，只是把它的 slot 搬到慢一點的地方。
+
+```python
+if self.l2_capacity:
+    victim.tier = 2              # 降級：留在樹上，離開 GPU
+    self.size  -= len(victim.key)
+    self.size2 += len(victim.key)
+else:
+    drop(victim)                 # 直接丟掉：下一個請求要重新 prefill
+```
+
+| 第 2 層（主機記憶體） | 命中率 | 從第 2 層取回 | 真的被丟掉 |
+|---|---|---|---|
+| 沒有 | 68.7% | 0 | 26,205 |
+| 1,600 slot（2 倍） | 82.3% | 10,672 | 7,405 |
+| 6,400 slot（8 倍） | 82.3% | 10,672 | 0 |
+
+用一個比 GPU 池大八倍的主機記憶體層，命中率回到 82.3%——正好等於「整棵樹都放在 GPU 上」的水準——而且一個 token 都沒被丟掉。代價是其中 10,672 個 token 是從主記憶體**複製**回來而不是重算的：**用頻寬換算力**，而這筆交易划算的條件很明確——prefill 越貴（也就是共用前綴越長）越划算。
+
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2057%20-%20radix%20attention/imgs/day57_4.png?raw=true)
+
+這就是 SGLang 的 **HiCache**：同一棵 radix tree，但一個節點可以住在 GPU 池、主機 DRAM，或是可選的遠端儲存（SSD 或其他機器），並在背景把分支往上搬或往下趕。對使用者來說介面沒變，變的是「cache miss」不再等於「重算」，而可能只是「從慢一點的地方搬回來」。
+
+**Mooncake**（Kimi 背後的架構）把同一個觀察放大到整個叢集。prefill 是算力受限、decode 是記憶體受限——就是前一天那兩台不同的機器——那就讓它們跑在**不同的機器池**上；而 KV cache 變成一座叢集共用的儲存，由全部機器的 CPU 記憶體和 SSD 組成，透過 RDMA 搬運。於是排程可以反過來做：把請求送去「它的前綴已經在那裡」的機器，而不是把前綴送去機器。他們自己把這個設計叫做 KVCache-centric，而那個詞正好就是今天的總結——一旦你量過有多少工作只是重複的前綴，cache 就不再是副產品，而是整個系統圍著轉的東西。
+
 ## 在 PyTorch 和 JAX 裡：省得掉計算，省不掉空間
 
 `transformers` 沒有跨請求的前綴共享。你能自己做的是把 system prompt 先算一次，然後每個請求複製一份：

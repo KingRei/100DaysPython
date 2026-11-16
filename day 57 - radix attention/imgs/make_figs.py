@@ -36,34 +36,62 @@ def axes2(ax, x0, y0, w, h):
 
 # ---------------------------------------------------------------- figure 0
 def fig0():
-    """The tree: one shared trunk, one branch per conversation."""
-    fig, ax = W(5.2)
-    text(ax, 5.0, 5.35, 'one radix tree over token ids: shared runs become shared cache',
+    """The algorithm: walk while the tokens agree, then split the edge."""
+    fig, ax = W(6.4)
+    text(ax, 5.0, 6.70, 'match(tokens): walk down while the tokens agree; '
+                        'insert(): split the edge where they stop',
          color=TEAL_L, size=12.5)
-    box(ax, 0.55, 3.55, 2.30, 0.60, label='system prompt\n200 tokens', edge=AMBER, lw=1.8)
-    box(ax, 3.05, 3.55, 2.30, 0.60, label='2 examples\n200 tokens', edge=AMBER, lw=1.8)
-    arrow(ax, (2.90, 3.85), (3.00, 3.85))
-    for i, y in enumerate((4.35, 3.05, 1.75)):
-        lab = ('conversation 1', 'conversation 2', 'conversation 20')[i]
-        box(ax, 5.85, y, 2.00, 0.52, label=lab, edge=TEAL, lw=1.5, size=12)
-        ax.annotate('', xy=(5.80, y + 0.26), xytext=(5.40, 3.85),
-                    arrowprops=dict(arrowstyle='->', color=TEAL, lw=1.3, alpha=.8))
-        for t in range(2):
-            yy = y + (0.0 if t == 0 else -0.60)
-            box(ax, 8.15, yy, 1.35, 0.50, label=f'turn {t + 1}', edge=TEAL_L, lw=1.2,
-                size=12)
-            ax.annotate('', xy=(8.10, yy + 0.25), xytext=(7.90, y + 0.26),
-                        arrowprops=dict(arrowstyle='->', color=TEAL_L, lw=1.0,
-                                        alpha=.7))
-        if i == 1:
-            text(ax, 6.85, y - 0.95, '. . .', color=GREY_L, size=13, glowing=False)
-    text(ax, 2.0, 3.25, 'computed once, used by everything below',
-         color=AMBER, size=11.5, glowing=False)
-    text(ax, 5.0, 0.95, f'{len(REQS)} requests, {RES["total"]:,} tokens of prompt in '
-                        f'total, of which {RES["reused"]:,} are a repeat of something '
-                        f'already cached', color=TEAL, size=11.5, glowing=False)
-    text(ax, 5.0, 0.45, f'the tree holds {RES["slots"]:,} token slots instead of '
-                        f'{PLAIN["slots"]:,}', color=CYAN, size=12.5)
+
+    def chain(x0, y, runs, hi=-1, w=0.52):
+        """Draw a node chain: each run is (label, n_tokens)."""
+        x = x0
+        for k, (lab, n) in enumerate(runs):
+            ww = max(0.95, 0.34 * n)
+            col = AMBER if k == hi else TEAL
+            box(ax, x, y, ww, w, label=lab, edge=col, lw=1.7, size=11)
+            if k < len(runs) - 1:
+                ax.annotate('', xy=(x + ww + 0.22, y + w / 2), xytext=(x + ww + 0.02,
+                            y + w / 2),
+                            arrowprops=dict(arrowstyle='->', color=TEAL, lw=1.3))
+            x += ww + 0.22
+        return x
+
+    # --- step 1: the tree already holds one request
+    text(ax, 0.45, 5.95, '1.  the tree after one request', color=GREY_L, size=11.5,
+         ha='left', glowing=False)
+    text(ax, 0.45, 5.45, 'root', color=TEAL_L, size=11.5, ha='left')
+    chain(1.35, 5.20, [('"S E A B"  (one edge)', 12)])
+
+    # --- step 2: a second request walks down and diverges
+    text(ax, 0.45, 4.45, '2.  a second request "S E A C" walks down', color=GREY_L,
+         size=11.5, ha='left', glowing=False)
+    text(ax, 0.45, 3.95, 'root', color=TEAL_L, size=11.5, ha='left')
+    chain(1.35, 3.70, [('"S E A B"', 12)], hi=0)
+    text(ax, 5.95, 3.96, 'matched "S E A", then B != C', color=AMBER, size=11.5,
+         ha='left', glowing=False)
+
+    # --- step 3: split
+    text(ax, 0.45, 2.95, '3.  split the edge at the divergence', color=GREY_L,
+         size=11.5, ha='left', glowing=False)
+    text(ax, 0.45, 2.45, 'root', color=TEAL_L, size=11.5, ha='left')
+    box(ax, 1.35, 2.20, 2.20, 0.52, label='"S E A"  shared', edge=AMBER, lw=1.8,
+        size=11)
+    box(ax, 4.35, 2.55, 1.30, 0.50, label='"B"', edge=TEAL, lw=1.5, size=11)
+    box(ax, 4.35, 1.75, 1.30, 0.50, label='"C"', edge=TEAL, lw=1.5, size=11)
+    ax.annotate('', xy=(4.30, 2.80), xytext=(3.60, 2.46),
+                arrowprops=dict(arrowstyle='->', color=TEAL, lw=1.3))
+    ax.annotate('', xy=(4.30, 2.00), xytext=(3.60, 2.46),
+                arrowprops=dict(arrowstyle='->', color=TEAL, lw=1.3))
+    text(ax, 5.95, 2.46, 'the shared head is now one node:\nthree tokens of cache, '
+                         'computed once', color=AMBER, size=11.5, ha='left',
+         glowing=False)
+
+    text(ax, 5.0, 1.05, f'matching costs one comparison per token; a request of length '
+                        f'n adds at most one split', color=TEAL, size=11.5,
+         glowing=False)
+    text(ax, 5.0, 0.55, f'on the workload in this file: {RES["hit"] * 100:.1f}% of '
+                        f'{RES["total"]:,} prompt tokens were already in the tree',
+         color=CYAN, size=12.5)
     save(fig, 'day57_0.png')
 
 
@@ -168,6 +196,41 @@ def fig3():
     save(fig, 'day57_3.png')
 
 
-for f in (fig0, fig1, fig2, fig3):
+# ---------------------------------------------------------------- figure 4
+def fig4():
+    """Tiers: keep the branch somewhere slower instead of throwing it away."""
+    fig, ax = W(5.4)
+    rows, full, ideal, nreq = R.tier_table()
+    text(ax, 5.0, 5.60, 'when one pool is not enough: demote instead of drop',
+         color=TEAL_L, size=13)
+    tiers = [('tier 1  GPU pool', '800 slots', AMBER, 4.35),
+             ('tier 2  host DRAM', f"{rows[-1]['l2']:,} slots", TEAL, 3.45),
+             ('tier 3  remote store', 'SSD / other machines', GREY_L, 2.55)]
+    for name, note, col, y in tiers:
+        box(ax, 0.75, y, 3.40, 0.62, label=name, edge=col, lw=1.7)
+        text(ax, 4.35, y + 0.31, note, color=GREY_L, size=11, ha='left', glowing=False)
+    for y0, y1 in ((4.35, 3.45), (3.45, 2.55)):
+        ax.annotate('', xy=(2.10, y1 + 0.66), xytext=(2.10, y0 - 0.02),
+                    arrowprops=dict(arrowstyle='->', color=RED_S, lw=1.5))
+        ax.annotate('', xy=(2.80, y0 - 0.02), xytext=(2.80, y1 + 0.66),
+                    arrowprops=dict(arrowstyle='->', color=TEAL_L, lw=1.5))
+    text(ax, 1.62, 4.12, 'evict', color=RED_S, size=10.5, glowing=False)
+    text(ax, 3.28, 4.12, 'fetch', color=TEAL_L, size=10.5, glowing=False)
+    text(ax, 5.0, 1.85, f'{nreq} requests over 6 system prompts, a tree of {full:,} '
+                        f'slots and a GPU pool of 800:', color=TEAL, size=11.5,
+         glowing=False)
+    text(ax, 5.0, 1.40, f"one pool: {rows[0]['hit'] * 100:.1f}% hit    "
+                        f"with tier 2: {rows[-1]['hit'] * 100:.1f}%    "
+                        f"(everything resident would be {ideal * 100:.1f}%)",
+         color=TEAL_L, size=12)
+    text(ax, 5.0, 0.95, f"{rows[-1]['from_l2']:,} tokens came back over the bus instead "
+                        f"of being prefilled again", color=TEAL, size=11.5,
+         glowing=False)
+    text(ax, 5.0, 0.45, 'bandwidth instead of compute - which is the trade HiCache and '
+                        'Mooncake are built on', color=CYAN, size=12)
+    save(fig, 'day57_4.png')
+
+
+for f in (fig0, fig1, fig2, fig3, fig4):
     f()
     print(f.__name__, 'ok')

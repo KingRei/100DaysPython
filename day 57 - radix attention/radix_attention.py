@@ -23,7 +23,7 @@ SYSTEM = tuple(range(1000, 1200))          # 200 tokens of system prompt
 EXAMPLES = [tuple(range(2000 + 100 * i, 2000 + 100 * i + 100)) for i in range(4)]
 
 
-def make_workload(n_convs=20, turns=4, seed=0, few_shot=2):
+def make_workload(n_convs=20, turns=4, seed=0, few_shot=2, n_systems=1):
     """Requests that look like a chat server's day.
 
     Every request starts with the same system prompt; a request is then zero or more
@@ -32,8 +32,9 @@ def make_workload(n_convs=20, turns=4, seed=0, few_shot=2):
     """
     rng = np.random.default_rng(seed)
     reqs = []
+    systems = [tuple(t + 10000 * k for t in SYSTEM) for k in range(n_systems)]
     for c in range(n_convs):
-        shared = SYSTEM + tuple(t for e in EXAMPLES[:few_shot] for t in e)
+        shared = systems[c % n_systems] + tuple(t for e in EXAMPLES[:few_shot] for t in e)
         history = ()
         for t in range(turns):
             user = tuple(int(x) for x in rng.integers(0, 900, int(rng.integers(20, 60))))
@@ -45,7 +46,7 @@ def make_workload(n_convs=20, turns=4, seed=0, few_shot=2):
 
 # ================================================================ 2. the radix tree
 class RadixNode:
-    __slots__ = ('key', 'children', 'parent', 'last_used', 'refs')
+    __slots__ = ('key', 'children', 'parent', 'last_used', 'refs', 'tier')
 
     def __init__(self, key=(), parent=None):
         self.key = key                 # the tokens stored on the edge into this node
@@ -53,6 +54,7 @@ class RadixNode:
         self.parent = parent
         self.last_used = 0
         self.refs = 0                  # requests currently decoding on this path
+        self.tier = 1                  # 1 = on the GPU, 2 = demoted to host memory
 
 
 class RadixCache:
@@ -63,15 +65,28 @@ class RadixCache:
     a prefill that does not have to happen.
     """
 
-    def __init__(self, capacity=None):
+    def __init__(self, capacity=None, l2_capacity=0):
         self.root = RadixNode()
-        self.capacity = capacity       # in token slots; None means unlimited
-        self.size = 0                  # slots in use
+        self.capacity = capacity       # tier-1 slots (on the GPU); None = unlimited
+        self.l2_capacity = l2_capacity  # tier-2 slots (host memory); 0 = no tier 2
+        self.size = 0                  # tier-1 slots in use
+        self.size2 = 0                 # tier-2 slots in use
         self.clock = 0
-        self.evicted = 0
+        self.evicted = 0               # slots dropped entirely
+        self.demoted = 0               # slots pushed down to tier 2
+        self.hit2 = 0                  # matched slots that were sitting in tier 2
         self.nodes = 1
 
     # ---------------------------------------------------------------- matching
+    def _touch(self, node, n):
+        """A matched node is used again: count a tier-2 hit and bring it back up."""
+        node.last_used = self.clock
+        if node.tier == 2:
+            self.hit2 += n
+            self.size2 -= len(node.key)
+            self.size += len(node.key)
+            node.tier = 1
+
     def match(self, tokens):
         """Longest prefix of `tokens` already in the tree, and the node it ends at."""
         self.clock += 1
@@ -88,11 +103,11 @@ class RadixCache:
             if j < len(k):             # matched part of an edge: stop here
                 i += j
                 node = child           # partial match still counts as cached tokens
-                node.last_used = self.clock
+                self._touch(node, j)
                 return i, node, j
             i += len(k)
             node = child
-            node.last_used = self.clock
+            self._touch(node, len(k))
         return i, node, len(node.key)
 
     # ---------------------------------------------------------------- inserting
@@ -141,14 +156,35 @@ class RadixCache:
 
         This is the one rule that makes a shared cache different from an ordinary LRU
         cache.  Evicting a node in the middle would orphan everything below it.
+
+        With a tier 2, the victim is demoted to host memory instead of being dropped;
+        only when tier 2 is full as well does anything leave the tree for good.
         """
         while self.size > self.capacity:
-            leaves = self._leaves()
+            leaves = [n for n in self._leaves() if n.tier == 1]
             if not leaves:
                 break                  # everything left is in use or is a prefix
             victim = min(leaves, key=lambda n: n.last_used)
+            if self.l2_capacity:
+                victim.tier = 2
+                self.size -= len(victim.key)
+                self.size2 += len(victim.key)
+                self.demoted += len(victim.key)
+                self._trim_l2()
+            else:
+                del victim.parent.children[victim.key[0]]
+                self.size -= len(victim.key)
+                self.evicted += len(victim.key)
+                self.nodes -= 1
+
+    def _trim_l2(self):
+        while self.size2 > self.l2_capacity:
+            leaves = [n for n in self._leaves() if n.tier == 2]
+            if not leaves:
+                break
+            victim = min(leaves, key=lambda n: n.last_used)
             del victim.parent.children[victim.key[0]]
-            self.size -= len(victim.key)
+            self.size2 -= len(victim.key)
             self.evicted += len(victim.key)
             self.nodes -= 1
 
@@ -176,9 +212,9 @@ def trie_nodes(sequences):
 
 
 # ================================================================ 3. what it saves
-def run(reqs, capacity=None):
+def run(reqs, capacity=None, l2_capacity=0):
     """Serve the workload in order and count what had to be prefilled."""
-    cache = RadixCache(capacity)
+    cache = RadixCache(capacity, l2_capacity)
     total = reused = 0
     per_req = []
     for r in reqs:
@@ -189,7 +225,8 @@ def run(reqs, capacity=None):
         per_req.append({'len': len(toks), 'matched': matched})
     return {'total': total, 'reused': reused, 'hit': reused / total,
             'nodes': cache.total_nodes(), 'slots': cache.size,
-            'evicted': cache.evicted, 'per_req': per_req}
+            'evicted': cache.evicted, 'per_req': per_req,
+            'from_l2': cache.hit2, 'demoted': cache.demoted, 'slots2': cache.size2}
 
 
 def no_sharing(reqs):
@@ -208,6 +245,24 @@ def capacity_sweep(reqs, caps=(200, 400, 600, 800, 1200, 2000, 4000, None)):
         rows.append({'cap': c, 'frac': c / full, 'hit': res['hit'],
                      'evicted': res['evicted']})
     return rows, full
+
+
+def tier_table(l1=800, mults=(0, 2, 4, 8), n_convs=36, n_systems=6, seed=0):
+    """One small fast pool, optionally backed by a larger slow one.
+
+    A busy server has more than one tenant, so the tree no longer fits.  Demoting a
+    cold branch to host memory instead of dropping it means the next request that
+    wants it pays a copy over PCIe rather than a full prefill.
+    """
+    reqs = make_workload(n_convs=n_convs, n_systems=n_systems, seed=seed)
+    full = run(reqs)['slots']
+    rows = []
+    for m in mults:
+        res = run(reqs, capacity=l1, l2_capacity=l1 * m)
+        rows.append({'l2': l1 * m, 'mult': m, 'hit': res['hit'],
+                     'from_l2': res['from_l2'], 'evicted': res['evicted']})
+    ideal = run(reqs)['hit']
+    return rows, full, ideal, len(reqs)
 
 
 # ================================================================ 4. the two traps
@@ -297,6 +352,12 @@ def check():
     rows, _ = capacity_sweep(reqs)
     assert rows[0]['hit'] < rows[-1]['hit']
     assert rows[0]['evicted'] > 0 and rows[-1]['evicted'] == 0
+
+    # a second tier turns evictions into demotions and recovers the hit rate
+    rows, full, ideal, _ = tier_table()
+    assert rows[0]['hit'] < ideal - 0.05          # one small pool loses a lot
+    assert abs(rows[-1]['hit'] - ideal) < 1e-9    # with tier 2 it is back
+    assert rows[-1]['evicted'] == 0 and rows[-1]['from_l2'] > 0
 
     # matching text is not matching tokens
     tp = prefix_on_text_not_tokens()
@@ -424,7 +485,40 @@ def main():
     print('  only", and why a node that a running request is sitting on is pinned.')
 
     # ------------------------------------------------------------------ 7
-    header('7. Assertions')
+    header('7. One pool is not enough: hierarchical and disaggregated caches')
+    rows, full, ideal, nreq = tier_table()
+    print(f'  A busier server: {nreq} requests across 6 different system prompts, so')
+    print(f'  the whole tree now wants {full:,} slots and no longer fits in the pool.')
+    print(f'  Give it {800:,} slots on the GPU, and then a slower tier behind it:\n')
+    print(f'  {"tier 2 (host)":>15} {"hit rate":>10} {"served from tier 2":>20} '
+          f'{"dropped entirely":>18}')
+    for r in rows:
+        lab = 'none' if r['mult'] == 0 else f'{r["l2"]:,} ({r["mult"]}x)'
+        print(f'  {lab:>15} {r["hit"] * 100:>9.1f}% {r["from_l2"]:>20,} '
+              f'{r["evicted"]:>18,}')
+    print(f'\n  With one pool the hit rate is {rows[0]["hit"] * 100:.1f}%; with a host-memory tier')
+    print(f'  eight times larger it is {rows[-1]["hit"] * 100:.1f}%, which is exactly what '
+          f'keeping the whole')
+    print(f'  tree on the GPU would give ({ideal * 100:.1f}%).  '
+          f'{rows[-1]["from_l2"]:,} tokens were copied back')
+    print('  from host memory instead of being recomputed, and nothing was dropped.')
+    print('\n  That is the whole idea behind the hierarchical caches in production')
+    print('  servers.  SGLang calls its version HiCache: the same radix tree, with the')
+    print('  GPU pool as tier 1, host DRAM as tier 2, and an optional remote store as')
+    print('  tier 3, moving branches up and down in the background.  The trade is')
+    print('  bandwidth for compute - a PCIe copy instead of a prefill - which is worth')
+    print('  it exactly when prefill is expensive, i.e. for long shared prefixes.')
+    print('\n  Mooncake (the architecture behind Kimi) takes the same observation one')
+    print('  step further and makes the cache the centre of the cluster: prefill and')
+    print('  decode run on separate pools of machines - they are the two different')
+    print('  machines from the previous day - and the KV cache lives in a shared store')
+    print('  built from the CPU memory and SSDs of the whole fleet, moved around over')
+    print('  RDMA.  A request can then be prefilled wherever its prefix already is.')
+    print('\n  Both answer the same question this file has been circling: the cache is')
+    print('  the scarce resource, so the system is designed around where it lives.')
+
+    # ------------------------------------------------------------------ 8
+    header('8. Assertions')
     check()
     print('all assertions passed')
 

@@ -234,6 +234,8 @@ const TRAP = {"a": "abc", "b": "abd", "ta": [5], "tb": [4, 7], "textPrefix": 2, 
 const EVICT = {"victim": 124, "children": 1, "orphaned": 379, "hit": 75.6};
 
 
+const TIER = {"full": 15175, "reqs": 144, "l1": 800, "ideal": 82.3, "rows": [{"l2": 0, "mult": 0, "hit": 68.7, "fromL2": 0, "dropped": 26205}, {"l2": 1600, "mult": 2, "hit": 82.3, "fromL2": 10672, "dropped": 7405}, {"l2": 3200, "mult": 4, "hit": 82.3, "fromL2": 10672, "dropped": 2227}, {"l2": 6400, "mult": 8, "hit": 82.3, "fromL2": 10672, "dropped": 0}]};
+
 /* ================================================================ tab 1: the waste */
 const CODE_WORK = [
   '# a chat server\'s day, in token ids',
@@ -467,6 +469,72 @@ function trapFrames(){
   return F.list;
 }
 
+/* ================================================================ tab 5: tiers */
+const CODE_TIER = [
+  '# eviction, with somewhere slower to fall back to',
+  'if self.l2_capacity:',
+  '    victim.tier = 2            # demote: stays in the tree, leaves the GPU',
+  '    self.size  -= len(victim.key)',
+  '    self.size2 += len(victim.key)',
+  'else:',
+  '    drop(victim)               # gone for good: the next request re-prefills',
+  '',
+  '# and a match on a tier-2 node pays a copy, not a prefill'
+];
+function tierStage(o){
+  const sh = [];
+  const tiers = [{n:{zh:'第 1 層　GPU pool', en:'tier 1   GPU pool'}, note:TIER.l1 + ' slots', s:'hot'},
+                 {n:{zh:'第 2 層　host DRAM', en:'tier 2   host DRAM'}, note:TIER.rows[3].l2.toLocaleString() + ' slots', s:'ok'},
+                 {n:{zh:'第 3 層　遠端儲存', en:'tier 3   remote store'}, note:'SSD / other machines', s:'idle'}];
+  tiers.forEach((t, i) => {
+    if (i > o.upto) return;
+    const y = 4.15 - i * .95;
+    sh.push(box(1.00, y, 3.40, .62, t.s, t.n, .28));
+    sh.push(fitT(4.60, y + .31, t.note, {anchor:'start', c:COL.grey, fs:.26}));
+    if (i > 0){
+      sh.push(S.e(1.85, y + 1.00, 1.85, y + .66, {s:'bad', arrow:true, w:.05}));
+      sh.push(S.e(2.60, y + .66, 2.60, y + 1.00, {s:'ok', arrow:true, w:.05}));
+    }
+  });
+  if (o.upto >= 1){
+    sh.push(fitT(1.55, 3.98, {zh:'淘汰', en:'evict'}, {c:COL.red, fs:.22}));
+    sh.push(fitT(2.95, 3.98, {zh:'取回', en:'fetch'}, {c:COL.tealL, fs:.22}));
+  }
+  side(sh, 1.00, 1.55, o.notes || [], .46);
+  return caps(sh, o);
+}
+function tierFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:tierStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({upto:0, line:6,
+    cap:{zh:'多租戶之後，樹就塞不進池子了', en:'with more than one tenant, the tree stops fitting'},
+    panels:[{lbl:'requests', chips:[chip(String(TIER.reqs), 'dim')]},
+            {lbl:'tree wants', chips:[chip(TIER.full.toLocaleString() + ' slots', 'bad')]},
+            {lbl:'pool', chips:[chip(TIER.l1 + ' slots', 'hot')]}],
+    msg:{zh:'換一個比較忙的工作量：' + TIER.reqs + ' 個請求、6 種不同的 system prompt，整棵樹要 ' + TIER.full.toLocaleString() + ' 個 slot，而 GPU 上只有 ' + TIER.l1 + ' 個。只有一層的話，命中率掉到 ' + TIER.rows[0].hit.toFixed(1) + '%（全部放得下是 ' + TIER.ideal.toFixed(1) + '%），而且有 ' + TIER.rows[0].dropped.toLocaleString() + ' 個 token 被真的丟掉、下次要重算。',
+         en:'Take a busier workload: ' + TIER.reqs + ' requests across 6 different system prompts, so the tree wants ' + TIER.full.toLocaleString() + ' slots while the GPU has ' + TIER.l1 + '. With a single tier the hit rate falls to ' + TIER.rows[0].hit.toFixed(1) + '% (against ' + TIER.ideal.toFixed(1) + '% if everything fitted), and ' + TIER.rows[0].dropped.toLocaleString() + ' tokens are thrown away to be recomputed later.'}});
+  p({upto:1, line:2,
+    cap:{zh:'淘汰改成「降級」：留在樹上，只是搬到慢的地方', en:'eviction becomes demotion: it stays in the tree, somewhere slower'},
+    panels:[{lbl:'tier 2 = ' + TIER.rows[3].mult + 'x', chips:[chip(TIER.rows[3].hit.toFixed(1) + '%', 'ok')]},
+            {lbl:'from tier 2', chips:[chip(TIER.rows[3].fromL2.toLocaleString() + ' tokens', 'act')]},
+            {lbl:'dropped', chips:[chip(String(TIER.rows[3].dropped), 'ok')]}],
+    msg:{zh:'把 host DRAM 當第 2 層（這裡 ' + TIER.rows[3].l2.toLocaleString() + ' 個 slot，是 GPU 池的 ' + TIER.rows[3].mult + ' 倍）：命中率回到 ' + TIER.rows[3].hit.toFixed(1) + '%，跟「整棵樹都放得下」一模一樣，而且一個 token 都沒被丟掉。代價是其中 ' + TIER.rows[3].fromL2.toLocaleString() + ' 個 token 是從主記憶體**複製**回來的——**用頻寬換算力**。這筆交易划算的條件很清楚：prefill 越貴（也就是共用前綴越長）越划算。',
+         en:'Add host DRAM as tier 2 - here ' + TIER.rows[3].l2.toLocaleString() + ' slots, ' + TIER.rows[3].mult + ' times the GPU pool - and the hit rate returns to ' + TIER.rows[3].hit.toFixed(1) + '%, exactly what having the whole tree resident would give, with nothing dropped at all. The price is that ' + TIER.rows[3].fromL2.toLocaleString() + ' of those tokens are copied back over the bus: bandwidth instead of compute. The trade pays off precisely when prefill is expensive, which is when the shared prefix is long.'}});
+  p({upto:2, line:8,
+    cap:{zh:'這就是 HiCache 在做的事', en:'this is what HiCache does'},
+    panels:[{lbl:'SGLang HiCache', chips:[chip('GPU / host / remote', 'ok')]}],
+    msg:{zh:'SGLang 把這套叫 **HiCache**：同一棵 radix tree，但節點可以住在三個地方——GPU 的池子、主機 DRAM、以及可選的遠端儲存（SSD 或其他機器）——並在背景把分支往上搬或往下趕。對使用者來說介面沒變，變的只是「cache miss」不再等於「重算」，而可能只是「從慢一點的地方搬回來」。',
+         en:'SGLang calls this **HiCache**: the same radix tree, but a node can live in three places - the GPU pool, host DRAM, and an optional remote store on SSD or other machines - with branches promoted and demoted in the background. The interface does not change; what changes is that a cache miss no longer means recompute, it can mean fetch from somewhere slower.'}});
+  p({upto:2, line:8,
+    cap:{zh:'而 Mooncake 把這個想法放大到整個叢集', en:'and Mooncake takes the same idea cluster-wide'},
+    panels:[{lbl:'prefill pool', chips:[chip('compute-bound', 'hot')]},
+            {lbl:'decode pool', chips:[chip('memory-bound', 'act')]},
+            {lbl:'KV store', chips:[chip('DRAM + SSD over RDMA', 'ok')]}],
+    msg:{zh:'Mooncake（Kimi 背後的架構）走得更遠：既然 prefill 和 decode 是兩種不同的機器（前一天量過），那就讓它們跑在**不同的機器池**上；而 KV cache 變成整個叢集共用的一座儲存，用全部機器的 CPU 記憶體和 SSD 組成、透過 RDMA 搬運。於是排程可以反過來做——把一個請求送去「它的前綴已經在那裡」的機器。他們自己把這個設計叫做 KVCache-centric：cache 不是附屬品，是整個系統的中心。',
+         en:'Mooncake, the architecture behind Kimi, goes further: since prefill and decode are two different machines (measured the previous day), run them on separate pools of machines - and make the KV cache a cluster-wide store built from the CPU memory and SSDs of the whole fleet, moved around over RDMA. Scheduling can then be inverted: send a request to wherever its prefix already is. They call the design KVCache-centric, because the cache stops being a side effect and becomes the thing the system is organised around.'}});
+  return F.list;
+}
+
 /* ================================================================ tab 5: PyTorch / JAX */
 const CODE_TORCH = [
   '# transformers has no prefix sharing: you do it by hand, per request',
@@ -637,6 +705,14 @@ const DAY_META = {
            en:'A tokeniser merges across boundaries, so two strings sharing ' + TRAP.textPrefix + ' characters can share no tokens at all. A cache keyed on text would hand back the K and V of a token the second request never contained, and nothing would raise. Prefix matching belongs on token ids.'},
      legend:[['#12b3b8', {zh:'第一個請求的 token', en:'the first request\'s tokens'}],
              ['#ff5c5c', {zh:'第二個請求的 token', en:'the second request\'s tokens'}]]},
+    {id:'tier', label:{zh:'一層不夠：HiCache / Mooncake', en:'one tier is not enough: HiCache and Mooncake'},
+     stage:{zh:'淘汰變降級，用頻寬換算力', en:'demote instead of drop: bandwidth for compute'},
+     view:VIEW, code:CODE_TIER, build:tierFrames,
+     idea:{zh:'多租戶之後樹塞不進 GPU 池（' + TIER.full.toLocaleString() + ' vs ' + TIER.l1 + ' slot），只有一層時命中率掉到 ' + TIER.rows[0].hit.toFixed(1) + '%。把淘汰改成「降級到 host DRAM」，命中率回到 ' + TIER.rows[3].hit.toFixed(1) + '%（＝整棵樹都在 GPU 上的水準），其中 ' + TIER.rows[3].fromL2.toLocaleString() + ' 個 token 是搬回來而不是重算的。SGLang 的 HiCache 是 GPU／host／遠端三層；Mooncake 則把 prefill 池、decode 池和一座叢集級 KV store 拆開，讓請求去找自己的前綴。',
+           en:'With several tenants the tree no longer fits the GPU pool (' + TIER.full.toLocaleString() + ' slots against ' + TIER.l1 + '), and a single tier drops the hit rate to ' + TIER.rows[0].hit.toFixed(1) + '%. Turn eviction into demotion to host DRAM and it returns to ' + TIER.rows[3].hit.toFixed(1) + '% - the same as having everything resident - with ' + TIER.rows[3].fromL2.toLocaleString() + ' tokens copied back instead of recomputed. SGLang\'s HiCache is exactly these tiers; Mooncake splits prefill pools, decode pools and a cluster-wide KV store so a request can be sent to wherever its prefix already lives.'},
+     legend:[['#ff9736', {zh:'GPU 上的那一層', en:'the tier on the GPU'}],
+             ['#12b3b8', {zh:'慢一點但大很多的層', en:'slower but much larger tiers'}],
+             ['#ff5c5c', {zh:'往下趕（淘汰）', en:'demoted downwards'}]]},
     {id:'fw', label:{zh:'PyTorch 與 JAX 裡', en:'in PyTorch and JAX'},
      stage:{zh:'省得掉計算，省不掉空間', en:'the compute is saved, the space is not'},
      view:VIEW, build:fwFrames,
