@@ -6,6 +6,14 @@ Code: [day 57 on GitHub](https://github.com/KingRei/100DaysPython/tree/master/da
 
 Yesterday's cache belonged to one sequence. On a real server most requests begin identically: the same system prompt, the same few examples, the earlier turns of the same conversation. Computing those keys and values again for every request is the largest piece of wasted work in LLM serving, and prefill is the compute-bound phase, so not doing it is the biggest saving available.
 
+Here is the whole mechanism in one picture before any of the details:
+
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2057%20-%20radix%20attention/imgs/day57_arch.png?raw=true)
+
+Requests arrive, the tokeniser turns each into a list of token ids, and those ids are looked up in a **radix tree** of everything already cached: walk down from the root while the tokens agree, and whatever you matched does not have to be prefilled. Each node of that tree owns a run of slots in the KV pool, so the shared trunk exists once no matter how many conversations hang off it, and a request that diverges causes the edge to split rather than a copy.
+
+The bottom half is **HiCache**, which is the same tree with somewhere to fall back to: a node may live in the GPU pool, in host DRAM, or in a remote store, and eviction demotes it downwards instead of deleting it. That changes what a cache miss means - "fetch from somewhere slower" rather than "prefill it again". The rest of this article builds the tree, measures what it saves, and then measures what the extra tiers are worth.
+
 In the simulated chat workload in this file - 20 conversations of four turns, 80 requests, a shared 200-token system prompt and two shared examples - **84.6% of all prompt tokens are a recomputation of something already cached**: 47,466 tokens of prompt, of which only 7,320 have never been seen.
 
 ![img](https://github.com/KingRei/100DaysPython/blob/master/day%2057%20-%20radix%20attention/imgs/day57_1.png?raw=true)

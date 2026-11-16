@@ -34,6 +34,78 @@ def axes2(ax, x0, y0, w, h):
     ax.plot([x0, x0], [y0, y0 + h], color=TEAL, lw=1.2, zorder=2)
 
 
+# ---------------------------------------------------------------- architecture
+def fig_arch():
+    """One picture: where the radix tree sits, and what HiCache adds under it."""
+    fig, ax = W(7.0)
+    text(ax, 5.0, 7.45, 'RadixAttention: one tree of cached prefixes, one pool of KV '
+                        'slots - and HiCache underneath it', color=TEAL_L, size=12.5)
+
+    # ---- requests
+    text(ax, 0.95, 6.85, 'requests', color=GREY_L, size=11, glowing=False)
+    reqs = [('user A, turn 2', 6.25), ('user B, turn 1', 5.55), ('user C, turn 5', 4.85)]
+    for lab, y in reqs:
+        box(ax, 0.30, y, 1.95, 0.48, label=lab, edge=TEAL, lw=1.4, size=10.5)
+        ax.annotate('', xy=(2.55, y + 0.24), xytext=(2.30, y + 0.24),
+                    arrowprops=dict(arrowstyle='->', color=TEAL, lw=1.2))
+    box(ax, 2.60, 5.55, 1.30, 0.48, label='tokenizer', edge=AMBER, lw=1.5, size=10.5)
+    text(ax, 3.25, 5.25, 'token ids', color=AMBER, size=10, glowing=False)
+    ax.annotate('', xy=(4.20, 5.79), xytext=(3.95, 5.79),
+                arrowprops=dict(arrowstyle='->', color=TEAL, lw=1.2))
+
+    # ---- the radix tree
+    region(ax, 4.15, 4.55, 5.55, 2.20, label=None)
+    text(ax, 6.90, 6.90, 'the radix tree: longest cached prefix', color=TEAL_L,
+         size=11.5)
+    box(ax, 4.30, 5.55, 1.85, 0.52, label='system prompt', edge=AMBER, lw=1.7,
+        size=10.5)
+    box(ax, 6.40, 6.15, 1.45, 0.46, label='user A', edge=TEAL, lw=1.3, size=10.5)
+    box(ax, 6.40, 5.55, 1.45, 0.46, label='user B', edge=TEAL, lw=1.3, size=10.5)
+    box(ax, 6.40, 4.95, 1.45, 0.46, label='user C', edge=TEAL, lw=1.3, size=10.5)
+    for y in (6.38, 5.78, 5.18):
+        ax.annotate('', xy=(6.35, y), xytext=(6.20, 5.81),
+                    arrowprops=dict(arrowstyle='->', color=TEAL, lw=1.1, alpha=.85))
+    text(ax, 8.05, 5.81, 'match: walk while\nthe tokens agree\ninsert: split on\n'
+                         'divergence', color=GREY_L, size=10, ha='left', glowing=False)
+
+    # ---- the KV pool
+    text(ax, 0.95, 4.05, 'the KV pool, in token slots', color=GREY_L, size=11,
+         glowing=False)
+    cw = 0.30
+    for i in range(26):
+        col = AMBER if i < 10 else TEAL
+        ax.add_patch(Rectangle((0.30 + i * cw, 3.35), cw * 0.86, 0.46,
+                               facecolor=col, edgecolor=col, lw=1.0, alpha=.85,
+                               zorder=3))
+    text(ax, 1.70, 3.05, 'one copy of the trunk', color=AMBER, size=10.5,
+         glowing=False)
+    text(ax, 6.20, 3.05, 'one branch per conversation', color=TEAL, size=10.5,
+         glowing=False)
+    ax.annotate('', xy=(2.40, 3.90), xytext=(4.80, 4.52),
+                arrowprops=dict(arrowstyle='->', color=AMBER, lw=1.3))
+    text(ax, 2.55, 4.42, 'a tree node owns a run of slots', color=AMBER, size=10,
+         ha='left', glowing=False)
+
+    # ---- HiCache tiers
+    tiers = [('tier 1   GPU pool   (the row above)', AMBER, 2.25),
+             ('tier 2   host DRAM', TEAL, 1.50),
+             ('tier 3   remote store: SSD, other machines', GREY_L, 0.75)]
+    for lab, col, y in tiers:
+        box(ax, 0.30, y, 6.40, 0.52, label=lab, edge=col, lw=1.6, size=10.5)
+    for y0, y1 in ((2.25, 1.50), (1.50, 0.75)):
+        ax.annotate('', xy=(7.05, y1 + 0.52), xytext=(7.05, y0),
+                    arrowprops=dict(arrowstyle='->', color=RED_S, lw=1.4))
+        ax.annotate('', xy=(7.75, y0), xytext=(7.75, y1 + 0.52),
+                    arrowprops=dict(arrowstyle='->', color=TEAL_L, lw=1.4))
+    text(ax, 6.82, 2.05, 'evict', color=RED_S, size=10, ha='right', glowing=False)
+    text(ax, 7.85, 2.05, 'fetch', color=TEAL_L, size=10, ha='left', glowing=False)
+    text(ax, 8.25, 1.50, 'HiCache: the same tree,\nnodes living on\ndifferent tiers',
+         color=GREY_L, size=10, ha='left', glowing=False)
+    text(ax, 5.0, 0.28, 'a cache miss then means "fetch from somewhere slower" '
+                        'rather than "prefill it again"', color=CYAN, size=12)
+    save(fig, 'day57_arch.png')
+
+
 # ---------------------------------------------------------------- figure 0
 def fig0():
     """The algorithm: walk while the tokens agree, then split the edge."""
@@ -231,6 +303,6 @@ def fig4():
     save(fig, 'day57_4.png')
 
 
-for f in (fig0, fig1, fig2, fig3, fig4):
+for f in (fig_arch, fig0, fig1, fig2, fig3, fig4):
     f()
     print(f.__name__, 'ok')

@@ -6,6 +6,14 @@
 
 昨天那份 cache 是一條序列自己的。但在真的伺服器上，多數請求的開頭是一模一樣的：同一段 system prompt、同樣那幾個範例、同一段對話的前幾輪。把這些 key 和 value 為每個請求再算一次，是 LLM 服務裡最大的一塊白工——而 prefill 正是算力受限的那一半，所以「不用做」在這裡是能拿到的最大一筆節省。
 
+在進入細節之前，先用一張圖把整個機制講完：
+
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2057%20-%20radix%20attention/imgs/day57_arch.png?raw=true)
+
+請求進來，tokenizer 把每個請求變成一串 token id，然後拿這串 id 去一棵「已經快取過什麼」的 **radix tree** 裡查：從 root 往下走，只要 token 還對得上就繼續，走到的那一段就不必再 prefill。樹上每個節點擁有 KV pool 裡的一段 slot，所以不管底下掛了幾段對話，**共用的樹幹只存在一份**；而走到一半分岔的請求會讓那條邊被切開，而不是複製一份。
+
+下半部就是 **HiCache**：同一棵樹，但多了「掉下去的地方」——一個節點可以住在 GPU 池、主機 DRAM，或遠端儲存，而淘汰是把它**往下降級**而不是刪掉。這改變了「cache miss」的意思：從「重新 prefill」變成「從慢一點的地方搬回來」。這篇文章接下來就是把這棵樹做出來、量它省了多少，再量那些額外的層值多少。
+
 在這個檔案模擬的聊天工作量裡（20 段對話、每段 4 輪、共 80 個請求，所有人共用一段 200 個 token 的 system prompt 加兩個範例），**所有 prompt token 裡有 84.6% 是在重算已經快取過的東西**：總共 47,466 個 prompt token，真正沒見過的只有 7,320 個。
 
 ![img](https://github.com/KingRei/100DaysPython/blob/master/day%2057%20-%20radix%20attention/imgs/day57_1.png?raw=true)

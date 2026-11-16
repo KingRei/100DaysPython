@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PagedAttention is a memory allocator: block tables, copy-on-write, and what a server does when the KV pool runs out</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>PagedAttention is a memory allocator: block tables, copy-on-write, and what a server does when the KV pool runs out</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2058%20-%20paged%20attention%20memory">day 58 on GitHub</a></p>
+<p><em>100 Days of Python - day 58</em></p>
+<p>The attention part of PagedAttention is small: read K and V through a block table instead of from one flat array per sequence. Everything that makes it worth doing is around that one indirection - handing out fixed-size blocks, refusing work when the pool is full, sharing blocks between samples of the same prompt, and taking blocks back from a request that is already running.</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2058%20-%20paged%20attention%20memory/imgs/day58_arch.png?raw=true">
+<p>Each request owns a block table - a list of block ids, not addresses - and the blocks live in one pool shared by everybody. A block manager hands them out on demand, counts references so two requests can point at the same block, and decides what to do when there are none left. That is an operating system, not an attention variant, which is why this day is mostly about allocation.</p>
+<h2>Why pages at all: free memory in the wrong shape</h2>
+<p>Give the contiguous allocator the kindest possible case: pretend it is told each request&#x27;s exact final length in advance, so it never over-reserves. It still loses.</p>
+<pre><code>240 requests, a 16,384-slot pool  refused  of those, with enough free  occupancy
+--------------------------------  -------  --------------------------  ---------
+one contiguous range per request  12       12                          65.7%
+fixed-size blocks of 16 tokens    5        -                           68.5%</code></pre>
+<p>Every single request the contiguous pool turned away was turned away while the pool had room for it. The space existed, in pieces too small to use: external fragmentation, straight out of the operating systems textbook. Fixed-size blocks delete the problem by construction - any free block is as good as any other, so allocation reduces to &quot;is there enough&quot;.</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2058%20-%20paged%20attention%20memory/imgs/day58_1.png?raw=true">
+<h2>What paging costs instead</h2>
+<p>The unused tail of each request&#x27;s last block, and an entry in a block table for every block:</p>
+<pre><code>tokens per block  wasted slots  block-table entries
+----------------  ------------  -------------------
+1                 0.0%          201,736
+8                 0.4%          25,318
+16                0.9%          12,721
+64                3.5%          3,266
+256               12.5%         901</code></pre>
+<p>One token per block wastes nothing and needs an entry per token; 256 needs 224 times fewer entries and throws away an eighth of the pool. Real servers sit at the small end, and not only because of the waste: the block is also the granularity at which prefixes can be shared, so a bigger block means coarser sharing.</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2058%20-%20paged%20attention%20memory/imgs/day58_2.png?raw=true">
+<h2>Sharing a prompt, and copy-on-write</h2>
+<p>Because a block table is a list of ids, sharing is almost free to implement:</p>
+<pre><code>def share(self, src, dst, tokens):
+    shared = self.table[src][:self.blocks_for(tokens)]
+    for b in shared:
+        self.refs[b] += 1          # a reference count keeps them alive
+    self.table[dst] = list(shared)</code></pre>
+<p>Four samples of a 900-token prompt: 228 blocks the naive way, <strong>60</strong> with sharing - 74% fewer. The only awkward block is the prompt&#x27;s last one, which is partly full: each sample is about to write its own next token into it, so each takes a private copy of that single block. Copying one block instead of the whole prompt is copy-on-write, the same mechanism <code>fork()</code> uses.</p>
+<h2>When the pool runs out</h2>
+<p>Something has to give its blocks back, and there are exactly two currencies. Sixty requests against a 4,096-slot pool:</p>
+<pre><code>policy        preemptions  cost
+------------  -----------  --------------------------------
+recompute     54           3,840 tokens prefilled again
+swap to host  51           5,696 tokens copied out and back</code></pre>
+<p>Both finished all 60 requests. Compute or bandwidth - the same trade as the tiered cache the day before, one level up. The third option, doing nothing, means the pool fills with half-finished requests and everything deadlocks.</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2058%20-%20paged%20attention%20memory/imgs/day58_3.png?raw=true">
+<h2>Two silent failures</h2>
+<p><strong>Blocks that are never freed.</strong> 200 requests with one in ten ending on a path that forgets to release: 617 blocks, 9,872 of 65,536 slots gone, and the pool never recovers. Nothing raises. The server accepts fewer and fewer requests and the bug arrives as &quot;throughput degrades after a few hours&quot;. The test is an invariant checked when the server is idle: free blocks plus blocks in block tables must equal the pool.</p>
+<p><strong>Forgetting how full the last block is.</strong> 70 tokens occupy 5 blocks = 80 slots, so 10 slots hold whatever the previous owner left there. The kernel needs both the block table <em>and</em> the true sequence length, and the mask must use the second. Use the padded length and nothing crashes: the softmax still sums to one, and the model quietly averages in stale KV from a request that finished an hour ago.</p>
+<h2>In vLLM</h2>
+<p>vLLM is where PagedAttention comes from, and its flags map one to one onto the code above:</p>
+<pre><code>vllm serve meta-llama/Llama-3.1-8B \
+    --block-size 16 \                # tokens per block
+    --gpu-memory-utilization 0.90 \  # share of HBM the pool may take
+    --max-num-seqs 256 \             # cap on concurrent sequences
+    --swap-space 4 \                 # GiB of host memory for preemption
+    --enable-prefix-caching          # reuse blocks across requests</code></pre>
+<p>At startup it profiles: it measures what the weights and activations take, multiplies what remains by <code>--gpu-memory-utilization</code>, and divides by the bytes per block to get the number of blocks. <code>--block-size</code> is this file&#x27;s <code>PagedPool.block</code>; the per-request <code>BlockTable</code> is <code>table[rid]</code>; <code>ref_count</code> with copy-on-write is <code>refs[b]</code>.</p>
+<pre><code>llm = LLM(model=..., block_size=16, gpu_memory_utilization=0.9)
+out = llm.generate(prompt, SamplingParams(n=4))   # shares the prompt&#x27;s blocks</code></pre>
+<p><code>SamplingParams(n=4)</code> does not copy the prompt&#x27;s KV four times - the four sequences point at the same blocks with a reference count of 4, and only the partly-full last block is copied on write. <code>--enable-prefix-caching</code> applies the same idea <em>across</em> requests by hashing whole blocks.</p>
+<p>And when the pool runs out, vLLM says so: <code>Sequence group ... is preempted by PreemptionMode.RECOMPUTE</code>. Occasional lines are normal; a steady stream of them means the pool is too small for the concurrency you asked for, and the fix is a bigger <code>--gpu-memory-utilization</code>, a smaller <code>--max-num-seqs</code>, or <code>--swap-space</code> to pay in bandwidth instead.</p>
+<h2>In SGLang</h2>
+<p>The same pieces, under different names and with different defaults:</p>
+<pre><code>python -m sglang.launch_server --model-path meta-llama/Llama-3.1-8B \
+    --mem-fraction-static 0.9 \      # share of HBM for the KV pool
+    --page-size 1 \                  # tokens per page (1 by default)
+    --max-running-requests 256 \     # cap on the decode batch
+    --chunked-prefill-size 8192 \    # split long prefills
+    --max-total-tokens 200000        # or set the pool size directly</code></pre>
+<p>Two differences are worth knowing. SGLang&#x27;s page is <strong>one token</strong> by default - the leftmost column of the waste table above: zero internal fragmentation, at the cost of a very long index. It can afford that because the index is a <code>req_to_token_pool</code> tensor on the GPU rather than a Python list per request, with the slots themselves in <code>token_to_kv_pool</code>. Those two structures are exactly <code>PagedPool.table</code> and <code>PagedPool.free</code> in this file.</p>
+<p>And when it runs out, SGLang <strong>retracts</strong> rather than swapping: the request goes back to the waiting queue, its slots are freed, and it runs again later. The reason is the previous day&#x27;s radix tree - the retracted request&#x27;s prefix is usually still cached, so &quot;recompute&quot; really means recomputing only the part that missed. <code>--chunked-prefill-size</code> is the other defence: slice a long prefill so it cannot take the whole pool at once, or stall the decode batch while it runs.</p>
+<p>The two systems disagree about the defaults and agree completely about the structure: a fixed pool of slots, a table per request, reference counts for sharing, and a policy for running out.</p>
+<h2>Why this matters later</h2>
+<p>Every lever a serving stack gives you is one of the four pieces above: how big a block is, how big the pool is, who may share with whom, and what happens when it is full. Reading a configuration file as &quot;block size, pool size, sharing policy, preemption policy&quot; makes the flags stop being folklore - and tells you which number to move when the symptom is queueing rather than slow tokens.</p>
+<p>Code and the interactive walkthrough are in the repo: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2058%20-%20paged%20attention%20memory">day 58 on GitHub</a>.</p>
+</body>
+</html>

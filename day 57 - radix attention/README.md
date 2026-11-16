@@ -8,6 +8,16 @@ Interactive walkthrough: [demo.html](demo.html) - a single self-contained page
 request, the radix tree and its splits, eviction with leaf-only LRU, the text-vs-token
 trap, what PyTorch and JAX can and cannot do, and how SGLang does it.
 
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2057%20-%20radix%20attention/imgs/day57_arch.png?raw=true)
+
+Requests arrive, the tokeniser turns each into token ids, and those ids are looked up in a
+radix tree of everything already cached: walk down from the root while the tokens agree,
+and whatever matched does not have to be prefilled. Each node owns a run of slots in the KV
+pool, so the shared trunk exists once however many conversations hang off it. The lower
+half is HiCache - the same tree with nodes allowed to live on the GPU, in host DRAM or in a
+remote store, so eviction demotes instead of deleting and a miss means "fetch" rather than
+"prefill again".
+
 ![img](https://github.com/KingRei/100DaysPython/blob/master/day%2057%20-%20radix%20attention/imgs/day57_0.png?raw=true)
 
 Yesterday's cache belonged to one sequence. On a real server most requests begin
