@@ -31,13 +31,14 @@ li     { margin: .3em 0; }
 <p><em>100 Days of Python - day 60</em></p>
 <p>前一天結束在一個我一直想著的數字：greedy decoding——每一步都取機率最高的字元——產生的是文法允許的 1,250 句裡的<strong>第 44 名</strong>。每一步都最佳，結果卻不是。而且 temperature、top-k、top-p 怎麼調都補不起來，因為這根本不是取樣問題。</p>
 <p>今天是對這件事的兩個回答，而且方向完全相反。beam search 改變輸出去找一句更可能的話，代價是更貴；speculative decoding 則是輸出一個位元都不改，只是更快。兩個都拿全列舉來對答案，所以誰都不能只是「聽起來合理」。</p>
-<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding/imgs/day60_0.png?raw=true">
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding/imgs/day60_1.png?raw=true">
 <h2>標準答案</h2>
 <p>文法小到可以全部列出來：1,250 句，每一句的機率都用逐步 log 機率相加精確算出。</p>
 <pre><code>整句最高    &#x27;a small dog sat in the garden.&#x27;    log p = -6.244
 greedy 給   &#x27;the red cat sang in the garden.&#x27;   log p = -6.717，第 44 名
 整句最低    &#x27;a cat slept on the mat.&#x27;           log p = -9.173</code></pre>
 <p>greedy 會走進一個「之後沒有好結尾」的前綴，而且回不了頭。順帶看一下尺度：最好與最差之間差 2.9 個 log 單位（機率約 18 倍），而 greedy 只比最好的低 0.47。所以搜尋能買到的東西本來就有上限，底下都是在這個區間裡爬。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding/imgs/day60_0.png?raw=true">
 <h2>Beam search</h2>
 <p>不要只留一個前綴，留 <code>width</code> 個。每一步把存活的前綴全部展開、全部計分，再整體取分數最高的 <code>width</code> 個。</p>
 <pre><code>width          找到的名次  log p
@@ -130,6 +131,7 @@ order 3  4.41              3.72             chain 1.10 / tree 0.97</code></pre>
 512    71.7 ms    358.4 ms          0.88x</code></pre>
 <p>batch 1 的時候算術單元在空轉等權重，多驗幾個位置完全免費，所以加速就是每輪吐出的 token 數。一旦算術把那次讀取填滿，每個多出來的位置都要花真的時間，而被拒絕的那些就是純浪費——batch 512 時這個設定<strong>比不做 speculation 還慢</strong>。</p>
 <p>所以伺服器會依照當下跑著的 batch size 決定要不要開，而不是全域打開；也因此，在一台閒置機器上量到的接受率，幾乎沒辦法告訴你它在負載下會怎樣。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding/imgs/day60_3.png?raw=true">
 <h2>在 SGLang 裡</h2>
 <pre><code>python -m sglang.launch_server --model ... \
     --speculative-algorithm EAGLE3 \

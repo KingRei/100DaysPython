@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Quantization: storing each weight in fewer bits, and what the rounding costs</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Quantization: storing each weight in fewer bits, and what the rounding costs</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2061%20-%20quantization">day 61 on GitHub</a></p>
+<p><em>100 Days of Python - day 61</em></p>
+<p>A 70B model in bf16 is 140 GB of weights, and the earlier days measured the consequence: every decode step reads all of them, so the time per token is a memory read, not arithmetic. Store each weight in 4 bits instead of 16 and both numbers fall by four - 140 GB becomes 36 GB, a 28 ms read becomes 7 ms.</p>
+<p>Nothing else in this series buys that. The whole question is what the rounding costs, and the answer turns on three decisions: <strong>which numbers share a scale</strong>, <strong>where the outliers go</strong>, and <strong>whether the rounding minimises the error in the weights or in the layer&#x27;s output</strong>. Every method below - int8, FP8, MXFP4, LLM.int8(), SmoothQuant, GPTQ, AWQ, QAT - is one combination of those three.</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2061%20-%20quantization/imgs/day61_0.png?raw=true">
+<p>Everything is measured on one linear layer whose activations are shaped like a real one: 6 of 512 input channels carry values about 100x the median. The metric is always the relative error of the layer&#x27;s <strong>output</strong>, because the weights are not what the next layer sees.</p>
+<h2>What a quantized number is</h2>
+<pre><code>scale = abs(x).max() / 127          # int8: qmax = 127
+q     = round(x / scale)            # this is what gets stored
+x_hat = q * scale                   # this is what the matmul sees</code></pre>
+<pre><code>+0.0310 -&gt; q =  33 -&gt; +0.030661   (error 0.000339)
+-0.0072 -&gt; q =  -8 -&gt; -0.007433   (error 0.000233)
++0.0009 -&gt; q =   1 -&gt; +0.000929   (error 0.000029)
++0.1180 -&gt; q = 127 -&gt; +0.118000   (error 0.000000)</code></pre>
+<p>Every error is at most half a step. The important part is the second line of that definition: <strong>the step is set by the largest value in the group</strong>. The largest value lands exactly on a grid point and pays nothing; everything smaller pays in proportion to how much smaller it is. So the entire subject reduces to one question - which numbers are forced to share a scale with which.</p>
+<h2>Every format on one page</h2>
+<p>Before the methods, the units. A float is three fields packed into one word - a sign bit, an exponent and a mantissa (the fraction) - read as</p>
+<pre><code>value = (-1)^sign * 2^(exponent - bias) * 1.mantissa</code></pre>
+<p>Take 0.15625 stored as an fp32, which you can check yourself with <code>np.float32(0.15625).view(np.uint32)</code>:</p>
+<pre><code>sign      0                        -&gt; +1
+exponent  01111100                 -&gt; stored 124, minus bias 127 = -3
+mantissa  01000000000000000000000  -&gt; 1.01... = 1.25
+value     1.25 x 2^-3 = 0.15625</code></pre>
+<p>Two conventions are doing a lot of work there. The exponent is stored <strong>biased</strong> - as an unsigned number with <code>bias = 2^(e-1) - 1</code> subtracted on reading - so that comparing two floats as if they were integers still gives the right order. And the leading <code>1.</code> before the point is <strong>not stored at all</strong>; it is implied, which is one free bit of precision. Numbers too small for that (below <code>2^emin</code>) are stored as <em>subnormals</em> with a leading <code>0.</code> instead, which is how a float degrades gradually towards zero instead of snapping to it.</p>
+<p>So a format is three numbers: how many exponent bits (range), how many mantissa bits (precision), and what the all-ones exponent is spent on.</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2061%20-%20quantization/imgs/day61_formats.png?raw=true">
+<pre><code>format      bits  S / E / M   bias  largest    smallest normal  relative step  decimal digits  used for
+----------  ----  ----------  ----  ---------  ---------------  -------------  --------------  -----------------------------------------------
+fp32        32    1 / 8 / 23  127   3.403e+38  1.18e-38         1.19e-07       6.9             the default everywhere
+tf32        19    1 / 8 / 10  127   3.401e+38  1.18e-38         0.000977       3.0             NVIDIA tensor cores: fp32 range, fp16 precision
+bf16        16    1 / 8 / 7   127   3.39e+38   1.18e-38         0.00781        2.1             training: fp32 range, half the bytes
+fp16        16    1 / 5 / 10  15    6.55e+04   6.1e-05          0.000977       3.0             older training, needs loss scaling
+fp8 e4m3fn  8     1 / 4 / 3   7     448        0.0156           0.125          0.9             FP8 forward pass: weights and activations
+fp8 e5m2    8     1 / 5 / 2   15    5.734e+04  6.1e-05          0.25           0.6             FP8 gradients: more range, less precision
+fp6 e3m2    6     1 / 3 / 2   3     28         0.25             0.25           0.6             MX block element, more range
+fp6 e2m3    6     1 / 2 / 3   1     7.5        1                0.125          0.9             MX block element, more precision
+fp4 e2m1    4     1 / 2 / 1   1     6          1                0.5            0.3             MXFP4 / NVFP4 element
+int8        8     1 / - / 7   -     127        1                0.00787        2.1             a uniform grid: the scale carries the magnitude
+int4        4     1 / - / 3   -     7          1                0.143          0.8             a uniform grid: the scale carries the magnitude</code></pre>
+<p>How to read that table. <strong>Exponent bits buy range</strong>: bf16 and fp32 have the same 8, which is why casting fp32 to bf16 never overflows. <strong>Mantissa bits buy precision</strong>: the relative step is <code>2^-m</code>, so fp32 resolves about 7 decimal digits and bf16 about 2. fp16 makes the opposite trade from bf16 at the same 16 bits - more precision, a tenth of the exponent range - which is exactly why fp16 training needs loss scaling and bf16 training does not.</p>
+<p>Two notes on the names. <code>e4m3</code> is literally the field widths, so any format can be read off its name. And the <code>fn</code> in <code>float8_e4m3fn</code> means <strong>finite</strong>: it gives up infinities so the all-ones exponent can hold numbers instead, which buys one more binade - a maximum of 448 rather than 240.</p>
+<p>The integers at the bottom have no exponent at all. All the magnitude information lives in the scale stored next to them, which is why everything else in this article is about choosing that scale.</p>
+<p>The MX (&quot;micro-scaling&quot;) formats sit in between: an element format plus one shared exponent per block of 32 values, which is where the fractional bit counts come from.</p>
+<pre><code>MX format   element  block  scale  bits per value  element max
+----------  -------  -----  -----  --------------  -----------
+MXFP8 e4m3  8 bits   32     E8M0   8.25            448
+MXFP6 e3m2  6 bits   32     E8M0   6.25            28
+MXFP4 e2m1  4 bits   32     E8M0   4.25            6</code></pre>
+<p>The block scale is <code>E8M0</code> - 8 exponent bits and no mantissa, so it is a power of two and applying it is an exponent add rather than a multiply. NVFP4 is the same idea with a block of 16 and an e4m3 scale.</p>
+<h2>Who shares a scale</h2>
+<p>Same weights, same arithmetic, different grouping:</p>
+<pre><code>scheme                      bits/weight  relative error
+--------------------------  -----------  --------------
+int8, one scale per tensor  8.00         0.03103
+int8, one scale per row     8.00         0.01444
+fp8 e4m3                    8.00         0.02658
+fp8 e5m2                    8.00         0.05281
+int4, one scale per row     4.00         0.26197
+int4, one scale per 128     4.12         0.17584
+MXFP4, block of 32          4.25         0.12301</code></pre>
+<p>A scale per row costs one extra float per 512 weights - 0.03 bits - and halves the error. And read the last row against the first: <strong>4 bits with a shared exponent per 32 values beats 8 bits with one scale for the whole tensor</strong>, at half the memory. Note also that a 4-bit format is never 4.00 bits: int4 with a group of 128 is really 4.12, MXFP4 is 4.25. The scales are part of the model.</p>
+<h2>Integers against floats at the same width</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2061%20-%20quantization/imgs/day61_1.png?raw=true">
+<p>int8 gives 254 evenly spaced levels and a largest-to-smallest ratio of 127. The spacing is constant, so the <strong>absolute</strong> error is constant: fine for values near the maximum, ruinous for anything a hundred times smaller.</p>
+<p>FP8 spends bits on an exponent instead. e4m3 has 3 mantissa bits and covers a ratio of 2.3e5; e5m2 has 2 mantissa bits and covers 3.8e9. The spacing grows with the magnitude, so the <strong>relative</strong> error is roughly constant everywhere. That difference is why the two formats have different jobs: e4m3 is the forward-pass format, where you want precision over a moderate range, and e5m2 is for gradients, which span a far wider range and care less about precision. Mixed FP8 training uses both, and that is the actual reason there are two of them.</p>
+<p>MXFP4 takes the idea one step further. Each element is 4 bits - sign, 2 exponent bits, 1 mantissa bit, so eight magnitudes <code>{0, .5, 1, 1.5, 2, 3, 4, 6}</code> - and every block of 32 shares one 8-bit power-of-two exponent. 4.25 bits per weight, and on these weights it is more accurate than int8 with a single scale. Block floating point is not new; what is new is hardware that multiplies it natively.</p>
+<h2>The outliers are in the activations, not the weights</h2>
+<p>Quantize one side at a time and the damage has an obvious address:</p>
+<pre><code>what is quantized             output error
+----------------------------  ------------
+weights only, per row         0.01462
+activations only, per tensor  0.06897
+activations only, per token   0.03394
+both                          0.03703</code></pre>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2061%20-%20quantization/imgs/day61_2.png?raw=true">
+<p>The weights are nearly Gaussian and a per-row scale fits them comfortably. The activations are not: a handful of channels carry values two orders of magnitude above the median, they set the scale for the whole tensor, and everything else is left rounding to a few levels. This is the entire reason weight-only quantization is the default deployment, and why quantizing activations needs a trick.</p>
+<p>There are three tricks, and they are the same idea seen from three angles.</p>
+<p><strong>Keep them.</strong> LLM.int8() splits the matmul: the 1.2% of columns holding outliers stay in 16-bit, the rest go to int8. Output error 0.03703 → 0.00686. The cost is two matmuls with an irregular shape, which is why it is slower than the bit count suggests.</p>
+<p><strong>Move them.</strong> <code>X W^T = (X / s) (W s)^T</code> holds for any per-channel <code>s</code>, so difficulty can be shifted from the activations to the weights. SmoothQuant picks <code>s = max|X_j|^α / max|W_j|^(1-α)</code>:</p>
+<pre><code>alpha   activation range   output error
+ 0.00               43.9        0.05468
+ 0.25               17.1        0.02243
+ 0.50                6.6        0.01348
+ 0.75                2.6        0.01925
+ 1.00                1.0        0.04043</code></pre>
+<p>α=0 moves nothing, α=1 moves everything and breaks the weights instead, and the useful values are in the middle. The scales fold into the previous layer norm, so this costs nothing at run time - which is why it is the standard way to make activation quantization work at all.</p>
+<p><strong>Give them their own scale.</strong> That is what per-token and group-wise scales already do, and why hardware is moving towards block formats.</p>
+<h2>Rounding to nearest is not the best rounding</h2>
+<p>At 4 bits with a scale per 128 weights:</p>
+<pre><code>method            weight error  output error
+----------------  ------------  ------------
+round to nearest  0.17584       0.17612
+GPTQ              0.31186       0.13051
+AWQ (alpha 0.37)  -             0.10059</code></pre>
+<p>Look at the two columns moving in opposite directions. GPTQ ends up with weights that are <em>twice as wrong</em> as round-to-nearest, and a layer output that is 26% better. That is not a bug in the measurement, it is the entire premise: nobody cares about the weights.</p>
+<pre><code>H = X.T @ X / n                         # what the real inputs actually excite
+Hinv = inv(H + damp)
+for j in range(d):
+    q = round(W[:, j] / scale) * scale  # round one column
+    err = (W[:, j] - q) / Hinv[j, j]
+    W[:, j+1:] -= outer(err, Hinv[j, j+1:])   # push the error into what remains</code></pre>
+<p>Each column is rounded, and the error it just made is pushed into the columns that have not been rounded yet, in the direction the inverse Hessian says will cancel it in the output. This is the Optimal Brain Surgeon update from the pruning literature, specialised to one layer and one pass.</p>
+<p>AWQ reaches a similar place from the other side. It does not change the rounding at all; it scales up the columns the activations actually use (dividing the activations by the same factor) so that the same rounding is proportionally smaller where it matters. The exponent is searched, not derived - here it lands at 0.37.</p>
+<p>Both need calibration data: a handful of real sequences, run once, offline. That is the practical dividing line in this whole article. Everything before this section is arithmetic you can apply to a checkpoint with no data at all; everything from here on wants to see what the model is actually used for.</p>
+<h2>Training through the rounding</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2061%20-%20quantization/imgs/day61_3.png?raw=true">
+<p>The last option is to stop treating rounding as something done to a finished model. <code>round()</code> has zero gradient almost everywhere, so the backward pass simply pretends it is the identity - the straight-through estimator. The weights stay in float, the forward pass sees the rounded values, and the optimiser lands on weights that are good <em>after</em> rounding, which is a different objective from &quot;the best float weights, rounded&quot;.</p>
+<pre><code>wq = fake_quant(w, bits)              # forward: rounded
+g  = X.T @ (X @ wq - y) * 2 / n       # backward: straight through
+w -= lr * g                           # the float weights keep moving</code></pre>
+<p>At 3 bits that is worth 2.6x: a loss of 2.180 for train-then-round against 0.837 for training through the rounding.</p>
+<p>And then the measurement I did not expect to be so clean. Repeat the whole experiment with nearly orthogonal inputs instead of overlapping ones, and the gain collapses to 1.11x. With orthogonal inputs each weight stands alone, so the best quantized weights really are the quantized best weights and there is nothing to learn. <strong>The entire benefit comes from one weight being able to absorb another one&#x27;s rounding error</strong> - which is precisely the property GPTQ computes in closed form through <code>H = XᵀX</code>. Training discovers it by gradient descent; GPTQ derives it. Neither does anything on inputs that do not overlap.</p>
+<p>One honest footnote. The QAT loss does not fall monotonically: over the last 300 steps it swings with a standard deviation of 1.17, and the final iterate scores 1.226 against a best of 0.837. The forward pass is a step function, so a weight crossing a rounding boundary moves the output discontinuously. QAT runs therefore keep a checkpoint chosen by validation loss rather than the last step - not cheating, just the only sane thing to do with a non-smooth objective.</p>
+<h2>In PyTorch</h2>
+<p>Three layers of the stack, easy to confuse with each other.</p>
+<p><strong>Dtypes.</strong> <code>torch.float8_e4m3fn</code> and <code>torch.float8_e5m2</code> are real tensor dtypes, and <code>torch._scaled_mm(a, b, scale_a, scale_b, out_dtype=torch.bfloat16)</code> is the matmul that takes FP8 inputs plus scales. Note what is <em>not</em> in there: the scale is yours to compute, and computing it is the first half of this article.</p>
+<p><strong>Post-training.</strong> <code>torchao</code> is the current home:</p>
+<pre><code>from torchao.quantization import quantize_, Int4WeightOnlyConfig
+quantize_(model, Int4WeightOnlyConfig(group_size=128))</code></pre>
+<p>That one line is a row from the table above - 4 bits, a scale per 128 weights. It swaps each Linear&#x27;s weight for a quantized tensor subclass, so the model structure never changes. GPTQ and AWQ live here too, and both want calibration batches.</p>
+<p><strong>Training.</strong> The straight-through estimator is one autograd Function:</p>
+<pre><code>class RoundSTE(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x): return torch.round(x)
+    @staticmethod
+    def backward(ctx, g): return g        # straight through</code></pre>
+<p><code>torchao.quantization.qat</code> wraps this, and <code>torchao.float8</code> does the real thing: FP8 matmuls in the forward <em>and</em> backward passes with per-tensor or per-row scales, which is how FP8 pretraining runs work.</p>
+<h2>In JAX</h2>
+<p>Same arithmetic, different shape, because JAX puts the numerics in the function rather than in the module.</p>
+<p><strong>Dtypes.</strong> <code>jnp.float8_e4m3fn</code> and <code>jnp.float8_e5m2</code> exist, and <code>jax.lax.dot_general(..., preferred_element_type=jnp.bfloat16)</code> is how you say &quot;multiply in 8 bits, accumulate in 16&quot;. The accumulation type matters as much as the input type: summing thousands of int8 products in int8 would overflow immediately.</p>
+<p><strong>The straight-through estimator</strong> needs no autograd class at all:</p>
+<pre><code>def ste_round(x):
+    return x + jax.lax.stop_gradient(jnp.round(x) - x)</code></pre>
+<p>The forward value is exactly <code>round(x)</code>; the gradient flows only through the leading <code>x</code>, which is the same as pretending <code>round</code> has derivative 1. It is the identity plus a detached correction, and recognising that line is how you spot QAT in a JAX codebase.</p>
+<p><strong>Libraries.</strong> AQT (<code>google/aqt</code>) is the quantized-training library: wrap a <code>dot_general</code> and it handles the scales, the calibration and the backward pass, so one function trains in int8 and serves in int8. Qwix is the newer one, covering post-training quantization, QAT and LoRA flows without rewriting the model.</p>
+<p>The difference worth carrying between the two ecosystems is small but real: <strong>PyTorch quantizes modules, JAX quantizes operations.</strong> Everything underneath - the scales, the grouping, the straight-through gradient - is the same arithmetic in both.</p>
+<h2>Where this comes back</h2>
+<p>Low-precision training is the same decisions applied to gradients and optimiser states instead of weights, with the extra problem that a gradient can underflow to zero and silently stop learning - which is what loss scaling exists to prevent. And the error-compensation idea from GPTQ is older than quantization: it is the Optimal Brain Surgeon update, which was invented for pruning, and it will turn up again anywhere a model has to be changed with the least damage to its outputs.</p>
+<p>Code, notebook and an interactive walkthrough: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2061%20-%20quantization">day 61 on GitHub</a>.</p>
+</body>
+</html>

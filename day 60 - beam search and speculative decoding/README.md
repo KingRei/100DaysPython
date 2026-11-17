@@ -9,7 +9,7 @@ the best token and the best sentence, a beam keeping several prefixes alive, the
 things beams get wrong, one round of draft-and-verify, the proof that the output
 distribution does not move, and the two knobs that control the speedup.
 
-![img](https://github.com/KingRei/100DaysPython/blob/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding/imgs/day60_0.png?raw=true)
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding/imgs/day60_1.png?raw=true)
 
 The previous day ended on a measurement: greedy decoding produces the **44th** most
 likely sentence out of the 1,250 this grammar admits. Picking the best character at
@@ -21,6 +21,8 @@ the output distribution untouched and spend a cheap model's guesses to produce i
 fewer calls to the expensive one. Both are checked here against an enumeration of
 every legal sentence, so "did the search find the best sentence" and "did the speedup
 change the answers" have real answers.
+
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding/imgs/day60_0.png?raw=true)
 
 ## Beam search
 
@@ -148,6 +150,8 @@ EAGLE3`, the tree above as `--speculative-eagle-topk` plus `--speculative-num-st
 and `--speculative-num-draft-tokens`, `NEXTN` for models with their own MTP head) and
 for vLLM (beam search moved out of `SamplingParams` into `LLM.beam_search()`,
 `--speculative-config`, and the `ngram` method that needs no draft model at all).
+
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding/imgs/day60_3.png?raw=true)
 
 ## Complexity
 

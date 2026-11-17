@@ -31,13 +31,14 @@ li     { margin: .3em 0; }
 <p><em>100 Days of Python - day 60</em></p>
 <p>The previous day ended on a number I have not stopped thinking about. Greedy decoding - take the highest-probability character at every step - produces the 44th most likely sentence out of the 1,250 the grammar admits. Every step is optimal and the result is not. No temperature, top-k or top-p setting fixes that, because it is not a sampling problem.</p>
 <p>Today is two answers to it, pulling in opposite directions. Beam search changes the output to find a more probable sentence, and costs more. Speculative decoding changes nothing at all about the output and costs less. Both get checked against the enumeration, so neither gets to be plausible instead of correct.</p>
-<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding/imgs/day60_0.png?raw=true">
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding/imgs/day60_1.png?raw=true">
 <h2>The ground truth</h2>
 <p>The grammar is small enough to enumerate: 1,250 sentences, each scored exactly by summing its per-step log probabilities.</p>
 <pre><code>most likely    &#x27;a small dog sat in the garden.&#x27;    log p = -6.244
 greedy gives   &#x27;the red cat sang in the garden.&#x27;   log p = -6.717,  rank 44
 least likely   &#x27;a cat slept on the mat.&#x27;           log p = -9.173</code></pre>
 <p>Greedy walks into a prefix from which no very good ending exists and cannot go back. Worth noticing the scale too: best to worst spans 2.9 log units, about 18x in probability, and greedy sits 0.47 below the top. There is a ceiling on what search can buy here, and everything below is climbing inside it.</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding/imgs/day60_0.png?raw=true">
 <h2>Beam search</h2>
 <p>Instead of keeping one prefix alive, keep <code>width</code> of them. At every step expand all of them, score all the candidates, keep the best <code>width</code> again.</p>
 <pre><code>width       rank found  log p
@@ -130,6 +131,7 @@ order 3  4.41                3.72               chain 1.10 / tree 0.97</code></p
 512    71.7 ms     358.4 ms          0.88x</code></pre>
 <p>At batch 1 the arithmetic units are idle waiting for weights, so the extra positions are free and the speedup is the full tokens-per-round. Past the point where arithmetic fills the read, every extra position costs real time and every rejected one is pure waste - at batch 512 this configuration is <em>slower than not speculating at all</em>.</p>
 <p>This is why servers gate speculation on the running batch size rather than enabling it globally, and why an acceptance rate measured on an idle machine tells you almost nothing about what it will do under load.</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding/imgs/day60_3.png?raw=true">
 <h2>In SGLang</h2>
 <pre><code>python -m sglang.launch_server --model ... \
     --speculative-algorithm EAGLE3 \

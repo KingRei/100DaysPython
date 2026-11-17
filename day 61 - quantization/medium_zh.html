@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 61 — 量化：把每個權重存成更少的位元，以及四捨五入的代價</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 61 — 量化：把每個權重存成更少的位元，以及四捨五入的代價</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2061%20-%20quantization">day 61 on GitHub</a></p>
+<p><em>100 Days of Python - day 61</em></p>
+<p>bf16 的 70B 模型是 140 GB 的權重，而前面幾天量過結論：<strong>每個 decode step 都要把它整份讀一遍</strong>，所以每個 token 的時間是一次記憶體讀取，不是算術。把每個權重從 16 bit 改成 4 bit，兩個數字一起砍四倍——140 GB 變 36 GB，28 ms 的讀取變 7 ms。</p>
+<p>這個系列裡沒有別的東西買得到這個。剩下的問題只有「四捨五入要付多少」，而答案取決於三個決定：<strong>哪些數字共用一個 scale</strong>、<strong>離群值放哪裡</strong>、<strong>四捨五入是要讓權重誤差最小還是讓這一層的輸出誤差最小</strong>。底下每一個方法——int8、FP8、MXFP4、LLM.int8()、SmoothQuant、GPTQ、AWQ、QAT——都只是這三個決定的某一種組合。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2061%20-%20quantization/imgs/day61_0.png?raw=true">
+<p>所有數字都量在同一層 linear 上，而它的活化長得像真的一層：512 個輸入 channel 裡有 6 個，值大約是中位數的 100 倍。指標一律是這一層<strong>輸出</strong>的相對誤差，因為下一層看到的不是權重。</p>
+<h2>一個量化過的數字是什麼</h2>
+<pre><code>scale = abs(x).max() / 127          # int8：qmax = 127
+q     = round(x / scale)            # 真正存進記憶體的是這個
+x_hat = q * scale                   # 矩陣乘法看到的是這個</code></pre>
+<pre><code>+0.0310 -&gt; q =  33 -&gt; +0.030661   (誤差 0.000339)
+-0.0072 -&gt; q =  -8 -&gt; -0.007433   (誤差 0.000233)
++0.0009 -&gt; q =   1 -&gt; +0.000929   (誤差 0.000029)
++0.1180 -&gt; q = 127 -&gt; +0.118000   (誤差 0.000000)</code></pre>
+<p>每個誤差最多半格。真正重要的是定義裡的第二行：<strong>步長是被 group 裡最大的那個數決定的</strong>。最大的那個剛好落在格點上、一毛都不用付；比它小的數字，小多少就付多少。所以整個主題只剩一個問題——哪些數字被迫共用一個 scale。</p>
+<h2>所有單位一次看完</h2>
+<p>在講方法之前，先把單位講清楚。一個浮點數是三個欄位塞在同一個字裡——符號位、指數、尾數（小數部分）——讀法是</p>
+<pre><code>value = (-1)^sign * 2^(指數 - bias) * 1.尾數</code></pre>
+<p>拿 0.15625 存成 fp32 來看（你可以自己用 <code>np.float32(0.15625).view(np.uint32)</code> 驗）：</p>
+<pre><code>sign      0                        -&gt; +1
+exponent  01111100                 -&gt; stored 124, minus bias 127 = -3
+mantissa  01000000000000000000000  -&gt; 1.01... = 1.25
+value     1.25 x 2^-3 = 0.15625</code></pre>
+<p>這裡有兩個慣例在做很多事。指數存的是<strong>加了 bias 的無號數</strong>（讀的時候減掉 <code>bias = 2^(e-1) - 1</code>），這樣把兩個浮點數當成整數去比大小，順序還是對的。而小數點前面那個 <code>1.</code> <strong>根本不存</strong>，是隱含的，等於白賺一位精度。小到連這個都撐不住的數（小於 <code>2^emin</code>）會改存成 <em>subnormal</em>，前面變成 <code>0.</code>——這就是浮點數「逐漸退化到零」而不是「直接變零」的機制。</p>
+<p>所以一個格式就是三個數字：指數幾位（範圍）、尾數幾位（精度），以及「全 1 的指數」拿去做什麼。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2061%20-%20quantization/imgs/day61_formats.png?raw=true">
+<pre><code>格式        位元  S / E / M   bias  最大值     最小正規值  相對步長  十進位有效位  用在哪
+----------  ----  ----------  ----  ---------  ----------  --------  ------------  --------------------------------------------
+fp32        32    1 / 8 / 23  127   3.403e+38  1.18e-38    1.19e-07  6.9           到處都是的預設
+tf32        19    1 / 8 / 10  127   3.401e+38  1.18e-38    0.000977  3.0           NVIDIA tensor core：fp32 的範圍、fp16 的精度
+bf16        16    1 / 8 / 7   127   3.39e+38   1.18e-38    0.00781   2.1           訓練：fp32 的範圍，一半的位元組
+fp16        16    1 / 5 / 10  15    6.55e+04   6.1e-05     0.000977  3.0           較早的訓練格式，需要 loss scaling
+fp8 e4m3fn  8     1 / 4 / 3   7     448        0.0156      0.125     0.9           FP8 前向：權重與活化
+fp8 e5m2    8     1 / 5 / 2   15    5.734e+04  6.1e-05     0.25      0.6           FP8 梯度：範圍大、精度低
+fp6 e3m2    6     1 / 3 / 2   3     28         0.25        0.25      0.6           MX block 元素，偏範圍
+fp6 e2m3    6     1 / 2 / 3   1     7.5        1           0.125     0.9           MX block 元素，偏精度
+fp4 e2m1    4     1 / 2 / 1   1     6          1           0.5       0.3           MXFP4 / NVFP4 的元素格式
+int8        8     1 / - / 7   -     127        1           0.00787   2.1           等距格點：大小全靠外面的 scale
+int4        4     1 / - / 3   -     7          1           0.143     0.8           等距格點：大小全靠外面的 scale</code></pre>
+<p>怎麼讀這張表。<strong>指數位數買的是範圍</strong>：bf16 跟 fp32 同樣是 8 位，所以 fp32 的任何值轉成 bf16 都不會溢位。<strong>尾數位數買的是精度</strong>：相對步長是 <code>2^-m</code>，所以 fp32 大約 7 位十進位有效數字、bf16 大約 2 位。fp16 在同樣 16 位下做了相反的取捨——精度多、指數範圍只有十分之一——這正是 fp16 訓練需要 loss scaling 而 bf16 不用的原因。</p>
+<p>名字也值得講兩句。<code>e4m3</code> 就是欄位寬度本身，所以任何格式都可以直接從名字讀出來。而 <code>float8_e4m3fn</code> 的 <code>fn</code> 是 <strong>finite</strong>：它放棄無限大，把「全 1 的指數」拿來存數字，因此多賺到一個指數級距——最大值是 448 而不是 240。</p>
+<p>表格最下面那兩個整數格式根本沒有指數。所有「有多大」的資訊都住在旁邊存的 scale 裡，而本文其餘的部分，講的全都是怎麼挑那個 scale。</p>
+<p>MX（micro-scaling）系列介於兩者之間：一個元素格式，加上每 32 個值共用一個指數——這也是那些「小數位元數」的由來。</p>
+<pre><code>MX 格式     元素    block  scale  每個值幾位元  元素最大值
+----------  ------  -----  -----  ------------  ----------
+MXFP8 e4m3  8 bits  32     E8M0   8.25          448
+MXFP6 e3m2  6 bits  32     E8M0   6.25          28
+MXFP4 e2m1  4 bits  32     E8M0   4.25          6</code></pre>
+<p>block 的 scale 是 <code>E8M0</code>：8 位指數、沒有尾數，所以它是 2 的冪次，套用 scale 是加指數而不是乘法。NVFP4 是同一個念頭，但 block 是 16、scale 用 e4m3。</p>
+<h2>誰跟誰共用 scale</h2>
+<p>同一組權重、同樣的算術，只改分組：</p>
+<pre><code>方案                          bits/權重  相對誤差
+----------------------------  ---------  --------
+int8，整個 tensor 一個 scale  8.00       0.03103
+int8，每列一個 scale          8.00       0.01444
+fp8 e4m3                      8.00       0.02658
+fp8 e5m2                      8.00       0.05281
+int4，每列一個 scale          4.00       0.26197
+int4，每 128 個一個 scale     4.12       0.17584
+MXFP4，每 32 個一個 block     4.25       0.12301</code></pre>
+<p>每列一個 scale 的成本是每 512 個權重多一個 float（0.03 bit），誤差直接少一半。而把最後一列跟第一列對著看：<strong>4 bit、每 32 個共用一個指數，贏過 8 bit、整個 tensor 一個 scale</strong>，而且只用一半的記憶體。另外注意：4 bit 的格式從來不是 4.00 bit——int4 group 128 實際是 4.12，MXFP4 是 4.25。scale 也是模型的一部分。</p>
+<h2>同樣 8 bit，整數與浮點</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2061%20-%20quantization/imgs/day61_1.png?raw=true">
+<p>int8 是 254 個等距格點，最大與最小的比值是 127。間距固定，所以<strong>絕對</strong>誤差到處一樣：對接近最大值的數很好，對小一百倍的數是災難。</p>
+<p>FP8 把位元花在指數上。e4m3 有 3 bit 尾數、動態範圍 2.3e5；e5m2 有 2 bit 尾數、範圍 3.8e9。間距隨數值大小變化，所以<strong>相對</strong>誤差到處差不多。這個差別決定了兩種格式的分工：e4m3 是前向傳遞用的——範圍不必很大但要精度；e5m2 是給梯度用的——梯度的數量級跨度大得多，但對精度要求低。混合 FP8 訓練兩種都用，而這就是為什麼會有兩種的真正原因。</p>
+<p>MXFP4 再往前一步：每個元素 4 bit（1 位符號、2 位指數、1 位尾數，也就是 <code>{0, .5, 1, 1.5, 2, 3, 4, 6}</code> 這八種大小），每 32 個共用一個 8 bit 的 2 的冪次指數。平均 4.25 bit，而在這組權重上它比「整個 tensor 一個 scale 的 int8」還準。block floating point 不是新東西，新的是硬體開始原生支援它。</p>
+<h2>難的是活化，不是權重</h2>
+<p>一次只量化一邊，就知道傷害從哪來：</p>
+<pre><code>量化哪一邊                        輸出誤差
+--------------------------------  --------
+只有權重，每列一個 scale          0.01462
+只有活化，整個 tensor 一個 scale  0.06897
+只有活化，每個 token 一個 scale   0.03394
+兩邊都量化                        0.03703</code></pre>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2061%20-%20quantization/imgs/day61_2.png?raw=true">
+<p>權重接近高斯分佈，一列一個 scale 綽綽有餘。活化不是：少數幾個 channel 的值比中位數高兩個數量級，它們把整個 tensor 的 scale 撐大，其他所有數字就只剩幾個格點可用。<strong>這就是為什麼實務上的部署預設是 weight-only 量化</strong>，也是為什麼量化活化需要額外的手段。</p>
+<p>手段有三種，而且其實是同一個念頭的三個角度。</p>
+<p><strong>留著它們。</strong> LLM.int8() 把矩陣乘法拆開：含離群值的那 1.2% 的 column 留在 16-bit，其餘走 int8。輸出誤差 0.03703 → 0.00686。代價是兩個矩陣乘法、而且形狀不規則，所以實際速度沒有位元數看起來那麼好。</p>
+<p><strong>搬走它們。</strong> <code>X W^T = (X / s) (W s)^T</code> 對任何 per-channel 的 <code>s</code> 都成立，所以可以把困難從活化那邊搬到權重那邊。SmoothQuant 取 <code>s = max|X_j|^α / max|W_j|^(1-α)</code>：</p>
+<pre><code>alpha   活化動態範圍   輸出誤差
+ 0.00         43.9      0.05468
+ 0.25         17.1      0.02243
+ 0.50          6.6      0.01348
+ 0.75          2.6      0.01925
+ 1.00          1.0      0.04043</code></pre>
+<p>α=0 什麼都不搬，α=1 全搬過去、換成權重壞掉，有用的值都在中間。而且 s 可以折進前一層的 layer norm，所以執行時完全免費——這也是它成為「讓活化量化真的可行」的標準做法的原因。</p>
+<p><strong>給它們自己的 scale。</strong> 這就是 per-token 與 group-wise scale 在做的事，也是硬體往 block 格式走的原因。</p>
+<h2>「取最近的格點」不是最好的四捨五入</h2>
+<p>4 bit、每 128 個權重一個 scale：</p>
+<pre><code>方法               權重誤差  輸出誤差
+-----------------  --------  --------
+round to nearest   0.17584   0.17612
+GPTQ               0.31186   0.13051
+AWQ（alpha 0.37）  -         0.10059</code></pre>
+<p>看這兩欄的方向是相反的。GPTQ 的權重<strong>錯得比 RTN 多一倍</strong>，而這一層的輸出好了 26%。這不是量錯了，這正是它的前提：<strong>沒有人在乎權重</strong>。</p>
+<pre><code>H = X.T @ X / n                         # 真實輸入實際會激發哪些方向
+Hinv = inv(H + damp)
+for j in range(d):
+    q = round(W[:, j] / scale) * scale  # 處理一個 column
+    err = (W[:, j] - q) / Hinv[j, j]
+    W[:, j+1:] -= outer(err, Hinv[j, j+1:])   # 把誤差推到還沒處理的 column</code></pre>
+<p>每個 column 四捨五入之後，剛犯下的誤差會被推到還沒處理的 column 上，推的方向由 Hessian 的反矩陣決定——也就是「怎麼推才會在輸出上互相抵消」。這其實是剪枝文獻裡的 Optimal Brain Surgeon 更新式，特化到單一層、單趟。</p>
+<p>AWQ 從另一邊走到類似的地方。它完全不改四捨五入，而是把「活化真的會用到」的 column 先乘大（活化那邊同時除回來），於是同樣的四捨五入對重要的地方相對變小。那個指數是搜出來的、不是推導出來的——這裡搜到 0.37。</p>
+<p>兩者都需要校準資料：幾條真實序列，離線跑一次。這也是本文實務上的分水嶺：這一節之前的東西都是純算術，拿到 checkpoint 就能做；從這裡開始的方法都想先看看這個模型實際上被拿來做什麼。</p>
+<h2>訓練時就帶著四捨五入</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2061%20-%20quantization/imgs/day61_3.png?raw=true">
+<p>最後一條路是不要再把量化當成「對一個已經訓練完的模型做的事」。<code>round()</code> 幾乎處處梯度為零，所以反向傳遞直接假裝它是恆等函數——straight-through estimator。權重仍然以浮點存在，前向看到的是四捨五入後的值，於是最佳化器會找到「<strong>四捨五入之後</strong>才好」的權重，而這跟「最好的浮點權重再四捨五入」是不同的目標。</p>
+<pre><code>wq = fake_quant(w, bits)              # 前向：四捨五入後的
+g  = X.T @ (X @ wq - y) * 2 / n       # 反向：直接穿過去
+w -= lr * g                           # 浮點權重繼續移動</code></pre>
+<p>3 bit 下這值 2.6 倍：先訓練再量化是 2.180，訓練時帶著量化是 0.837。</p>
+<p>然後是我沒預期會這麼乾淨的一個量測。把輸入換成幾乎正交的，再把整個實驗跑一次，好處掉到只剩 1.11 倍。因為輸入正交時每個權重各自獨立，「最好的量化權重」就真的等於「最好的權重再量化」，沒有東西可以學。<strong>好處完全來自「一個權重可以吸收另一個權重的四捨五入誤差」</strong>——而那正是 GPTQ 用 <code>H = XᵀX</code> 閉式算出來的同一個性質。訓練是用梯度下降把它找出來，GPTQ 是把它推導出來；輸入不重疊的時候，兩個都沒有用武之地。</p>
+<p>還有一個該誠實講的註腳：QAT 的 loss 不是單調下降的。最後 300 步的標準差是 1.17，最後一步是 1.226，而最好的那一步是 0.837。前向是一個階梯函數，權重一跨過格點邊界，輸出就跳一下。所以 QAT 都是用驗證集挑 checkpoint，而不是直接拿最後一步——那不是作弊，面對不平滑的目標函數那是唯一合理的做法。</p>
+<h2>在 PyTorch 裡</h2>
+<p>三層很容易混在一起的東西。</p>
+<p><strong>Dtype。</strong> <code>torch.float8_e4m3fn</code> 與 <code>torch.float8_e5m2</code> 是真的 tensor dtype，而 <code>torch._scaled_mm(a, b, scale_a, scale_b, out_dtype=torch.bfloat16)</code> 是吃 FP8 輸入加 scale 的矩陣乘法。注意裡面<strong>沒有</strong>的東西：scale 要自己算，而「怎麼算」就是本文前半在講的事。</p>
+<p><strong>訓練後量化。</strong> 現在的家是 <code>torchao</code>：</p>
+<pre><code>from torchao.quantization import quantize_, Int4WeightOnlyConfig
+quantize_(model, Int4WeightOnlyConfig(group_size=128))</code></pre>
+<p>這一行就是上面那張表的其中一列——4 bit、每 128 個權重一個 scale。它把每個 Linear 的權重換成一個量化過的 tensor 子類別，模型結構完全不動。GPTQ 和 AWQ 也住在這裡，兩個都要校準用的 batch。</p>
+<p><strong>訓練。</strong> 直通估計就是一個 autograd Function：</p>
+<pre><code>class RoundSTE(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x): return torch.round(x)
+    @staticmethod
+    def backward(ctx, g): return g        # 直接穿過去</code></pre>
+<p><code>torchao.quantization.qat</code> 把這個包好，而 <code>torchao.float8</code> 做的是真的事：前向<strong>與</strong>反向都用 FP8 矩陣乘法，per-tensor 或 per-row scale，FP8 預訓練就是這樣跑的。</p>
+<h2>在 JAX 裡</h2>
+<p>一樣的算術，不一樣的形狀，因為 JAX 把數值放在函數裡而不是放在模組裡。</p>
+<p><strong>Dtype。</strong> <code>jnp.float8_e4m3fn</code> 與 <code>jnp.float8_e5m2</code> 都有，而 <code>jax.lax.dot_general(..., preferred_element_type=jnp.bfloat16)</code> 就是在說「用 8 bit 乘、用 16 bit 累加」。累加的型別跟輸入型別一樣重要：幾千個 int8 乘積如果用 int8 累加，馬上就溢位了。</p>
+<p><strong>直通估計</strong>在這裡完全不需要自訂類別：</p>
+<pre><code>def ste_round(x):
+    return x + jax.lax.stop_gradient(jnp.round(x) - x)</code></pre>
+<p>前向算出來剛好是 <code>round(x)</code>；梯度因為 stop_gradient 只流過前面那個 <code>x</code>，等於把 <code>round</code> 的導數當成 1。它就是「恆等式加上一個被切斷梯度的修正項」，而看到這一行就知道那裡在做 QAT。</p>
+<p><strong>函式庫。</strong> AQT（<code>google/aqt</code>）是量化訓練的函式庫：把一個 <code>dot_general</code> 包起來，它處理 scale、校準與反向傳遞，於是同一個函式可以用 int8 訓練、也可以用 int8 服務。Qwix 是比較新的那個，PTQ／QAT／LoRA 流程都蓋到，而且不用改寫模型。</p>
+<p>兩邊值得帶走的差別很小但很真實：<strong>PyTorch 量化的是模組，JAX 量化的是運算</strong>。底下的東西——scale、分組、直通梯度——完全是同一套算術。</p>
+<h2>這一天之後會在哪裡再出現</h2>
+<p>低精度訓練就是把同樣這些決定套到梯度與 optimizer state 上，而且多一個問題：梯度可能 underflow 成零、然後安靜地停止學習——loss scaling 存在的理由就是防這件事。而 GPTQ 那個「把誤差推給還沒處理的部分」的想法比量化更老：它是剪枝用的 Optimal Brain Surgeon 更新式，往後只要有人要「以最小的輸出傷害去修改一個模型」，它就會再出現。</p>
+<p>程式碼、notebook 與互動版走查：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2061%20-%20quantization">day 61 on GitHub</a>。</p>
+</body>
+</html>
