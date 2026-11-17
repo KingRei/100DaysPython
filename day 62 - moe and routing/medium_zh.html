@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 62 — Mixture of Experts：一個 FFN 變成很多個，而每個 token 只跑其中兩個</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 62 — Mixture of Experts：一個 FFN 變成很多個，而每個 token 只跑其中兩個</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2062%20-%20moe%20and%20routing">day 62 on GitHub</a></p>
+<p><em>100 Days of Python - day 62</em></p>
+<p>Day 53 量過一件事，而它其實就是整件事的起點：transformer 三分之二的參數在 feed-forward 那一塊，而<strong>每個 token 都要把它們全部跑過一遍</strong>。每個 token、每個權重，不管那個權重對這個特定的 token 有沒有話要說。</p>
+<p>那就把那一個 FFN 換成 E 份，每個 token 只送去最好的 k 份。參數乘上 E，每個 token 的算術只乘上 k。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2062%20-%20moe%20and%20routing/imgs/day62_0.png?raw=true">
+<pre><code>                                          參數    每個 token 實際跑的
+----------------------------------------  ------  -------------------
+一個 dense FFN（dmodel 4096、dff 14336）  176 M   176 M
+64 個 expert ＋ 1 個 shared               11.5 B  528 M</code></pre>
+<p><strong>參數 65 倍，每個 token 的算術只有 3 倍。</strong> 把 61 層加起來就是 699 B 參數、而任何一個 token 只跑 32 B——這兩年所有大型開源 MoE 的形狀都是這樣。換個說法：這一層等於一個寬度 917,504 的 feed-forward，但每個 token 只會啟動其中 28,672。</p>
+<p>而這一切當然不是免費的，本文其餘的部分就是那張帳單。</p>
+<h2>Router，以及它造出來的那個迴圈</h2>
+<pre><code>probs = softmax(x @ Wg)          # 給每個 expert 打分
+idx   = argsort(-probs)[:, :k]   # 離散：沒有梯度穿得過去
+w     = probs[idx]               # 這幾個權重才有梯度
+y     = sum_j w[:, j] * expert[idx[:, j]](x)</code></pre>
+<p>一層 linear 決定哪個 token 去哪個 expert。有兩件事讓 MoE 難訓練，而且兩件都來自同一行。</p>
+<p>選 top-k 是<strong>離散的</strong>。梯度過不了 <code>argsort</code>，所以 router 唯一能學到東西的管道，是它「已經選上的那幾個 expert 的權重 w」。沒被選上的 expert 拿不到梯度、不會變好、於是永遠選不上。早期的贏家會愈滾愈大。</p>
+<p>而且 loss 裡面根本沒有任何一項要求 token 要分散。對任務 loss 來說，三個 expert 把所有工作做完完全沒問題——而那正是實際會發生的事。</p>
+<h2>把「塌掉」量出來長什麼樣</h2>
+<p><code>moe.py</code> 真的訓練一個：2048 個 token、8 種 regime（正確答案取決於 token 落在空間的哪一區）、16 個 expert、top-2，router 和 expert 一起手刻訓練。</p>
+<pre><code>一個 dense map（被取代掉的那個 FFN）     loss 0.0363
+16 個 expert、top-2、沒有平衡             loss 0.0230   （好 37%）
+
+每個 expert 拿到的 token  [579, 554, 550, 475, 461, 405, 352, 323, 293, 84, 14, 3, 1, 1, 1, 0]
+最忙 / 平均               2.26
+完全沒用到的 expert        16 個裡有 1 個</code></pre>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2062%20-%20moe%20and%20routing/imgs/day62_1.png?raw=true">
+<p>MoE 的 loss 贏了 37%，然後有一個 expert 一輩子沒看過任何一個 token，另外四個看到的不到十五個。那些參數照樣佔記憶體、照樣被存進 checkpoint、照樣要參加把 token 搬來搬去的 all-to-all——它們不只是沒用，它們很貴。</p>
+<h2>兩種讓 token 分散開的方法</h2>
+<pre><code>router                            loss    最忙/平均  死掉  entropy  純度
+--------------------------------  ------  ---------  ----  -------  -----
+沒有平衡                          0.0230  2.26       1     0.812    0.641
+輔助 loss（Switch / GShard）      0.0241  1.98       0     0.922    0.645
+只加選擇用的 bias（DeepSeek-V3）  0.0257  1.05       0     1.000    0.568</code></pre>
+<p><strong>輔助 loss</strong> 加的是 <code>E × Σ(路由到 i 的 token 比例 × i 的平均機率)</code>。兩個因子缺一不可、而且各司其職：比例是「實際發生了什麼」、沒有梯度；機率是可微的；相乘之後，已經很忙的 expert 的機率會被推開。在這裡它讓 loss 退了 5%。</p>
+<p><strong>不加 loss 的那個</strong>做的事比較細緻。它給每個 expert 一個 bias，只加在<strong>挑選用的分數</strong>上——絕對不加在乘上 expert 輸出的權重 <code>w</code> 上——然後每一步依照該 expert 負載誤差的正負號去微調它。因為 bias 碰不到 <code>w</code>，它不產生任何自己的梯度，也就不會跟任務 loss 打架，它只是搬動 token。結果是這一頁最平的負載、routing entropy 剛好 1.000，代價是 loss 退 12%、以及一些專一性。</p>
+<p>誠實地看這張表：在一個玩具問題上，平衡看起來是個划不來的交易。接下來所有東西都是在說為什麼它不是。</p>
+<h2>Capacity：buffer 是固定大小的，所以 token 會被丟掉</h2>
+<p>kernel 要固定形狀，所以每個 expert 有一個 <code>capacity = factor × k × tokens / experts</code> 的 buffer，超過的 token 直接沿著 residual 跳過這一層。</p>
+<pre><code>factor  buffer  不平衡時掉的  平衡後掉的  padding
+------  ------  ------------  ----------  -------
+1.0     256     41.2%         1.1%        +0%
+1.25    320     27.8%         0.0%        +25%
+1.5     384     17.6%         0.0%        +50%
+2.0     512     3.6%          0.0%        +100%</code></pre>
+<p>factor 1.0 時 buffer 剛好等於平均負載，所以<strong>高於平均的 token 全被丟掉、低於平均的 expert buffer 空一半</strong>。把 factor 調大，是把<strong>每一個</strong> expert 的 buffer 都撐大來遷就最忙的那一個，所以最後那一欄是整層都要付的無效算術。不平衡的 router 即使到 factor 2.0 還是掉 3.6%；平衡過的在 1.25 就已經是 0。</p>
+<p>這是「划不來的交易」開始不成立的第一個地方。</p>
+<h2>Expert parallelism：experts 放不進一張卡</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2062%20-%20moe%20and%20routing/imgs/day62_2.png?raw=true">
+<p>一層 11.5 B 的參數不可能放在一張卡上。expert parallelism 把 E 個 expert 切給 N 張卡、每張 E/N 個——於是一個 token 如果它的 expert 在別張卡上，就得<strong>被送過去</strong>、算完<strong>再送回來</strong>。每一層兩次 all-to-all，每一層、每一步都要。</p>
+<p>而 collective 是同步的：所有人都要等最慢的那一個。所以 router 的不平衡就不再是 loss 上的一個數字，而是閒置的晶片。</p>
+<pre><code>不平衡的 router、4 張卡：  1582 / 798 / 1361 / 355 個 token
+                           最忙/平均 1.54，其他卡閒置 35%
+平衡過的 router：          1022 / 1001 / 1032 / 1041
+                           最忙/平均 1.02</code></pre>
+<p>那為什麼是 expert parallel，而不是把每個 expert 切開給所有卡（tensor parallel）？兩者每張卡放的權重一樣多。差別在<strong>每個 token 要搬多少</strong>：TP 每層要對整個活化做一次 all-reduce（這個配置下 58.7 MB），EP 是對被路由的 token 做兩次 all-to-all（k=2 時 117.4 MB）。EP 搬的位元組是兩倍——而它仍然是對的答案，因為那是稀疏、不規則、而且<strong>可以跟計算重疊</strong>的流量，而層末的 all-reduce 是一道屏障。實務上兩個一起用：attention 用 tensor parallel，experts 用 expert parallel。</p>
+<h2>DeepEP：讓那兩次 all-to-all 付得起</h2>
+<p>4096 個 token、top-8、d_model 7168 的一次 dispatch 要搬 470 MB，combine 再搬回來一次。節點內走 NVLink，跨節點走 RDMA、速度只有幾分之一，而且大部分目的地都在別的節點。DeepEP 就是為這個 collective 寫的函式庫，裡面有三件事值得理解，即使你永遠不會直接呼叫它。</p>
+<p><strong>兩套 kernel，對應兩種階段。</strong> 高吞吐那套會先用 NVLink 把 token 轉送到目的節點上，然後<strong>每個目的節點只走一次 RDMA</strong>，把慢速鏈路上的位元組壓到最低——這是 prefill 與訓練要的取捨。低延遲那套相反：純 RDMA、不轉送，因為在 decode 階段那一跳比它省下來的頻寬更貴。</p>
+<p><strong>FP8 dispatch。</strong> 把前一天那套東西用在網路線上：token 用 FP8 送出去，470 MB 變 235 MB，在這個模型裡 8.59 ms 變 4.29 ms。而 combine 仍然用 bf16，因為它要把 k 個 expert 的輸出相加，FP8 在那裡掉太多。兩個方向用不同精度，這個不對稱是刻意的。</p>
+<p><strong>重疊。</strong> 低延遲 kernel 提供一個 hook，讓「收資料」不是一道屏障：attention 可以在 MoE 的 token 還在路上時就先算，而且不會有 SM 在那裡空轉等網路。沒有這個重疊，每層兩次 all-to-all 根本撐不住。</p>
+<h2>在 SGLang 裡</h2>
+<pre><code>python -m sglang.launch_server --model deepseek-ai/DeepSeek-V3 \
+    --tp 8 --ep-size 8 \             # experts 切給這 8 張卡
+    --enable-deepep-moe \            # 換成 DeepEP 的 kernel
+    --deepep-mode auto \             # prefill 用 normal、decode 用 low_latency
+    --enable-eplb \                  # 在 rank 之間重新平衡 expert
+    --ep-num-redundant-experts 32    # 把最熱的那幾個複製出去</code></pre>
+<p>前三行就是本文到目前為止的內容。後面兩行是我第一次看到時覺得最有意思的部分。</p>
+<p>訓練時的平衡 loss 壓平的是<strong>平均</strong>。而真實流量不是平均：某一分鐘的請求可能全都想要同一批 expert，因為它們講的是同一個主題。所以伺服器會量每個 expert 的實際負載，週期性地<strong>把 expert 在 rank 之間搬動</strong>（這就是 EPLB，expert-parallel load balancing），並且把最熱的那幾個<strong>複製</strong>到好幾張卡上，讓它們的 token 有不只一個地方可以去。訓練時的塌縮問題，在線上以一個維運問題的形式回來了，然後拿到一個維運上的答案。</p>
+<h2>在 vLLM 裡</h2>
+<pre><code>vllm serve deepseek-ai/DeepSeek-V3 \
+    --tensor-parallel-size 8 \
+    --enable-expert-parallel \        # experts 改用 EP 而不是 TP
+    --data-parallel-size 2            # attention 用 DP、experts 用 EP</code></pre>
+<p>vLLM 用 <code>--enable-expert-parallel</code> 走到同一個地方，底下的 all-to-all 用 DeepEP 或 pplx-kernels。值得記住的組合是最後那一行：<strong>attention 用 data parallel 複製，experts 用 expert parallel 切開</strong>。理由很直接——attention 沒有 expert 可以分，而 MoE 的權重不切根本放不下。兩個伺服器最後都停在這個配置上。</p>
+<p>不管在哪一個上面，要看的數字都不是平均吞吐，而是<strong>每個 rank 的負載分佈</strong>：如果有一張卡長期拿到最忙的 experts，其他每張卡每層都要等它兩次，而這個洞是任何 kernel 調校都補不回來的。</p>
+<h2>這一天之後會在哪裡再出現</h2>
+<p>「路由」是一個用梯度下降去訓練的離散選擇，而這個困難在強化學習、以及所有「學架構而不是學權重」的嘗試裡都會再出現。另外，load balancing 的那個故事——<strong>訓練時壓平平均，上線後再針對真實流量重新平衡</strong>——是一個值得認出來的模式：你能事先烤進去的東西，和你必須線上量測的東西之間的分界，在快取、在排程、在任何「工作負載不是穩態」的地方都一樣會出現。</p>
+<p>程式碼、notebook 與互動版走查：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2062%20-%20moe%20and%20routing">day 62 on GitHub</a>。</p>
+</body>
+</html>

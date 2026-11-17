@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mixture of Experts: one feed-forward block becomes many, and each token runs two of them</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Mixture of Experts: one feed-forward block becomes many, and each token runs two of them</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2062%20-%20moe%20and%20routing">day 62 on GitHub</a></p>
+<p><em>100 Days of Python - day 62</em></p>
+<p>Day 53 measured something that turns out to be the whole starting point: two thirds of a transformer&#x27;s parameters sit in the feed-forward block, and every token pays for all of them. Every token, every weight, whether or not that weight has anything to say about this particular token.</p>
+<p>So replace the one feed-forward block with E copies of it, and send each token to the best k. The parameters multiply by E; the arithmetic per token multiplies by k.</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2062%20-%20moe%20and%20routing/imgs/day62_0.png?raw=true">
+<pre><code>                                        parameters  active per token
+--------------------------------------  ----------  ----------------
+one dense FFN (dmodel 4096, dff 14336)  176 M       176 M
+64 experts + 1 shared                   11.5 B      528 M</code></pre>
+<p><strong>65x the parameters for 3x the arithmetic per token.</strong> Across 61 layers that is 699 B parameters of which 32 B run for any given token, which is the shape of every large open MoE released in the last two years. Another way to say the same thing: the layer is a feed-forward block of width 917,504 that only ever activates 28,672 of it per token.</p>
+<p>Nothing about that is free, and the rest of this article is the bill.</p>
+<h2>The router, and the loop it creates</h2>
+<pre><code>probs = softmax(x @ Wg)          # score every expert
+idx   = argsort(-probs)[:, :k]   # discrete: no gradient flows through this
+w     = probs[idx]               # the weights that do get a gradient
+y     = sum_j w[:, j] * expert[idx[:, j]](x)</code></pre>
+<p>One linear layer decides which expert sees which token. Two things about it make MoE hard to train, and both follow from the same line.</p>
+<p>The selection is <strong>discrete</strong>. No gradient passes through <code>argsort</code>, so the router can only learn through the weights <code>w</code> of the experts it already chose. An expert that is never chosen never receives gradient, never improves, and therefore is never chosen. Early winners compound.</p>
+<p>And nothing in the loss asks the tokens to spread out. The task loss is perfectly happy for three experts to do all the work, which is exactly what happens.</p>
+<h2>What collapse looks like when you measure it</h2>
+<p><code>moe.py</code> trains the thing for real: 2048 tokens drawn from 8 regimes (the right answer depends on which region of space the token falls in), 16 experts, top-2, trained jointly with the router by hand.</p>
+<pre><code>one dense map (the FFN being replaced)    loss 0.0363
+16 experts, top-2, no balancing           loss 0.0230   (37% better)
+
+tokens per expert  [579, 554, 550, 475, 461, 405, 352, 323, 293, 84, 14, 3, 1, 1, 1, 0]
+busiest / average  2.26
+dead experts       1 of 16</code></pre>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2062%20-%20moe%20and%20routing/imgs/day62_1.png?raw=true">
+<p>The MoE wins on the loss by 37%, and one expert never sees a token in its life. Four more see fewer than fifteen. Those parameters still occupy memory, still get checkpointed, and still take part in the all-to-all that ships tokens around - they are not merely useless, they are expensive.</p>
+<h2>Two ways to make the tokens spread out</h2>
+<pre><code>router                                 loss    busiest / avg  dead  entropy  purity
+-------------------------------------  ------  -------------  ----  -------  ------
+no balancing                           0.0230  2.26           1     0.812    0.641
+auxiliary loss (Switch / GShard)       0.0241  1.98           0     0.922    0.645
+selection bias, no loss (DeepSeek-V3)  0.0257  1.05           0     1.000    0.568</code></pre>
+<p><strong>The auxiliary loss</strong> adds <code>E * sum_i (fraction of tokens routed to i) * (mean probability of i)</code>. Both factors are necessary and they do different jobs: the fraction is what actually happened and carries no gradient, the probability is differentiable, and multiplying them pushes probability away from experts that are already busy. It costs 5% of loss here.</p>
+<p><strong>The loss-free scheme</strong> does something subtler. It gives each expert a bias that is added to the <strong>selection score only</strong> - never to the weight <code>w</code> that multiplies the expert&#x27;s output - and nudges it after every step by the sign of that expert&#x27;s load error. Because the bias never touches <code>w</code>, it adds no gradient of its own and cannot fight the task loss; it just moves tokens. It produces the flattest load on the page, a perfectly uniform routing entropy of 1.000, and costs 12% of loss and some specialisation.</p>
+<p>Read that table honestly: on a toy, balancing looks like a bad trade. Everything after this is why it is not.</p>
+<h2>Capacity: the buffers are fixed, so tokens get dropped</h2>
+<p>Kernels want fixed shapes, so each expert gets a buffer of <code>capacity = factor * k * tokens / experts</code>, and tokens past it skip the layer through the residual connection.</p>
+<pre><code>factor  capacity  dropped, unbalanced  dropped, balanced  padding
+------  --------  -------------------  -----------------  -------
+1.0     256       41.2%                1.1%               +0%
+1.25    320       27.8%                0.0%               +25%
+1.5     384       17.6%                0.0%               +50%
+2.0     512       3.6%                 0.0%               +100%</code></pre>
+<p>At factor 1.0 the buffer is exactly the average load, so every token above average is dropped and every expert below it leaves its buffer half empty. Raising the factor pads <strong>every</strong> expert to make room for the busiest one, so that last column is arithmetic wasted across the whole layer. The unbalanced router still drops 3.6% at factor 2.0; the balanced one is at zero by 1.25.</p>
+<p>That is the first place the &quot;bad trade&quot; stops looking bad.</p>
+<h2>Expert parallelism: the experts do not fit on one GPU</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2062%20-%20moe%20and%20routing/imgs/day62_2.png?raw=true">
+<p>11.5 B parameters per layer do not live on one card. Expert parallelism splits the E experts over N GPUs, E/N each - so a token whose expert lives elsewhere has to be <strong>sent there</strong> and its result <strong>sent back</strong>. Two all-to-all collectives per MoE layer, every layer, every step.</p>
+<p>A collective is synchronous: everyone waits for the slowest rank. So the router&#x27;s imbalance stops being a loss number and becomes idle silicon.</p>
+<pre><code>unbalanced router, 4 GPUs:  1582 / 798 / 1361 / 355 tokens
+                            busiest / average 1.54, the others idle 35%
+balanced router:            1022 / 1001 / 1032 / 1041
+                            busiest / average 1.02</code></pre>
+<p>Why expert parallelism rather than splitting every expert across all GPUs with tensor parallelism? Both hold the same weights per GPU. The difference is what moves per token: TP all-reduces the whole activation once per layer (58.7 MB in this configuration), EP all-to-alls only the routed tokens, twice (117.4 MB at k=2). EP moves twice the bytes - and is still the right answer, because that traffic is sparse, uneven, and <strong>overlappable with computation</strong>, while an all-reduce at the end of a layer is a barrier. Real systems use both: tensor parallelism inside the attention, expert parallelism across the experts.</p>
+<h2>DeepEP: making the all-to-all affordable</h2>
+<p>One dispatch of 4096 tokens at top-8 routing with d_model 7168 moves 470 MB, and the combine moves it back. Inside a node that is NVLink; between nodes it is RDMA at a fraction of the speed, and most destinations are on another node. DeepEP is the library written for exactly this collective, and three things in it are worth understanding even if you never call it directly.</p>
+<p><strong>Two kernel sets, for the two phases.</strong> The high-throughput kernels forward a token over NVLink to the destination node and then send it <strong>once per destination node</strong> over RDMA, which minimises bytes on the slow link - the right trade for prefill and training. The low-latency kernels do the opposite: pure RDMA, no forwarding hop, because in decode that hop costs more than the bandwidth it saves.</p>
+<p><strong>FP8 dispatch.</strong> The previous day applied to a network cable: send the tokens in FP8 and 470 MB becomes 235 MB, 8.59 ms becomes 4.29 ms in this model. The combine stays in bf16, because it sums k expert outputs and FP8 loses too much there. The asymmetry between the two directions is deliberate.</p>
+<p><strong>Overlap.</strong> The low-latency kernels expose a hook so the receive is not a barrier: attention can run while the MoE tokens are still in flight, and no SM cycles are burned spinning on the network. Without that, two all-to-alls per layer would not be survivable.</p>
+<h2>In SGLang</h2>
+<pre><code>python -m sglang.launch_server --model deepseek-ai/DeepSeek-V3 \
+    --tp 8 --ep-size 8 \             # experts split across the 8 GPUs
+    --enable-deepep-moe \            # the DeepEP kernels
+    --deepep-mode auto \             # normal for prefill, low_latency for decode
+    --enable-eplb \                  # rebalance experts across ranks
+    --ep-num-redundant-experts 32    # replicate the hot ones</code></pre>
+<p>The first three lines are the article so far. The last two are the part that surprised me most when I first saw it.</p>
+<p>A training-time balancing loss flattens the <strong>average</strong>. Real traffic is not the average: one minute of requests can all want the same few experts, because they are all about the same topic. So the server measures the per-expert load and periodically <strong>moves experts between ranks</strong> (that is EPLB, expert-parallel load balancing), and <strong>replicates the hottest ones</strong> across several ranks so their tokens have more than one place to go. The collapse problem from training comes back as an operational problem, and gets an operational answer.</p>
+<h2>In vLLM</h2>
+<pre><code>vllm serve deepseek-ai/DeepSeek-V3 \
+    --tensor-parallel-size 8 \
+    --enable-expert-parallel \        # EP for the experts instead of TP
+    --data-parallel-size 2            # DP attention, EP experts</code></pre>
+<p>vLLM reaches the same place with <code>--enable-expert-parallel</code>, using DeepEP or pplx-kernels underneath for the all-to-all. The combination worth remembering is the last line: <strong>attention replicated with data parallelism while the experts are sharded with expert parallelism</strong>. The reason is blunt - attention has no experts to spread, and the MoE weights do not fit otherwise. Both servers end up at that configuration.</p>
+<p>On either one, the number to watch is not average throughput. It is the per-rank load distribution: if one rank consistently holds the busiest experts, every other rank waits for it twice per layer, and no amount of kernel tuning recovers that.</p>
+<h2>Where this comes back</h2>
+<p>The routing decision is a discrete choice trained by gradient descent, which is the same difficulty that shows up in reinforcement learning and in every attempt to learn an architecture rather than a weight. And the load-balancing story - flatten the average at training time, then rebalance for real traffic at serving time - is a pattern worth recognising, because the same split between what you can bake in and what you must measure online turns up in caching, in scheduling, and in anything else where the workload is not stationary.</p>
+<p>Code, notebook and an interactive walkthrough: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2062%20-%20moe%20and%20routing">day 62 on GitHub</a>.</p>
+</body>
+</html>
