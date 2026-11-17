@@ -14,6 +14,45 @@ import decoding as D                   # noqa: E402
 M = D.NGram(D.make_corpus())
 
 
+def fig0():
+    """The lead figure: both algorithms, end to end, with the rules written out."""
+    fig, ax = canvas(10.6, 7.2, xlim=(0, 10.6), ylim=(0, 7.2))
+    text(ax, 5.3, 6.95, 'two ways past greedy decoding', size=17)
+
+    # ---- left column: beam search
+    text(ax, 2.6, 6.35, 'beam search: change the output', size=14, color=TEAL_L)
+    steps = ['start: w prefixes',
+             'expand each by its\ntop-w next tokens',
+             'score: sum of\nlog probabilities',
+             'keep the best w,\ndrop the rest',
+             'repeat until all\nprefixes end']
+    for i, t in enumerate(steps):
+        y = 5.55 - i * 1.05
+        box(ax, 0.75, y - 0.38, 3.7, 0.76, label=t, size=12)
+        if i:
+            arrow(ax, (2.6, y + 0.72), (2.6, y + 0.40), lw=1.5)
+    text(ax, 2.6, 0.72, 'cost: w sequences of KV cache,\nw x the attention, every step',
+         size=12, color=GREY_L)
+
+    # ---- right column: speculative decoding
+    text(ax, 7.95, 6.35, 'speculative decoding: keep the output', size=14, color=TEAL_L)
+    sp = ['draft model proposes\ngamma tokens (cheap)',
+          'target model scores all\ngamma+1 positions in ONE pass',
+          'accept token x with\nprobability min(1, p(x)/q(x))',
+          'on the first rejection, draw from\nnormalised (p - q)+ and stop',
+          'all accepted: one free\nbonus token from p']
+    for i, t in enumerate(sp):
+        y = 5.55 - i * 1.05
+        box(ax, 6.10, y - 0.38, 3.7, 0.76, label=t, size=11,
+            edge=AMBER if i == 2 else TEAL, lw=2.4 if i == 2 else 1.6)
+        if i:
+            arrow(ax, (7.95, y + 0.72), (7.95, y + 0.40), lw=1.5)
+    text(ax, 7.95, 0.72, 'output distribution unchanged:\nq*min(1,p/q) + P(reject)*(p-q)+ = p',
+         size=12, color=GREY_L)
+    ax.plot([5.3, 5.3], [0.35, 6.1], color=GREY, lw=1.0, ls=':')
+    save(fig, os.path.join(HERE, 'day60_0.png'))
+
+
 def fig1():
     """The search: one beam of width 2 keeping two prefixes alive."""
     ctx = '\nthe old robot s'
@@ -106,5 +145,5 @@ def fig3():
 
 
 if __name__ == '__main__':
-    fig1(); fig2(); fig3()
-    print('wrote day60_1.png day60_2.png day60_3.png')
+    fig0(); fig1(); fig2(); fig3()
+    print('wrote day60_0.png day60_1.png day60_2.png day60_3.png')

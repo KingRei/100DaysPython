@@ -75,6 +75,10 @@ const DIV = {"n": 16, "beam": ["the old robot sang in the garden.", "a small bir
 const EX = [{"ctx": "the", "acc": 0.503, "err": 0.0, "trust": 0.131, "nocoin": 0.043}, {"ctx": "the small cat", "acc": 0.447, "err": 1.1102230246251565e-16, "trust": 0.367, "nocoin": 0.001}, {"ctx": "a red dog s", "acc": 0.753, "err": 1.1102230246251565e-16, "trust": 0.247, "nocoin": 0.0}];
 const DRAFT = [{"order": 1, "acc": 0.173, "per": 1.69, "ok": 0.93, "distinct": 39}, {"order": 2, "acc": 0.605, "per": 3.42, "ok": 0.93, "distinct": 40}, {"order": 3, "acc": 0.837, "per": 4.35, "ok": 0.9, "distinct": 40}, {"order": 5, "acc": 0.929, "per": 4.72, "ok": 0.88, "distinct": 39}];
 const GAM = [{"g": 1, "acc": 0.911, "per": 1.91, "theory": 1.91, "speedup": 1.74}, {"g": 2, "acc": 0.91, "per": 2.82, "theory": 2.74, "speedup": 2.35}, {"g": 4, "acc": 0.842, "per": 4.37, "theory": 3.65, "speedup": 3.12}, {"g": 8, "acc": 0.76, "per": 7.08, "theory": 3.82, "speedup": 3.94}];
+const LOST = {"best": "a small dog sat in the garden.", "step": 9, "prefix": "a small d", "rank": 10, "cands": 64, "width": 8, "widths": [{"w": 32, "found": false}, {"w": 64, "found": false}, {"w": 128, "found": true}]};
+const ONE = {"ctx": "the old robot s", "props": ["a", "n", "g", " "], "rows": [{"top": "a", "p": 0.691}, {"top": "n", "p": 0.499}, {"top": "g", "p": 0.996}, {"top": " ", "p": 0.996}, {"top": "i", "p": 0.296}]};
+const TREE = [{"order": 1, "chain": 1.65, "tree": 1.96, "chainNode": 0.41, "treeNode": 0.68, "treeNodes": 2.88}, {"order": 2, "chain": 3.54, "tree": 3.32, "chainNode": 0.88, "treeNode": 0.91, "treeNodes": 3.65}, {"order": 3, "chain": 4.41, "tree": 3.72, "chainNode": 1.1, "treeNode": 0.97, "treeNodes": 3.86}];
+const BATCH = {"perRound": 4.41, "rows": [{"b": 1, "base": 28.0, "spec": 28.0, "speedup": 4.41}, {"b": 8, "base": 28.0, "spec": 28.0, "speedup": 4.41}, {"b": 32, "base": 28.0, "spec": 28.0, "speedup": 4.41}, {"b": 128, "base": 28.0, "spec": 89.6, "speedup": 1.38}, {"b": 512, "base": 71.7, "spec": 358.4, "speedup": 0.88}]};
 
 const PURPLE2 = '#c7a6ff';
 function rowBars(sh, items, y0, dy, wmax, val, lab, st){
@@ -583,6 +587,239 @@ function sglangFrames(){
   return F.list;
 }
 
+
+/* ================================================================ extra tab: where the beam loses it */
+const CODE_LOST = [
+  'best = exact_ranking(model)[0][1]        # the answer key',
+  'for t in range(len(best)):',
+  '    target = prefix + best[:t+1]         # the winning prefix at this step',
+  '    cand = expand(beams)                 # everything a width-w beam could keep',
+  '    rank = index of target in sorted(cand)',
+  '    if rank > width: break               # dropped, and never recoverable'
+];
+function lostStage(o){
+  const sh = [];
+  sh.push(fitT(4.9, 1.05, {zh:'最佳句：' + JSON.stringify(LOST.best),
+                           en:'the best sentence: ' + JSON.stringify(LOST.best)},
+               {c:COL.grey, fs:.27}));
+  const chars = LOST.best.slice(0, LOST.step + 3).split('');
+  chars.forEach((c, i) => {
+    const x = .80 + i * .72;
+    const state = i < LOST.step - 1 ? 'ok' : (i === LOST.step - 1 ? 'bad' : 'ghost');
+    sh.push(box(x, 3.70, .62, .70, state, c === ' ' ? '_' : c, .32));
+  });
+  sh.push(fitT(.80, 4.65, {zh:'最佳句的前綴，一個字元一個字元跟著走',
+                           en:'the best sentence\'s prefix, one character at a time'},
+               {anchor:'start', c:COL.tealL, fs:.27}));
+  if (o.upto >= 1){
+    sh.push(fitT(.80, 3.10, {zh:'第 ' + LOST.step + ' 步、前綴 ' + JSON.stringify(LOST.prefix) + ' 的分數排在 ' + LOST.cands + ' 個候選裡的第 ' + LOST.rank + ' 名，而 beam 只留 ' + LOST.width + ' 個',
+                             en:'at step ' + LOST.step + ' the prefix ' + JSON.stringify(LOST.prefix) + ' ranks ' + LOST.rank + ' of ' + LOST.cands + ' candidates, and the beam keeps ' + LOST.width},
+                 {anchor:'start', c:COL.red, fs:.27}));
+  }
+  if (o.upto >= 2){
+    LOST.widths.forEach((r, i) => {
+      const y = 2.35 - i * .55;
+      sh.push(box(.80, y, 2.40, .46, r.found ? 'ok' : 'idle', 'width ' + r.w, .25));
+      sh.push(fitT(3.40, y + .23, r.found ? {zh:'找到了', en:'finds it'} : {zh:'還是找不到', en:'still misses it'},
+                   {anchor:'start', c:r.found ? COL.tealL : COL.grey, fs:.26}));
+    });
+  }
+  return caps(sh, o);
+}
+function lostFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:lostStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({upto:0, line:3,
+    cap:{zh:'跟著最佳句的前綴走一遍', en:'follow the winning prefix, step by step'},
+    panels:[{lbl:'width', chips:[chip(String(LOST.width), 'dim')]}],
+    msg:{zh:'既然知道標準答案，就可以直接問：最佳句是在**哪一步**被 beam 丟掉的？做法是每一步都把最佳句的前綴拿去跟所有候選比分數。',
+         en:'Since the answer key exists, the question can be asked directly: at which step does the beam drop the best sentence? Score the winning prefix against every candidate at each step and watch.'}});
+  p({upto:1, line:5,
+    cap:{zh:'第 ' + LOST.step + ' 步就掉了', en:'it is gone at step ' + LOST.step},
+    panels:[{lbl:'step', chips:[chip(String(LOST.step), 'bad')]},
+            {lbl:'rank there', chips:[chip(LOST.rank + ' / ' + LOST.cands, 'bad')]}],
+    msg:{zh:'掉在 ' + JSON.stringify(LOST.prefix) + '——當下它只排第 ' + LOST.rank + '，而 beam 只留 ' + LOST.width + ' 個。這就是 beam search 真正的失敗模式：不是最後比錯，而是**一個暫時落後、本來會追上來的前綴**被剪掉，之後所有以它開頭的句子一起消失。「a small d」在那個字還沒寫完之前，看起來就是比「the old r」差。',
+         en:'It dies on ' + JSON.stringify(LOST.prefix) + ', ranked ' + LOST.rank + ' when the beam keeps ' + LOST.width + '. That is the real failure mode: not a wrong final comparison but a prefix that is temporarily behind and would have caught up. Once it is pruned every sentence starting with it is gone too. "a small d" simply looks worse than "the old r" until the word is finished.'}});
+  p({upto:2, line:5,
+    cap:{zh:'要多寬才找得到？', en:'so how wide does it have to be?'},
+    panels:[{lbl:'needs width', chips:[chip(String(LOST.widths[LOST.widths.length - 1].w), 'ok')]}],
+    msg:{zh:'要 width ' + LOST.widths[LOST.widths.length - 1].w + ' 才找得到最佳句——是那個「只差一名」的 width 8 的 16 倍。最後一點點品質要用掉大部分的算力，而每多一份 width 就是多一份 KV cache、多一份 attention。',
+         en:'It takes width ' + LOST.widths[LOST.widths.length - 1].w + ' to find the best sentence - sixteen times the beam that got within one rank of it. The last bit of quality costs most of the compute, and every unit of width is another KV cache and another pass of attention.'}});
+  return F.list;
+}
+
+/* ================================================================ extra tab: one pass */
+const CODE_ONE = [
+  '# a causal model scores position i from the tokens to its LEFT only',
+  'seq = context + all gamma proposals',
+  'P = model(seq)                 # one pass',
+  '',
+  '# P[i] is the distribution for position i, computed as if the proposals',
+  '# after it did not exist - the mask hides them.  Same shape as training.',
+  'assert P[i] == model(context + proposals[:i])'
+];
+function oneStage(o){
+  const sh = [];
+  const toks = ONE.ctx.split('').slice(-5).concat(ONE.props);
+  toks.forEach((c, i) => {
+    const x = .80 + i * .92, isProp = i >= 5;
+    sh.push(box(x, 4.05, .80, .64, isProp ? 'act' : 'idle', c === ' ' ? '_' : c, .30));
+  });
+  sh.push(fitT(.80, 4.95, {zh:'context（灰）＋ draft 的 ' + ONE.props.length + ' 個提議（紫）',
+                           en:'context, then the draft\'s ' + ONE.props.length + ' proposals'},
+               {anchor:'start', c:COL.grey, fs:.26}));
+  if (o.upto >= 1){
+    ONE.rows.forEach((r, i) => {
+      const y = 3.20 - i * .52;
+      const bonus = i === ONE.rows.length - 1;
+      sh.push(box(.80, y, 3.40, .44, bonus ? 'hot' : 'ok',
+                  {zh:'位置 ' + i + '：最高是 ' + JSON.stringify(r.top) + ' ' + r.p.toFixed(3),
+                   en:'position ' + i + ': top ' + JSON.stringify(r.top) + ' at ' + r.p.toFixed(3)}, .24));
+      if (bonus)
+        sh.push(fitT(4.45, y + .22, {zh:'← 白賺的那一個', en:'<- the free bonus token'},
+                     {anchor:'start', c:COL.tealL, fs:.25}));
+    });
+    sh.push(fitT(9.20, .95, {zh:'全部來自同一次 forward', en:'all from a single forward pass'},
+                 {anchor:'end', c:COL.pale, fs:.28}));
+  }
+  return caps(sh, o);
+}
+function oneFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:oneStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({upto:0, line:2,
+    cap:{zh:'為什麼驗證 gamma 個 token 只要一次 forward', en:'why verifying gamma tokens costs one pass, not gamma'},
+    panels:[{lbl:'proposals', chips:[chip(String(ONE.props.length), 'act')]}],
+    msg:{zh:'把 context 加上全部提議接成一條序列送進模型。關鍵在 causal mask：位置 i 的輸出只看得到它左邊的 token，所以「長度 i 的前綴」已經包含在這條序列裡了。',
+         en:'Concatenate the context with all the proposals and run the model once. The causal mask is what makes this legal: the output at position i only sees tokens to its left, so the prefix of length i is already inside the longer sequence.'}});
+  p({upto:1, line:6,
+    cap:{zh:'一次 forward，gamma+1 個分佈', en:'one pass, gamma+1 distributions'},
+    panels:[{lbl:'distributions', chips:[chip(String(ONE.rows.length), 'ok')]},
+            {lbl:'passes', chips:[chip('1', 'ok')]}],
+    msg:{zh:'這跟訓練時的一次 forward（teacher forcing）是**同一個計算**——模型本來就不需要自己的輸出才能替一個 token 打分，只需要它左邊的 token。而 decode 慢是慢在「每一步把整個模型的權重讀一遍」，所以一次讀完驗 ' + ONE.rows.length + ' 個位置，就是把那次讀攤給更多 token。這也是為什麼它是拿算力換頻寬（最後一個分頁會算到 batch size）。',
+         en:'This is the same computation as one training step on that sequence - teacher forcing - because the model never needed its own output to score a token, only the tokens to its left. And decode is slow because each step re-reads the entire model, so verifying ' + ONE.rows.length + ' positions per read amortises it. That is why this trades compute for bandwidth, which the last tab turns into a batch size.'}});
+  return F.list;
+}
+
+/* ================================================================ extra tab: tree drafting */
+const CODE_TREE = [
+  '# chain: gamma positions, all spent on depth',
+  'for _ in range(gamma): propose one token, verify, accept or stop',
+  '',
+  '# tree: some positions spent on siblings instead',
+  'for k in branches:                  # e.g. (2, 2, 1, 1)',
+  '    for _ in range(k):              # k candidates for THIS position',
+  '        i = sample(q)',
+  '        if random() < min(1, resid[i] / q[i]): accept; break',
+  '        resid = normalise(maximum(resid - q, 0))   # sibling spent',
+  '# still exactly the target distribution, with more shots per position'
+];
+function treeStage(o){
+  const sh = [];
+  if (o.upto === 0){
+    const chain = [0, 1, 2, 3];
+    chain.forEach((i) => {
+      const x = .95 + i * 1.35;
+      sh.push(box(x, 3.80, 1.10, .62, 'ok', 't' + (i + 1), .28));
+      if (i) sh.push(S.e(x - .22, 4.11, x - .03, 4.11, {s:'ghost', arrow:true, w:.05}));
+    });
+    sh.push(fitT(.95, 4.70, {zh:'chain：4 個位置全花在深度', en:'chain: four positions, all depth'},
+                 {anchor:'start', c:COL.tealL, fs:.27}));
+    const tree = [[0, 2], [1, 2], [2, 1], [3, 1]];
+    tree.forEach(([i, k]) => {
+      const x = .95 + i * 1.35;
+      for (let j = 0; j < k; j++)
+        sh.push(box(x, 1.95 - j * .72, 1.10, .62, j ? 'act' : 'hot', 't' + (i + 1) + (j ? "'" : ''), .26));
+    });
+    sh.push(fitT(.95, 2.85, {zh:'tree：前兩個位置各留一個備胎', en:'tree: the first two positions each keep a spare'},
+                 {anchor:'start', c:COL.tealL, fs:.27}));
+  } else {
+    TREE.forEach((r, i) => {
+      const y = 4.20 - i * 1.15, top = 5.0;
+      sh.push(fitT(.70, y + .45, {zh:'draft order ' + r.order, en:'draft order ' + r.order},
+                   {anchor:'start', c:COL.tealL, fs:.27}));
+      sh.push(S.r(2.90, y + .30, Math.max(.06, 4.2 * r.chain / top), .34, 'ok', null));
+      sh.push(S.r(2.90, y - .14, Math.max(.06, 4.2 * r.tree / top), .34, 'act', null));
+      sh.push(fitT(9.20, y + .47, 'chain ' + r.chain.toFixed(2), {anchor:'end', c:COL.pale, fs:.25}));
+      sh.push(fitT(9.20, y + .03, 'tree ' + r.tree.toFixed(2), {anchor:'end', c:'#c7a6ff', fs:.25}));
+    });
+    sh.push(fitT(4.9, .80, {zh:'每輪吐出的 token 數（越長越好）',
+                            en:'tokens emitted per round - longer is better'},
+                 {c:COL.grey, fs:.27}));
+  }
+  return caps(sh, o);
+}
+function treeFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:treeStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({upto:0, line:5,
+    cap:{zh:'同樣的位置數，兩種花法', en:'the same verified positions, spent two ways'},
+    panels:[{lbl:'chain', chips:[chip('4 deep', 'ok')]},
+            {lbl:'tree', chips:[chip('2+2+1+1', 'act')]}],
+    msg:{zh:'一次 target forward 能驗幾個位置是固定的預算。chain 把預算全花在「猜更遠」，tree 則留一部分給「同一個位置的備胎」——第一個候選被拒時，直接試兄弟節點，而且因為殘差分佈有被更新，輸出仍然**完全等於** target 分佈。',
+         en:'The number of positions one target pass can verify is a fixed budget. A chain spends all of it on guessing further ahead; a tree keeps some of it for a spare candidate at the same position, so a rejected first candidate can be followed by a sibling - and because the residual distribution is updated in between, the output is still exactly the target distribution.'}});
+  p({upto:1, line:9,
+    cap:{zh:'誰贏，完全看 draft 多準', en:'which one wins depends entirely on the draft'},
+    panels:[{lbl:'draft order 1', chips:[chip('tree ' + TREE[0].tree.toFixed(2), 'ok'),
+                                         chip('chain ' + TREE[0].chain.toFixed(2), 'bad')]},
+            {lbl:'draft order 3', chips:[chip('chain ' + TREE[2].chain.toFixed(2), 'ok'),
+                                         chip('tree ' + TREE[2].tree.toFixed(2), 'bad')]}],
+    msg:{zh:'order 1 的 draft 很爛，第一個候選常常被拒，所以備胎常常救到整輪：tree 每輪 ' + TREE[0].tree.toFixed(2) + ' 個 token vs chain 的 ' + TREE[0].chain.toFixed(2) + '，而且用掉的位置還比較少（每個位置換到 ' + TREE[0].treeNode.toFixed(2) + ' vs ' + TREE[0].chainNode.toFixed(2) + ' 個 token）。order 3 的 draft 很準，第一個候選幾乎都中，備胎就是白花的位置——chain 反而贏。這就是 EAGLE 那種 tree draft 的全部論點，也是它為什麼給你一個 topk 旋鈕而不是寫死：正確的形狀取決於你實際拿到的接受率。',
+         en:'With an order-1 draft the first candidate is usually rejected, so the spare rescues the round: the tree emits ' + TREE[0].tree.toFixed(2) + ' tokens per round against ' + TREE[0].chain.toFixed(2) + ' for the chain, and uses fewer verified positions doing it (' + TREE[0].treeNode.toFixed(2) + ' tokens per position against ' + TREE[0].chainNode.toFixed(2) + '). With an order-3 draft the first candidate is usually right and every sibling is a position that bought nothing, so the chain wins. That is the whole argument for EAGLE-style tree drafting - and the reason it ships as a topk knob rather than a default: the right shape depends on the acceptance rate you actually get.'}});
+  return F.list;
+}
+
+/* ================================================================ extra tab: batch size */
+const CODE_BATCH = [
+  'read = weight_bytes / bandwidth          # 140 GB / 5 TB/s = 28 ms',
+  '',
+  'plain = max(read, batch * flops_per_token / flops)',
+  'spec  = max(read, batch * (gamma + 1) * flops_per_token / flops)',
+  'speedup = tokens_per_round * plain / spec',
+  '',
+  '# small batch: the read dominates, extra positions are free',
+  '# large batch: arithmetic dominates, rejected drafts cost real time'
+];
+function batchStage(o){
+  const sh = [];
+  const top = Math.max.apply(null, BATCH.rows.map(r => r.speedup));
+  BATCH.rows.forEach((r, i) => {
+    if (i > o.upto) return;
+    const x = .95 + i * 1.85, h = Math.max(.08, 2.9 * r.speedup / top);
+    sh.push(S.r(x, 1.70, 1.15, h, r.speedup >= 1 ? 'ok' : 'bad', null));
+    sh.push(fitT(x + .57, 1.70 + h + .22, r.speedup.toFixed(2) + 'x',
+                 {c:r.speedup >= 1 ? COL.tealL : COL.red, fs:.26}));
+    sh.push(fitT(x + .57, 1.42, 'batch ' + r.b, {c:COL.grey, fs:.24}));
+  });
+  sh.push(S.e(.80, 1.70 + 2.9 / top, 9.40, 1.70 + 2.9 / top, {s:'ghost', arrow:false, w:.04}));
+  sh.push(fitT(9.40, 1.70 + 2.9 / top + .22, {zh:'1.0x（不做 speculation）', en:'1.0x: no speculation'},
+               {anchor:'end', c:COL.grey, fs:.24}));
+  sh.push(fitT(.80, 4.95, {zh:'70B 級：140 GB 權重 ÷ 5 TB/s ＝ 28 ms 的讀取',
+                           en:'70B-class: 140 GB of weights at 5 TB/s is a 28 ms read'},
+               {anchor:'start', c:COL.grey, fs:.27}));
+  sh.push(fitT(.80, 5.25, {zh:'每個 token 140 GFLOP ÷ 1 PFLOP/s',
+                           en:'140 GFLOP per token at 1 PFLOP/s'},
+               {anchor:'start', c:COL.grey, fs:.27}));
+  return caps(sh, o);
+}
+function batchFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:batchStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({upto:2, line:3,
+    cap:{zh:'小 batch：多出來的位置是免費的', en:'small batch: the extra positions are free'},
+    panels:[{lbl:'batch 1-32', chips:[chip(BATCH.rows[0].speedup.toFixed(2) + 'x', 'ok')]},
+            {lbl:'step time', chips:[chip(BATCH.rows[0].base.toFixed(0) + ' ms', 'dim')]}],
+    msg:{zh:'batch 小的時候，一次 decode step 的時間就是「把整個模型讀一遍」，GPU 的算力在空轉。這時候多驗幾個位置不花額外時間，所以加速幾乎等於每輪吐出的 token 數（' + BATCH.perRound.toFixed(2) + '）。',
+         en:'At a small batch a decode step costs exactly one read of the whole model and the arithmetic units idle. Verifying more positions then costs no extra time, so the speedup is essentially the tokens emitted per round (' + BATCH.perRound.toFixed(2) + ').'}});
+  p({upto:BATCH.rows.length - 1, line:7,
+    cap:{zh:'大 batch：反而比不做還慢', en:'large batch: slower than not speculating'},
+    panels:[{lbl:'batch 128', chips:[chip(BATCH.rows[3].speedup.toFixed(2) + 'x', 'act')]},
+            {lbl:'batch 512', chips:[chip(BATCH.rows[4].speedup.toFixed(2) + 'x', 'bad')]}],
+    msg:{zh:'batch 夠大之後，算術本身變成瓶頸，而 speculative decoding 把「每條序列一個位置」變成 gamma+1 個——多出來的算力是真的要花時間的，被拒絕的提議就是純浪費。這個設定在 batch 512 時只有 ' + BATCH.rows[4].speedup.toFixed(2) + 'x，也就是**比不做還慢**。所以伺服器會依照當下的 batch size 決定要不要開 speculation，而不是全域打開——前面幾張表是必要條件，不是充分條件。',
+         en:'Past a batch size where arithmetic fills the read, the extra positions cost real time, and every rejected proposal is pure waste. At batch 512 this configuration runs at ' + BATCH.rows[4].speedup.toFixed(2) + 'x - slower than not speculating at all. That is why servers gate speculation on the running batch size instead of enabling it globally, and why the earlier tables are necessary but not sufficient.'}});
+  return F.list;
+}
+
 const DAY_META = {
   title: {zh:'Beam search 與 speculative decoding', en:'Beam search and speculative decoding'},
   sub: {zh:'一個改變輸出去找更好的句子，一個一個位元都不改只求更快',
@@ -603,6 +840,13 @@ const DAY_META = {
            en:'Width 1 is greedy (this model has real ties, so the sort must be stable). Widening to ' + BEAM[2].w + ' reaches rank ' + BEAM[2].rank + ' and to ' + BEAM[3].w + ' reaches rank ' + BEAM[3].rank + ', then stops: the best sentence\'s prefix was pruned early. A beam is a heuristic, not a maximiser, and it costs w sequences and w KV caches at every step.'},
      legend:[['#ff9736', {zh:'目前這個 width', en:'the width being shown'}],
              ['#12b3b8', {zh:'已經掃過的', en:'widths already shown'}]]},
+    {id:'lost', label:{zh:'它在哪一步輸掉', en:'where it loses the winner'},
+     stage:{zh:'被剪掉的是一個會追上來的前綴', en:'the pruned prefix was going to catch up'},
+     view:VIEW, code:CODE_LOST, build:lostFrames,
+     idea:{zh:'有標準答案就可以直接問「最佳句是在哪一步被丟掉的」：第 ' + LOST.step + ' 步、前綴 ' + JSON.stringify(LOST.prefix) + '，當下排第 ' + LOST.rank + ' 而 beam 只留 ' + LOST.width + ' 個。要 width ' + LOST.widths[LOST.widths.length - 1].w + ' 才找得到——最後一點品質要用掉大部分算力。',
+           en:'With an answer key the question becomes exact: the best sentence is dropped at step ' + LOST.step + ' on the prefix ' + JSON.stringify(LOST.prefix) + ', ranked ' + LOST.rank + ' when the beam keeps ' + LOST.width + '. It takes width ' + LOST.widths[LOST.widths.length - 1].w + ' to find it - the last bit of quality costs most of the compute.'},
+     legend:[['#12b3b8', {zh:'還活著的前綴', en:'prefix still alive'}],
+             ['#ff5c5c', {zh:'被剪掉的那一步', en:'the step where it is pruned'}]]},
     {id:'curse', label:{zh:'beam 的兩個毛病', en:'two things beams get wrong'},
      stage:{zh:'更寬不一定更好，而且偏好短句', en:'wider is not always better, and shorter always wins'},
      view:VIEW, code:CODE_CURSE, build:curseFrames,
@@ -625,6 +869,14 @@ const DAY_META = {
      legend:[['#9d6bff', {zh:'draft 的提議', en:'the draft\'s proposals'}],
              ['#12b3b8', {zh:'接受', en:'accepted'}],
              ['#ff5c5c', {zh:'拒絕並修補', en:'rejected and repaired'}]]},
+    {id:'onepass', label:{zh:'為什麼只要一次 forward', en:'why one pass is enough'},
+     stage:{zh:'causal mask 讓 gamma+1 個分佈一起出來', en:'the causal mask gives gamma+1 distributions at once'},
+     view:VIEW, code:CODE_ONE, build:oneFrames,
+     idea:{zh:'把 context 接上全部提議送進去一次：位置 i 的輸出只看得到左邊，所以「長度 i 的前綴」已經在這條序列裡了，' + ONE.rows.length + ' 個分佈一次算完。這跟訓練時的 teacher forcing 是同一個計算。decode 慢在每步重讀整個模型的權重，一次讀完驗 ' + ONE.rows.length + ' 個位置就是把那次讀攤掉。',
+           en:'Feed the context plus every proposal through once: the output at position i only sees tokens to its left, so the prefix of length i is already inside the sequence and all ' + ONE.rows.length + ' distributions come out of the same pass. It is the same computation as teacher forcing in training. Decode is bound by re-reading the weights every step, so verifying ' + ONE.rows.length + ' positions per read is what amortises it.'},
+     legend:[['#9d6bff', {zh:'draft 的提議', en:'the draft proposals'}],
+             ['#12b3b8', {zh:'一次算出的分佈', en:'distributions from one pass'}],
+             ['#ff9736', {zh:'白賺的那一個', en:'the free bonus token'}]]},
     {id:'exact', label:{zh:'為什麼這是免費的', en:'why this is free'},
      stage:{zh:'輸出分佈一個位元都沒變', en:'the output distribution does not move at all'},
      view:VIEW, code:CODE_EXACT, build:exactFrames,
@@ -640,6 +892,28 @@ const DAY_META = {
      legend:[['#ff9736', {zh:'接受率', en:'accept rate'}],
              ['#12b3b8', {zh:'每輪 token 數（實測）', en:'tokens per round, measured'}],
              ['#8fa3ac', {zh:'理論值', en:'what the formula predicts'}]]},
+    {id:'tree', label:{zh:'猜一棵樹', en:'draft a tree'},
+     stage:{zh:'同樣的位置預算，深度還是備胎', en:'the same budget: depth, or spares'},
+     view:VIEW, code:CODE_TREE, build:treeFrames,
+     idea:{zh:'一次 forward 能驗的位置是固定預算。chain 全花在深度，tree 留一部分給同一位置的備胎（殘差更新後仍然完全等於 target 分佈）。draft 爛的時候 tree 贏（order 1：' + TREE[0].tree.toFixed(2) + ' vs ' + TREE[0].chain.toFixed(2) + ' token/輪），draft 準的時候 chain 贏（order 3：' + TREE[2].chain.toFixed(2) + ' vs ' + TREE[2].tree.toFixed(2) + '）。這就是 EAGLE tree draft 要給 topk 旋鈕的原因。',
+           en:'One pass verifies a fixed budget of positions. A chain spends all of it on depth; a tree keeps some for a spare at the same position, and the residual update keeps the output exactly on the target distribution. A bad draft makes the tree win (order 1: ' + TREE[0].tree.toFixed(2) + ' against ' + TREE[0].chain.toFixed(2) + ' tokens per round) and a good draft makes the chain win (order 3: ' + TREE[2].chain.toFixed(2) + ' against ' + TREE[2].tree.toFixed(2) + '). That is why EAGLE-style drafting ships a topk knob.'},
+     legend:[['#12b3b8', {zh:'chain', en:'chain'}],
+             ['#9d6bff', {zh:'tree（含備胎）', en:'tree, with spares'}]]},
+    {id:'batch', label:{zh:'什麼時候反而變慢', en:'when it stops paying'},
+     stage:{zh:'拿算力換頻寬，而算力會用完', en:'compute for bandwidth, until the compute runs out'},
+     view:VIEW, code:CODE_BATCH, build:batchFrames,
+     idea:{zh:'70B 級：140 GB 權重 ÷ 5 TB/s ＝ 28 ms 的讀取。小 batch 時 GPU 在等權重，多驗幾個位置免費，加速 ≈ 每輪 token 數 ' + BATCH.perRound.toFixed(2) + '；batch 128 剩 ' + BATCH.rows[3].speedup.toFixed(2) + 'x、batch 512 只有 ' + BATCH.rows[4].speedup.toFixed(2) + 'x——**比不做還慢**。所以 speculation 要依當下 batch size 開關。',
+           en:'A 70B-class model reads 140 GB at 5 TB/s, a 28 ms step. At small batches the GPU waits for weights, so extra positions are free and the speedup is the tokens per round (' + BATCH.perRound.toFixed(2) + '). At batch 128 it is ' + BATCH.rows[3].speedup.toFixed(2) + 'x and at 512 only ' + BATCH.rows[4].speedup.toFixed(2) + 'x - slower than not speculating. Hence gating speculation on the running batch size.'},
+     legend:[['#12b3b8', {zh:'比不做快', en:'faster than not speculating'}],
+             ['#ff5c5c', {zh:'比不做慢', en:'slower than not speculating'}]]},
+    {id:'sglang', label:{zh:'在 SGLang 裡', en:'in SGLang'},
+     stage:{zh:'猜一棵樹，而不是一條鏈', en:'draft a tree instead of a chain'},
+     view:VIEW, code:CODE_SGLANG, build:sglangFrames,
+     idea:{zh:'`--speculative-eagle-topk` 讓 draft 變成一棵樹：每層留幾個分支，再用祖先遮罩一次驗證整棵樹——同一次昂貴 forward 裡塞更多候選。`NEXTN` 是模型自帶 MTP head（DeepSeek-V3、GLM）的版本。伺服器上要看的是 accepted length 對 batch size：拿算力換頻寬，小 batch 贏、大 batch 可能輸。',
+           en:'`--speculative-eagle-topk` turns the draft into a tree: several branches per level, all verified in one pass with an ancestor mask, so a single expensive forward carries more candidates. `NEXTN` is the version for models that ship their own MTP head (DeepSeek-V3, GLM). On a server, read accepted length against batch size: this spends compute to save bandwidth, so it wins at small batches and can lose at large ones.'},
+     legend:[['#ff9736', {zh:'目前這一列', en:'the row being shown'}],
+             ['#12b3b8', {zh:'SGLang 裡的名字', en:'what SGLang calls it'}],
+             ['#8fa3ac', {zh:'這個檔案裡的名字', en:'what this file calls it'}]]},
     {id:'vllm', label:{zh:'在 vLLM 裡', en:'in vLLM'},
      stage:{zh:'beam 搬家了，draft 可以沒有模型', en:'beam moved out, and the draft can be no model'},
      view:VIEW, code:CODE_VLLM, build:vllmFrames,
@@ -648,13 +922,5 @@ const DAY_META = {
      legend:[['#ff9736', {zh:'目前這一列', en:'the row being shown'}],
              ['#12b3b8', {zh:'vLLM 裡的名字', en:'what vLLM calls it'}],
              ['#8fa3ac', {zh:'這個檔案裡的名字', en:'what this file calls it'}]]},
-    {id:'sglang', label:{zh:'在 SGLang 裡', en:'in SGLang'},
-     stage:{zh:'猜一棵樹，而不是一條鏈', en:'draft a tree instead of a chain'},
-     view:VIEW, code:CODE_SGLANG, build:sglangFrames,
-     idea:{zh:'`--speculative-eagle-topk` 讓 draft 變成一棵樹：每層留幾個分支，再用祖先遮罩一次驗證整棵樹——同一次昂貴 forward 裡塞更多候選。`NEXTN` 是模型自帶 MTP head（DeepSeek-V3、GLM）的版本。伺服器上要看的是 accepted length 對 batch size：拿算力換頻寬，小 batch 贏、大 batch 可能輸。',
-           en:'`--speculative-eagle-topk` turns the draft into a tree: several branches per level, all verified in one pass with an ancestor mask, so a single expensive forward carries more candidates. `NEXTN` is the version for models that ship their own MTP head (DeepSeek-V3, GLM). On a server, read accepted length against batch size: this spends compute to save bandwidth, so it wins at small batches and can lose at large ones.'},
-     legend:[['#ff9736', {zh:'目前這一列', en:'the row being shown'}],
-             ['#12b3b8', {zh:'SGLang 裡的名字', en:'what SGLang calls it'}],
-             ['#8fa3ac', {zh:'這個檔案裡的名字', en:'what this file calls it'}]]}
   ]
 };

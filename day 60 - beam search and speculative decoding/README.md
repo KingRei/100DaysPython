@@ -9,7 +9,7 @@ the best token and the best sentence, a beam keeping several prefixes alive, the
 things beams get wrong, one round of draft-and-verify, the proof that the output
 distribution does not move, and the two knobs that control the speedup.
 
-![img](https://github.com/KingRei/100DaysPython/blob/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding/imgs/day60_1.png?raw=true)
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding/imgs/day60_0.png?raw=true)
 
 The previous day ended on a measurement: greedy decoding produces the **44th** most
 likely sentence out of the 1,250 this grammar admits. Picking the best character at
@@ -37,6 +37,19 @@ best sentence's prefix was pruned early, so no width reaches rank 1. A beam is a
 heuristic, not a maximiser. The cost is linear in the width: w sequences, w KV caches
 and w times the attention work at every step.
 
+## Where the beam actually loses
+
+Because the answer key exists, the failure can be located exactly. Follow the best
+sentence's prefix through a width-8 beam: it is dropped at **step 9**, on the prefix
+`'a small d'`, where its score ranked 10th of the 64 candidates while the beam keeps 8.
+Nothing recovers after that - every sentence starting with that prefix is gone with it.
+That is the real failure mode: not a wrong final comparison but a prefix that is
+temporarily behind and would have caught up (`a small d` looks worse than `the old r`
+until the word is finished).
+
+The best sentence is reachable, at a price: width 32 and 64 still miss it, and
+**width 128** finds it - sixteen times the beam that got within one rank of it.
+
 ## The two things beams get wrong
 
 **Wider is not monotonically better.** On a model trained on a smaller corpus, a
@@ -62,8 +75,11 @@ and chat models use the previous day's sampling.
 ![img](https://github.com/KingRei/100DaysPython/blob/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding/imgs/day60_2.png?raw=true)
 
 A cheap draft proposes `gamma` tokens; the expensive model verifies all of them in
-**one** forward pass, because scoring gamma positions is one pass while generating them
-would have been gamma. Each proposal is accepted with probability `min(1, p/q)`, the
+**one** forward pass. That is allowed because a causal model scores position i using
+only the tokens to its left, so running `context + all proposals` once produces the
+distribution at every one of the gamma+1 positions - the prefix of length i is already
+inside the longer sequence, with the mask hiding what follows it. It is the same
+computation as one training step on that sequence (teacher forcing). Each proposal is accepted with probability `min(1, p/q)`, the
 first rejection is replaced by a draw from the normalised positive part of `p - q`, and
 a round where everything is accepted emits a free bonus token.
 
@@ -95,11 +111,43 @@ wrong at branch points, so long runs of acceptance are far more common than a co
 the same average gives. That is why deployments report accepted *length* rather than
 accept rate.
 
-`decoding.py` closes with the matching sections for vLLM (beam search moved out of
-`SamplingParams` into `LLM.beam_search()`, `--speculative-config`, and the `ngram`
-method that needs no draft model at all) and SGLang (`--speculative-algorithm EAGLE3`,
-tree drafting via `--speculative-eagle-topk`, `NEXTN` for models with their own MTP
-head, and why accepted length has to be read against batch size).
+## Tree drafting, and when speculation stops paying
+
+A chain spends all its verified positions on depth. A tree spends some on siblings -
+two candidates for the same position, verified in the same pass, with the residual
+distribution updated between them so the output is still exactly the target's.
+
+| draft | chain tokens/round | tree tokens/round | tokens per verified position |
+|---|---|---|---|
+| order 1 | 1.65 | **1.96** | chain 0.41 / tree 0.68 |
+| order 2 | 3.54 | 3.32 | chain 0.88 / tree 0.91 |
+| order 3 | **4.41** | 3.72 | chain 1.10 / tree 0.97 |
+
+A bad draft makes the tree win, because the sibling rescues rounds the first candidate
+would have ended; a good draft makes the chain win, because every sibling is a position
+that bought nothing. That is the argument for EAGLE-style tree drafting, and the reason
+it ships as a topk knob rather than a default.
+
+And the speedup is not unconditional. Speculation buys memory bandwidth with compute:
+on a 70B-class model (140 GB of weights at 5 TB/s is a 28 ms read, 140 GFLOP per token
+at 1 PFLOP/s), with 4.41 tokens per round at gamma=4:
+
+| batch | plain step | speculative step | speedup |
+|---|---|---|---|
+| 1 - 32 | 28.0 ms | 28.0 ms | 4.41x |
+| 128 | 28.0 ms | 89.6 ms | 1.38x |
+| 512 | 71.7 ms | 358.4 ms | **0.88x** |
+
+At small batches the arithmetic units are idle waiting for weights, so the extra
+positions are free. Past the point where arithmetic fills the read they cost real time
+and the rejected ones are pure waste - at batch 512 this configuration is slower than
+not speculating at all, which is why servers gate speculation on the running batch size.
+
+`decoding.py` closes with the matching sections for SGLang (`--speculative-algorithm
+EAGLE3`, the tree above as `--speculative-eagle-topk` plus `--speculative-num-steps`
+and `--speculative-num-draft-tokens`, `NEXTN` for models with their own MTP head) and
+for vLLM (beam search moved out of `SamplingParams` into `LLM.beam_search()`,
+`--speculative-config`, and the `ngram` method that needs no draft model at all).
 
 ## Complexity
 

@@ -194,6 +194,39 @@ def length_bias(model, top=10):
                        for a in (0.0, 1.0)]}
 
 
+def where_the_beam_loses(model, width=8, prefix='\n'):
+    """Follow the best sentence's prefix and watch the step where it is dropped."""
+    best = exact_ranking(model)[0][1]
+    beams = [(0.0, prefix)]
+    for t in range(len(best) + 1):
+        target = prefix + best[:t + 1]
+        cand = []
+        for lp, text in beams:
+            lg = np.log(model.probs(text))
+            for i in np.argsort(-lg, kind='stable')[:width]:
+                cand.append((lp + float(lg[i]), text + model.vocab[i]))
+        cand.sort(key=lambda c: -c[0])
+        rank = next((j + 1 for j, c in enumerate(cand) if c[1] == target), None)
+        beams = cand[:width]
+        if rank is None or rank > width:
+            return {'best': best, 'step': t + 1, 'prefix': target[1:],
+                    'rank_among_candidates': rank, 'candidates': len(cand),
+                    'width': width}
+    return {'best': best, 'step': None, 'width': width}
+
+
+def width_needed(model, widths=(32, 64, 128, 256, 512)):
+    """How wide the beam has to be before it finds the enumerated best sentence."""
+    best = exact_ranking(model)[0][1]
+    rows = []
+    for w in widths:
+        text = beam_search(model, width=w)[1]
+        rows.append({'width': w, 'found': text == best, 'text': text})
+        if text == best:
+            break
+    return rows
+
+
 def parse(s):
     """Split a legal sentence back into its five grammar slots."""
     s = s.strip().rstrip('.')
@@ -292,6 +325,28 @@ def deterministic_accept_distribution(p, q):
     return out + rest * resid, float(out.sum())
 
 
+def verify_in_one_pass(model, ctx, proposals):
+    """Score every proposed position at once.
+
+    This is the step that makes the whole method pay, and it is worth being precise
+    about why it is possible.  A causal model scores position i from the tokens before
+    it, so feeding the context plus all gamma proposals through once produces the
+    distribution at each of the gamma+1 positions in the same pass - the prefix of
+    length i is already inside the sequence of length gamma.  It is exactly the shape
+    of a training step (teacher forcing), not a trick: the model never needed its own
+    output to score a token, only the tokens to its left.
+
+    One pass reads the weights once; generating the same gamma tokens would read them
+    gamma times, and decode is bound by that read.
+    """
+    out, c = [], ctx
+    for i in range(len(proposals) + 1):
+        out.append(model.probs(c))
+        if i < len(proposals):
+            c += model.vocab[proposals[i]]
+    return out
+
+
 def speculative_step(model, draft, ctx, gamma, rng):
     """One verification round: draft gamma tokens, verify them all, emit what sticks."""
     proposals, qs = [], []
@@ -341,6 +396,105 @@ def speculative_generate(model, draft, rng, n=100, gamma=4, max_len=80, prefix='
         lines.append(out)
     return lines, {'accept_rate': acc / drafted, 'rounds': rounds,
                    'tokens': tokens, 'per_round': tokens / rounds, 'gamma': gamma}
+
+
+def tree_step(model, draft, ctx, branches, rng):
+    """One round where the draft proposes several candidates per position.
+
+    `branches` is a list: branches[i] is how many alternatives to offer at depth i.
+    At each position the candidates are tried in turn with the same accept rule, and
+    a rejected candidate updates the residual distribution before the next sibling is
+    tried, so the emitted token still comes from the target distribution exactly.
+    """
+    emitted, nodes, c = [], 0, ctx
+    for k in branches:
+        q = draft.probs(c)
+        p = model.probs(c)
+        resid = p.copy()
+        chosen = None
+        tried = set()
+        for _ in range(k):                       # siblings, in draft order
+            i = int(rng.choice(len(q), p=q))
+            nodes += 1
+            if i in tried:                       # the draft repeated itself
+                continue
+            tried.add(i)
+            if rng.random() < min(1.0, resid[i] / max(q[i], 1e-300)):
+                chosen = i
+                break
+            resid = np.maximum(resid - q, 0.0)   # this sibling is spent
+            if resid.sum() <= 0:
+                break
+            resid = resid / resid.sum()
+        if chosen is None:
+            r = resid if resid.sum() > 0 else p
+            chosen = int(rng.choice(len(p), p=r / r.sum()))
+            emitted.append(chosen)
+            break
+        emitted.append(chosen)
+        c += model.vocab[chosen]
+    return emitted, nodes
+
+
+def tree_generate(model, draft, rng, n=40, branches=(2, 2, 1, 1), max_len=80,
+                  prefix='\n'):
+    lines, nodes, rounds, tokens = [], 0, 0, 0
+    for _ in range(n):
+        out = prefix
+        while len(out) < max_len:
+            ids, nd = tree_step(model, draft, out, branches, rng)
+            rounds += 1
+            nodes += nd
+            tokens += len(ids)
+            text = ''.join(model.vocab[i] for i in ids)
+            nl = text.find('\n')
+            out += text if nl < 0 else text[:nl + 1]
+            if nl >= 0:
+                break
+        lines.append(out)
+    return lines, {'per_round': tokens / rounds, 'nodes_per_round': nodes / rounds,
+                   'rounds': rounds}
+
+
+def tree_table(model, text, orders=(1, 2, 3), branches=(2, 2, 1, 1), gamma=4,
+               n=40, seed=6):
+    """Chain against tree, at the same depth, for drafts of three qualities.
+
+    The tree spends some of its verified positions on siblings instead of on depth.
+    Whether that pays depends entirely on how often the first candidate is rejected.
+    """
+    rows = []
+    for o in orders:
+        d = NGram(text, order=o)
+        rng = np.random.default_rng([seed, o])
+        _, ch = speculative_generate(model, d, rng, n=n, gamma=gamma)
+        rng = np.random.default_rng([seed, o])
+        _, tr = tree_generate(model, d, rng, n=n, branches=branches)
+        rows.append({'order': o, 'chain': ch['per_round'], 'chain_nodes': gamma,
+                     'tree': tr['per_round'], 'tree_nodes': tr['nodes_per_round'],
+                     'chain_per_node': ch['per_round'] / gamma,
+                     'tree_per_node': tr['per_round'] / tr['nodes_per_round']})
+    return rows
+
+
+def batch_model(tokens_per_round, gamma, batches=(1, 8, 32, 128, 512),
+                weight_bytes=140e9, bandwidth=5e12, flops_per_token=140e9,
+                flops=1e15):
+    """When speculation stops paying: it buys bandwidth with compute.
+
+    A decode step reads the weights once (weight_bytes / bandwidth) and does work
+    proportional to batch * positions.  Speculation turns one position into gamma+1
+    per sequence, so the read is amortised over more tokens - until the arithmetic
+    is what the step was waiting for.
+    """
+    read = weight_bytes / bandwidth
+    rows = []
+    for b in batches:
+        base = max(read, b * flops_per_token / flops)
+        spec = max(read, b * (gamma + 1) * flops_per_token / flops)
+        rows.append({'batch': b, 'base_ms': base * 1e3, 'spec_ms': spec * 1e3,
+                     'speedup': tokens_per_round * base / spec})
+    return rows
 
 
 def draft_table(model, text, orders=(1, 2, 3, 5), gamma=4, n=40, seed=3):
@@ -402,6 +556,24 @@ def check():
     # identical draft and target: everything is accepted, nothing changes
     out, acc = speculative_distribution(m.probs('\nthe '), m.probs('\nthe '))
     assert abs(acc - 1) < 1e-12 and float(np.abs(out - m.probs('\nthe ')).max()) < 1e-12
+    # one pass gives the same distributions as scoring the positions one at a time
+    props = [m.stoi[c] for c in 'ang ']
+    one = verify_in_one_pass(m, '\nthe old robot s', props)
+    ctx2 = '\nthe old robot s'
+    for i, p_ in enumerate(one):
+        assert float(np.abs(p_ - m.probs(ctx2)).max()) < 1e-15
+        if i < len(props):
+            ctx2 += m.vocab[props[i]]
+    assert len(one) == len(props) + 1          # gamma proposals, gamma+1 distributions
+    # the beam loses the best sentence at a specific step, and a wide enough beam wins
+    wl = where_the_beam_loses(m, width=8)
+    assert wl['step'] is not None and wl['rank_among_candidates'] > wl['width']
+    # tree drafting helps a bad draft and hurts a good one
+    tt = tree_table(m, text, orders=(1, 3), n=20)
+    assert tt[0]['tree'] > tt[0]['chain'] and tt[1]['tree'] < tt[1]['chain'], tt
+    # speculation stops paying at a large enough batch
+    bm_ = batch_model(4.4, 4)
+    assert bm_[0]['speedup'] > 4 and bm_[-1]['speedup'] < 1, bm_
     assert is_grammatical('the small cat sat on the mat.')
     assert not is_grammatical('the small cat sat on the moon.')
 
@@ -450,7 +622,27 @@ def main():
     print('  sequences at every step, which on a server is 8 times the KV cache of')
     print('  the previous days and 8 times the attention work.')
 
-    header('3. A wider beam is not always a better answer')
+    header('3. Where exactly the beam loses the best sentence')
+    wl = where_the_beam_loses(m, width=8)
+    print(f'  Follow the best sentence, {wl["best"]!r}, one character at a')
+    print('  time and watch its prefix in a width-8 beam:\n')
+    print(f'    dropped at step {wl["step"]}, on the prefix {wl["prefix"]!r}')
+    print(f'    at that step its score ranked {wl["rank_among_candidates"]} of the '
+          f'{wl["candidates"]} candidates,')
+    print(f'    and the beam keeps {wl["width"]}.')
+    print('\n  Nothing recovers after that: the prefix is gone, so every sentence')
+    print('  starting with it is gone too.  This is the actual failure mode of beam')
+    print('  search - not a wrong final comparison, a prefix that was behind early and')
+    print('  would have caught up.  "a small d" looks worse than "the old r" until the')
+    print('  word is finished.\n')
+    for r in width_needed(m):
+        mark = 'finds it' if r['found'] else 'still misses it'
+        print(f'    width {r["width"]:4d}   {mark}')
+    print('\n  So the best sentence is reachable - it costs a beam 16 times wider than')
+    print('  the one that got within one rank of it.  That is the shape of the whole')
+    print('  trade: the last bit of quality costs most of the compute.')
+
+    header('4. A wider beam is not always a better answer')
     small = NGram(make_corpus(400, seed=0))
     bm = beam_monotonicity(small)
     print('  On the model trained on a smaller corpus, scanning the width one step')
@@ -471,7 +663,7 @@ def main():
     print('  past a width of roughly 5 to 10, BLEU goes down while model probability')
     print('  goes up, which also says something uncomfortable about the model.')
 
-    header('4. Beam search prefers short sentences, and that is a bug')
+    header('5. Beam search prefers short sentences, and that is a bug')
     lb = length_bias(m)
     print('  Every character multiplies the score by something below 1, so a longer')
     print('  sentence is almost always less likely than a shorter one.  Across all')
@@ -491,7 +683,7 @@ def main():
     print('  beam truncates - and alpha is a heuristic with no derivation behind it,')
     print('  which is why papers report the value they used as a hyperparameter.')
 
-    header('5. What beam search is bad at')
+    header('6. What beam search is bad at')
     bd = beam_diversity(m)
     print(f'  The first 6 of the {bd["n"]} best sentences a wide beam returns:\n')
     for t in bd['beam'][:6]:
@@ -515,7 +707,7 @@ def main():
     print('  recognition, constrained extraction - which is where beam search is')
     print('  still the default.')
 
-    header('6. Speculative decoding: the opposite idea')
+    header('7. Speculative decoding: the opposite idea')
     print('  Beam search changes the output and costs more.  Speculative decoding')
     print('  changes nothing about the output and costs less.\n')
     print('  A cheap draft model proposes gamma tokens.  The expensive model scores')
@@ -525,7 +717,35 @@ def main():
     print('  accepted with probability min(1, p(x)/q(x)), and the first rejection is')
     print('  replaced by a draw from the normalised positive part of (p - q).')
 
-    header('7. It is exactly the target distribution, not approximately')
+    header('8. Why verifying gamma tokens costs one pass and not gamma')
+    print('  This is the step that makes the whole thing pay, and it is worth being')
+    print('  precise about why it is allowed.\n')
+    print('  A causal model scores position i using only the tokens to its left.  So')
+    print('  feeding "context + all gamma proposals" through once produces the')
+    print('  distribution at every one of the gamma+1 positions in that single pass:')
+    print('  the prefix of length 1 is already inside the sequence of length gamma,')
+    print('  with the mask hiding everything after it.  It is the same computation as')
+    print('  a training step on that sequence - teacher forcing - and the reason the')
+    print('  model never needed its own output to score a token.\n')
+    ctx = '\nthe old robot s'
+    props = [m.stoi[c] for c in 'ang ']
+    one = verify_in_one_pass(m, ctx, props)
+    print(f'  Verifying {len(props)} proposals after {ctx.strip()!r} gives '
+          f'{len(one)} distributions,')
+    print('  one per position, from one pass:\n')
+    c = ctx
+    for i, p_ in enumerate(one):
+        top = int(np.argmax(p_))
+        print(f'    position {i}: top {m.vocab[top]!r} at {p_[top]:.3f}'
+              + (f'   proposal was {m.vocab[props[i]]!r}' if i < len(props) else
+                 '   <- the free bonus token'))
+        if i < len(props):
+            c += m.vocab[props[i]]
+    print('\n  One pass reads the weights once.  Generating the same tokens reads them')
+    print('  once per token, and decode is bound by that read - which is why this')
+    print('  trades compute for bandwidth, and why section 13 ends with a batch size.')
+
+    header('9. What the accept rule does: the answers do not change at all')
     d2 = NGram(text, order=2)
     print('  Taking the accept route and the reject route together:\n')
     print('    P(emit x) = q(x)*min(1, p/q) + P(reject) * norm(p - q)+ (x) = p(x)\n')
@@ -550,7 +770,7 @@ def main():
     print('  out as min(p, q) at every token, and the residual draw is what puts the')
     print('  rest back.  Both halves are load-bearing.')
 
-    header('8. How good the draft has to be')
+    header('10. How good the draft has to be')
     print('  The draft is the same n-gram at a lower order: cheaper and worse.\n')
     print('  draft order   accept rate   tokens/round   grammatical   distinct')
     for r in draft_table(m, text):
@@ -561,7 +781,7 @@ def main():
     print('  draft is, and that is the point.  A terrible draft costs speed, never')
     print('  quality.  Only the middle columns move, and they move a lot.')
 
-    header('9. How far ahead to guess')
+    header('11. How far ahead to guess')
     d3 = NGram(text, order=3)
     print('  gamma   accept   tokens/round   theory   speedup vs one-at-a-time')
     for r in gamma_table(m, d3):
@@ -581,7 +801,69 @@ def main():
     print('  acceptance rate makes the extra proposals likely to be thrown away: every')
     print('  rejected token was drafted, verified, and discarded.')
 
-    header('10. In vLLM')
+    header('12. Drafting a tree instead of a chain')
+    print('  A chain spends all gamma verified positions on depth.  A tree spends')
+    print('  some of them on siblings: two candidates for the next character instead')
+    print('  of one, verified in the same pass.  Whether that pays depends entirely')
+    print('  on how often the first candidate is rejected.\n')
+    print('  draft      chain: tokens/round   tree: tokens/round   tokens per position')
+    for r in tree_table(m, text):
+        print(f'  order {r["order"]}    {r["chain"]:16.2f}   {r["tree"]:18.2f}   '
+              f'chain {r["chain_per_node"]:.2f} / tree {r["tree_per_node"]:.2f}')
+    print('\n  Read it as a crossover.  With a bad draft (order 1) the first candidate')
+    print('  is usually wrong, so a sibling rescues the round: the tree emits more')
+    print('  tokens per round *and* uses fewer verified positions doing it.  With a')
+    print('  good draft (order 3) the first candidate is usually right and every')
+    print('  sibling is a position that bought nothing, so the chain wins.')
+    print('\n  That is the whole argument for EAGLE-style tree drafting in a real')
+    print('  server, and also the reason it comes with a topk knob rather than a')
+    print('  default: the right shape depends on the acceptance rate you actually get.')
+
+    header('13. When speculation stops paying: batch size')
+    g = gamma_table(m, d3, gammas=(4,), n=30)[0]
+    print('  Speculation buys memory bandwidth with compute.  A decode step reads the')
+    print('  whole model once; speculation turns one position per sequence into')
+    print('  gamma+1, which is more arithmetic over the same read.\n')
+    print('  A 70B-class model: 140 GB of weights at 5 TB/s is a 28 ms read, and')
+    print(f'  140 GFLOP per token at 1 PFLOP/s.  With {g["per_round"]:.1f} tokens per '
+          f'round at gamma=4:\n')
+    print('   batch   plain step   speculative step   speedup')
+    for r in batch_model(g['per_round'], 4):
+        print(f'  {r["batch"]:6d}   {r["base_ms"]:8.1f} ms   {r["spec_ms"]:13.1f} ms   '
+              f'{r["speedup"]:6.2f}x')
+    print('\n  At batch 1 the GPU is idle waiting for weights, so the extra positions')
+    print('  are free and the speedup is the full tokens-per-round.  Past the point')
+    print('  where arithmetic fills the read, every extra position costs real time and')
+    print('  the rejected ones are pure waste - at batch 512 this configuration is')
+    print('  slower than not speculating at all.  This is why servers gate speculation')
+    print('  on the running batch size instead of turning it on globally, and why the')
+    print('  numbers in the tables above are necessary but not sufficient.')
+
+    header('14. In SGLang')
+    print('  Same idea, more of the machinery exposed:\n')
+    print('    python -m sglang.launch_server --model ... \\')
+    print('        --speculative-algorithm EAGLE3 \\')
+    print('        --speculative-draft-model-path <eagle head> \\')
+    print('        --speculative-num-steps 3 \\        # draft depth')
+    print('        --speculative-eagle-topk 4 \\       # branches kept per step')
+    print('        --speculative-num-draft-tokens 8   # nodes verified per round\n')
+    print('  The difference worth understanding: `--speculative-eagle-topk` means the')
+    print('  draft is a *tree*, not a chain.  Instead of one guess of length gamma it')
+    print('  proposes several branches and verifies them all in one pass with a mask')
+    print('  that lets every node attend only to its own ancestors.  More candidates')
+    print('  per round, one target pass - measured in section 12, with a better')
+    print('  shape.  Models that ship their own extra prediction head (MTP in')
+    print('  DeepSeek-V3 and GLM) are the same mechanism with the draft built in:')
+    print('  `--speculative-algorithm NEXTN`.')
+    print('\n  Two SGLang specifics worth carrying away.  `--speculative-num-steps`')
+    print('  is the depth and `--speculative-num-draft-tokens` is the number of nodes')
+    print('  verified per round, so the two together describe the tree of section 12 -')
+    print('  and the topk is what decides whether a position is spent on depth or on a')
+    print('  sibling.  And the server gates all of this on the running batch size, for')
+    print('  the reason section 13 measured: at a large enough batch the extra')
+    print('  positions stop being free.')
+
+    header('15. In vLLM')
     print('  Beam search is no longer a sampling parameter - it was moved out of')
     print('  SamplingParams into a separate `LLM.beam_search()` API, precisely')
     print('  because it is a different kind of thing: a search over sequences that')
@@ -601,30 +883,7 @@ def main():
     print('  a small head trained on the target model\'s own hidden states, which pushes')
     print('  the acceptance rate up without a second full model.')
 
-    header('11. In SGLang')
-    print('  Same idea, more of the machinery exposed:\n')
-    print('    python -m sglang.launch_server --model ... \\')
-    print('        --speculative-algorithm EAGLE3 \\')
-    print('        --speculative-draft-model-path <eagle head> \\')
-    print('        --speculative-num-steps 3 \\        # draft depth')
-    print('        --speculative-eagle-topk 4 \\       # branches kept per step')
-    print('        --speculative-num-draft-tokens 8   # nodes verified per round\n')
-    print('  The difference worth understanding: `--speculative-eagle-topk` means the')
-    print('  draft is a *tree*, not a chain.  Instead of one guess of length gamma it')
-    print('  proposes several branches and verifies them all in one pass with a mask')
-    print('  that lets every node attend only to its own ancestors.  More candidates')
-    print('  per round, one target pass - the same trade as section 9 with a better')
-    print('  shape.  Models that ship their own extra prediction head (MTP in')
-    print('  DeepSeek-V3 and GLM) are the same mechanism with the draft built in:')
-    print('  `--speculative-algorithm NEXTN`.')
-    print('\n  And the measurement that matters on a server is not the acceptance rate')
-    print('  but the accepted length per round against the batch size: speculation')
-    print('  spends compute to save memory bandwidth, so it wins at small batch sizes')
-    print('  (where decode is bandwidth-bound, the previous days) and can lose at')
-    print('  large ones, where the GPU was already busy and the wasted drafts cost')
-    print('  more than the saved passes.')
-
-    header('12. Assertions')
+    header('16. Assertions')
     check()
     print('all assertions passed')
 

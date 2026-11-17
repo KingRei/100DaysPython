@@ -31,7 +31,7 @@ li     { margin: .3em 0; }
 <p><em>100 Days of Python - day 60</em></p>
 <p>The previous day ended on a number I have not stopped thinking about. Greedy decoding - take the highest-probability character at every step - produces the 44th most likely sentence out of the 1,250 the grammar admits. Every step is optimal and the result is not. No temperature, top-k or top-p setting fixes that, because it is not a sampling problem.</p>
 <p>Today is two answers to it, pulling in opposite directions. Beam search changes the output to find a more probable sentence, and costs more. Speculative decoding changes nothing at all about the output and costs less. Both get checked against the enumeration, so neither gets to be plausible instead of correct.</p>
-<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding/imgs/day60_1.png?raw=true">
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding/imgs/day60_0.png?raw=true">
 <h2>The ground truth</h2>
 <p>The grammar is small enough to enumerate: 1,250 sentences, each scored exactly by summing its per-step log probabilities.</p>
 <pre><code>most likely    &#x27;a small dog sat in the garden.&#x27;    log p = -6.244
@@ -49,6 +49,16 @@ least likely   &#x27;a cat slept on the mat.&#x27;           log p = -9.173</cod
 <p>Two things in that table deserve more than a glance.</p>
 <p>The first is that width 1 is greedy - which took me a debugging detour to reproduce. This model has <em>exact ties</em>: two characters with identical probability to the last bit. <code>np.argmax</code> returns the first; <code>np.argsort</code> with the default quicksort does not promise to. The sort has to be stable, or the two algorithms disagree for no reason anyone would ever guess from the output.</p>
 <p>The second is that it stops at rank 5. Widening further never reaches rank 1, because the best sentence&#x27;s prefix was pruned early and nothing brings it back. Beam search is a heuristic, not a maximiser - the asserts in the file only check that no beam beats the enumerated optimum, not that it finds it. And the cost is linear in the width: width 8 runs the model on 8 sequences at every step, which is 8 KV caches and 8 times the attention work from the previous days.</p>
+<h2>Where the beam actually loses it</h2>
+<p>Because the answer key exists, the failure can be located to the character. Follow the best sentence&#x27;s prefix through a width-8 beam and ask, at every step, where it ranks among the candidates:</p>
+<pre><code>dropped at step 9, on the prefix &#x27;a small d&#x27;
+its score ranked 10 of the 64 candidates there, and the beam keeps 8</code></pre>
+<p>Nothing recovers after that. The prefix is gone, so every sentence starting with it is gone too. This is the real failure mode of beam search: not a wrong comparison at the end, but a prefix that is temporarily behind and would have caught up. <code>a small d</code> genuinely looks worse than <code>the old r</code> until the word is finished.</p>
+<p>The best sentence is reachable, at a price:</p>
+<pre><code>width  32   still misses it
+width  64   still misses it
+width 128   finds it</code></pre>
+<p>Sixteen times the beam that got within one rank of it, for one rank. That is the shape of this trade in general: the last bit of quality costs most of the compute, and every unit of width is another KV cache and another pass of attention.</p>
 <h2>Two things beam search gets wrong</h2>
 <p><strong>Wider is not monotonically better.</strong> On a model trained on a smaller corpus, scanning the width one value at a time:</p>
 <pre><code>width  1   log p  -6.188
@@ -62,7 +72,17 @@ width  4   log p  -6.224</code></pre>
 <p>Decode is slow for a reason that has nothing to do with arithmetic: every step re-reads the entire model from memory to produce one token. So the question is not &quot;how do we compute faster&quot; but &quot;how do we get more tokens out of one pass over the weights&quot;.</p>
 <img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding/imgs/day60_2.png?raw=true">
 <p>A cheap draft model proposes gamma tokens, one at a time - fine, it is cheap. Then the expensive model verifies <strong>all of them in a single forward pass</strong>, because scoring gamma positions is one pass while generating them would have been gamma. Each proposal is accepted with probability <code>min(1, p(x) / q(x))</code>: if the target likes the token at least as much as the draft did, it is always kept; if less, it is kept with probability p/q. The first rejection ends the round, and the rejected token is replaced by a draw from the normalised positive part of <code>p - q</code>. If nothing was rejected, the round emits a free bonus token, because the verification pass already produced the distribution for the next position.</p>
-<h2>Why that is free rather than usually fine</h2>
+<h2>Why verifying gamma tokens costs one pass and not gamma</h2>
+<p>This is the step the whole method stands on, and it is worth being precise about why it is allowed rather than waving at it.</p>
+<p>A causal model scores position i using only the tokens to its left. So feeding <code>context + all gamma proposals</code> through once produces the distribution at every one of the gamma+1 positions in that single pass: the prefix of length 1 is already inside the sequence of length gamma, with the mask hiding everything after it. It is the same computation as one training step on that sequence - teacher forcing - and it works because the model never needed its own output to score a token, only the tokens to its left.</p>
+<pre><code>verifying 4 proposals after &#x27;the old robot s&#x27;:
+  position 0: top &#x27;a&#x27; at 0.691   proposal was &#x27;a&#x27;
+  position 1: top &#x27;n&#x27; at 0.499   proposal was &#x27;n&#x27;
+  position 2: top &#x27;g&#x27; at 0.996   proposal was &#x27;g&#x27;
+  position 3: top &#x27; &#x27; at 0.996   proposal was &#x27; &#x27;
+  position 4: top &#x27;i&#x27; at 0.296   &lt;- the free bonus token</code></pre>
+<p>Five distributions, one pass. And one pass reads the weights once, while generating the same tokens reads them once per token. That is the entire saving, and it is also why this trades compute for bandwidth - a trade that has a limit, which is the last section below.</p>
+<h2>What the accept rule does: the answers do not change at all</h2>
 <pre><code>acc   = minimum(1, p / q)
 kept  = q * acc                      # mass that survives the coin flip
 rest  = 1 - kept.sum()               # probability of rejecting
@@ -89,6 +109,36 @@ out   = kept + rest * resid          # == p</code></pre>
 4      0.842   4.37                   3.65        3.12x
 8      0.760   7.08                   3.82        3.94x</code></pre>
 <p>The theory column is the textbook <code>(1 - a^(gamma+1)) / (1 - a)</code>, the expected tokens per round if every proposal were accepted independently with probability a. At gamma=8 the measurement is 7.08 against a predicted 3.82. The formula is not wrong; its assumption is. Acceptances are strongly correlated - the draft is right through a whole predictable stretch (<code>...in the gar|den.</code>) and wrong only at branch points - so long runs of acceptance are far more common than a coin with the same average would give. This is exactly why deployments report accepted <em>length</em> per round rather than an acceptance rate.</p>
+<h2>Drafting a tree instead of a chain</h2>
+<p>A chain spends all gamma verified positions on depth: guess further and further ahead. A tree spends some of them on siblings instead - two candidates for the <em>same</em> position, verified in the same pass. A rejected first candidate is followed by its sibling, with the residual distribution updated in between, so the emitted token still comes from the target distribution exactly.</p>
+<pre><code>draft    chain tokens/round  tree tokens/round  tokens per verified position
+-------  ------------------  -----------------  ----------------------------
+order 1  1.65                1.96               chain 0.41 / tree 0.68
+order 2  3.54                3.32               chain 0.88 / tree 0.91
+order 3  4.41                3.72               chain 1.10 / tree 0.97</code></pre>
+<p>Read it as a crossover. With a bad draft the first candidate is usually rejected, so a sibling rescues the round: the tree emits more tokens per round <em>and</em> uses fewer verified positions doing it. With a good draft the first candidate is usually right and every sibling is a position that bought nothing, so the chain wins.</p>
+<p>That is the whole argument for EAGLE-style tree drafting in a real server - and the reason it comes with a topk knob rather than a default, because the right shape depends on the acceptance rate you actually get.</p>
+<h2>When speculation stops paying: batch size</h2>
+<p>Everything above measures tokens per round, which is necessary and not sufficient. Speculation buys memory bandwidth with compute, and compute runs out.</p>
+<p>A decode step reads the whole model once. On a 70B-class model that is 140 GB at 5 TB/s, a 28 ms read, against 140 GFLOP per token at 1 PFLOP/s of arithmetic. Speculation turns one position per sequence into gamma+1, which is more arithmetic over the same read:</p>
+<pre><code>batch  plain step  speculative step  speedup
+-----  ----------  ----------------  -------
+1      28.0 ms     28.0 ms           4.41x
+8      28.0 ms     28.0 ms           4.41x
+32     28.0 ms     28.0 ms           4.41x
+128    28.0 ms     89.6 ms           1.38x
+512    71.7 ms     358.4 ms          0.88x</code></pre>
+<p>At batch 1 the arithmetic units are idle waiting for weights, so the extra positions are free and the speedup is the full tokens-per-round. Past the point where arithmetic fills the read, every extra position costs real time and every rejected one is pure waste - at batch 512 this configuration is <em>slower than not speculating at all</em>.</p>
+<p>This is why servers gate speculation on the running batch size rather than enabling it globally, and why an acceptance rate measured on an idle machine tells you almost nothing about what it will do under load.</p>
+<h2>In SGLang</h2>
+<pre><code>python -m sglang.launch_server --model ... \
+    --speculative-algorithm EAGLE3 \
+    --speculative-draft-model-path &lt;eagle head&gt; \
+    --speculative-num-steps 3 \        # draft depth
+    --speculative-eagle-topk 4 \       # branches kept per step
+    --speculative-num-draft-tokens 8   # nodes verified per round</code></pre>
+<p>The flag worth understanding is <code>--speculative-eagle-topk</code>. It means the draft is a <em>tree</em>, not a chain: several branches per level, all verified in one target pass using an attention mask that lets every node attend only to its own ancestors. The same single expensive forward carries more candidates - the trade above with a better shape. And <code>--speculative-algorithm NEXTN</code> is the same mechanism for models that ship their own extra prediction head, like the MTP layers in DeepSeek-V3 and GLM: the draft is built into the target.</p>
+<p>One thing the tables here cannot show. On a real server the number to watch is the accepted length per round <em>against the batch size</em>. Speculation spends compute to save memory bandwidth, so it wins when decode is bandwidth-bound - small batches, long contexts - and can lose at large batch sizes, where the GPU was already saturated and every rejected proposal is compute that bought nothing.</p>
 <h2>In vLLM</h2>
 <p>Beam search is no longer a sampling parameter. It was moved out of <code>SamplingParams</code> into its own call:</p>
 <pre><code>llm.beam_search(prompts, BeamSearchParams(beam_width=4, max_tokens=64))</code></pre>
@@ -102,15 +152,6 @@ out   = kept + rest * resid          # == p</code></pre>
   --speculative-config &#x27;{&quot;method&quot;: &quot;ngram&quot;, &quot;num_speculative_tokens&quot;: 4,
                          &quot;prompt_lookup_max&quot;: 4}&#x27;</code></pre>
 <p>The <code>ngram</code> method is this article&#x27;s draft model in production, and it runs no network whatsoever: it finds a matching span in the prompt and proposes whatever followed it last time. On summarisation, code editing and RAG - anywhere the answer repeats long spans of the input - it is close to free and works startlingly well. EAGLE and Medusa are the other end of the range: a small head trained on the target model&#x27;s own hidden states, which buys a much higher acceptance rate without a second full model.</p>
-<h2>In SGLang</h2>
-<pre><code>python -m sglang.launch_server --model ... \
-    --speculative-algorithm EAGLE3 \
-    --speculative-draft-model-path &lt;eagle head&gt; \
-    --speculative-num-steps 3 \        # draft depth
-    --speculative-eagle-topk 4 \       # branches kept per step
-    --speculative-num-draft-tokens 8   # nodes verified per round</code></pre>
-<p>The flag worth understanding is <code>--speculative-eagle-topk</code>. It means the draft is a <em>tree</em>, not a chain: several branches per level, all verified in one target pass using an attention mask that lets every node attend only to its own ancestors. The same single expensive forward carries more candidates - the trade above with a better shape. And <code>--speculative-algorithm NEXTN</code> is the same mechanism for models that ship their own extra prediction head, like the MTP layers in DeepSeek-V3 and GLM: the draft is built into the target.</p>
-<p>One thing the tables here cannot show. On a real server the number to watch is the accepted length per round <em>against the batch size</em>. Speculation spends compute to save memory bandwidth, so it wins when decode is bandwidth-bound - small batches, long contexts - and can lose at large batch sizes, where the GPU was already saturated and every rejected proposal is compute that bought nothing.</p>
 <h2>Where this comes back</h2>
 <p>Beam search over sequences is the same shape as the search problems from the graph days: expand the frontier, score it, prune it, and accept that pruning is where the errors live. And the accept/reject rule in speculative decoding is rejection sampling, which will turn up again whenever an algorithm needs samples from a distribution it can only evaluate pointwise - reinforcement learning is full of them.</p>
 <p>Code, notebook and an interactive walkthrough: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2060%20-%20beam%20search%20and%20speculative%20decoding">day 60 on GitHub</a>.</p>
