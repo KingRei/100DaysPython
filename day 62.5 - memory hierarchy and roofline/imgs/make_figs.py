@@ -1,4 +1,4 @@
-"""Figures for Day 63 - every number is computed by importing memory_hierarchy.py."""
+"""Figures for Day 62.5 - every number is computed by importing memory_hierarchy.py."""
 import os
 import sys
 
@@ -16,23 +16,25 @@ ROWS, MACH = M.roofline_table()
 
 def fig0():
     """The lead figure: the hierarchy, and the roofline that follows from it."""
-    fig, ax = canvas(10.6, 6.6, xlim=(0, 10.6), ylim=(0, 6.6))
-    text(ax, 5.3, 6.3, 'the memory hierarchy, and the line it draws', size=17)
-    levels = M.hierarchy_table()
-    widths = [1.3, 2.0, 2.9, 3.9, 5.0, 6.1]
+    fig, ax = canvas(10.6, 7.2, xlim=(0, 10.6), ylim=(0, 7.2))
+    text(ax, 5.3, 6.9, 'the memory hierarchy of an MI300X, and the line it draws',
+         size=16)
+    levels = M.hierarchy_table('MI300X')
+    widths = [0.9, 1.4, 2.0, 2.7, 3.5, 4.3, 5.0]
     for i, (r, w) in enumerate(zip(levels, widths)):
-        y = 5.4 - i * 0.72
-        box(ax, 0.7, y - 0.26, w, 0.52, label=r['name'], size=11)
-        text(ax, 7.1, y, f"{r['gbs']:,.0f} GB/s", size=11, ha='left', color=TEAL,
+        y = 6.1 - i * 0.74
+        text(ax, 3.25, y, r['name'], size=11, ha='right', color=TEAL_L, glowing=False)
+        box(ax, 3.4, y - 0.26, w, 0.52, label=None)
+        text(ax, 9.25, y, f"{r['gbs']:,.0f} GB/s", size=11, ha='right', color=TEAL,
              glowing=False)
-        text(ax, 9.9, y, f"{r['ns']:,.0f} ns", size=11, ha='right', color=GREY_L,
+        text(ax, 10.4, y, f"{r['ns']:,.0f} ns", size=11, ha='right', color=GREY_L,
              glowing=False)
-    text(ax, 0.7, 1.05, 'wider is bigger; every step down is slower and further away',
-         size=12, ha='left', color=GREY_L)
-    text(ax, 5.3, 0.55,
+    text(ax, 3.4, 1.0, 'wider is bigger; every step down is slower and further away '
+                        '(vendor specifications)', size=12, ha='center', color=GREY_L)
+    text(ax, 5.3, 0.5,
          f'a kernel doing fewer than {MACH.balance:.0f} FLOPs per byte cannot be '
          f'compute-bound, however it is written', size=13, color=CYAN)
-    save(fig, os.path.join(HERE, 'day63_0.png'))
+    save(fig, os.path.join(HERE, 'day62_5_0.png'))
 
 
 def fig1():
@@ -63,7 +65,7 @@ def fig1():
              color=GREY_L, glowing=False)
     text(ax, 5.2, 0.5, 'the prefetcher hides the hierarchy from one of these and not '
                        'the other', size=12, color=CYAN)
-    save(fig, os.path.join(HERE, 'day63_1.png'))
+    save(fig, os.path.join(HERE, 'day62_5_1.png'))
 
 
 def fig2():
@@ -106,7 +108,7 @@ def fig2():
              size=10, color=CYAN)
     text(ax, 5.2, 0.25, 'the same linear layer sits on both sides, depending only on '
                        'how many rows it has', size=12, color=GREY_L)
-    save(fig, os.path.join(HERE, 'day63_2.png'))
+    save(fig, os.path.join(HERE, 'day62_5_2.png'))
 
 
 def fig3():
@@ -131,22 +133,24 @@ def fig3():
     text(ax, 7.9, 5.1, 'attention at seq 4096', size=13, color=TEAL_L)
     bars = [('score matrix, resident', f['score_matrix_gb'], RED),
             ('standard, moved', f['standard_gb'], AMBER),
-            ('tiled, moved', f['tiled_gb'], TEAL)]
+            ('tiled, every level', f['tiled_gb'], GREY_L),
+            ('tiled, reaching HBM', f['tiled_hbm_gb'], TEAL)]
     top2 = max(b[1] for b in bars)
     for i, (name, v, col) in enumerate(bars):
-        y = 4.1 - i * 0.75
+        y = 4.2 - i * 0.62
         ax.add_patch(plt.Rectangle((6.4, y - 0.17), 2.6 * v / top2, 0.34,
                                    facecolor=col, edgecolor=col))
         text(ax, 6.4, y + 0.42, name, size=11, ha='left', color=GREY_L, glowing=False)
         text(ax, 9.2, y, f'{v:.2f} GB', size=10, ha='left', color=col, glowing=False)
-    text(ax, 7.9, 1.35, f'tiled never allocates the matrix at all:\n'
-                        f'{f["memory_ratio"]:,.0f}x the shared memory it runs in',
+    text(ax, 7.9, 1.25, f'the re-reads hit the Infinity Cache, not HBM;\n'
+                        f'and the matrix is never allocated at all\n'
+                        f'({f["memory_ratio"]:,.0f}x the LDS the kernel runs in)',
          size=11, color=CYAN)
-    save(fig, os.path.join(HERE, 'day63_3.png'))
+    save(fig, os.path.join(HERE, 'day62_5_3.png'))
 
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
     globals()['plt'] = plt
     fig0(); fig1(); fig2(); fig3()
-    print('wrote day63_0 day63_1 day63_2 day63_3')
+    print('wrote day62_5_0 day62_5_1 day62_5_2 day62_5_3')

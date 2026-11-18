@@ -1,170 +1,9 @@
-<!DOCTYPE html>
-<html lang="zh-Hant">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Day 63 - The memory hierarchy and the roofline: why some kernels never get faster / GPU 記憶體階層與 roofline：為什麼有些 kernel 再怎麼優化都不會變快</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='2' y='2' width='28' height='28' rx='7' fill='%23062434'/><circle cx='11' cy='12' r='4' fill='%2312b3b8'/><circle cx='21' cy='12' r='4' fill='%239d6bff'/><circle cx='16' cy='22' r='4' fill='%23ff9736'/></svg>">
-<style>
-:root{
-  --bg0:#04121c; --bg1:#062434; --card:rgba(6,36,52,.72);
-  --teal:#12b3b8; --teal-d:#0a6b74; --teal-l:#3fe0dd;
-  --purple:#9d6bff; --purple-d:#241542; --purple-l:#c7a6ff;
-  --orange:#ff9736; --orange-d:#3a2109; --orange-l:#ffbe6b;
-  --red:#ff5c5c; --grey:#8fa3ac; --pale:#dff2f5; --white:#ffffff;
-  --serif:"Latin Modern Roman","Liberation Serif",Georgia,"Times New Roman",serif;
-  --mono:"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
-}
-*{box-sizing:border-box}
-html,body{margin:0;padding:0}
-body{
-  background:
-    radial-gradient(900px 520px at 12% -8%,rgba(157,107,255,.20) 0%,rgba(157,107,255,0) 62%),
-    radial-gradient(900px 520px at 88% -4%,rgba(255,151,54,.16) 0%,rgba(255,151,54,0) 60%),
-    radial-gradient(1200px 800px at 50% 30%,#083041 0%,var(--bg1) 45%,var(--bg0) 100%);
-  color:var(--pale); font-family:var(--serif); min-height:100vh;
-  -webkit-font-smoothing:antialiased;
-}
-a{color:var(--teal-l)}
-.wrap{max-width:1180px;margin:0 auto;padding:26px 20px 60px}
-header{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-bottom:6px}
-h1{font-size:30px;margin:0;color:var(--white);letter-spacing:.4px;
-   text-shadow:0 0 16px rgba(63,224,221,.35)}
-.day{font-size:13px;letter-spacing:2.4px;text-transform:uppercase;color:var(--orange-l);
-     border:1px solid var(--orange);border-radius:999px;padding:4px 12px;
-     background:rgba(255,151,54,.10)}
-.sub{color:var(--grey);font-size:15px;margin:8px 0 20px;max-width:72ch;line-height:1.6}
-.spacer{flex:1}
-.lang{display:flex;border:1px solid var(--teal-d);border-radius:999px;overflow:hidden}
-.lang button{background:transparent;color:var(--teal-l);border:0;padding:5px 14px;
-  font-family:var(--serif);font-size:14px;cursor:pointer}
-.lang button.on{background:var(--teal);color:#022}
-.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
-.tabs button{
-  background:rgba(6,40,58,.75);border:1px solid rgba(18,179,184,.45);color:var(--pale);
-  padding:9px 16px;border-radius:9px;cursor:pointer;font-family:var(--serif);font-size:15px;
-  transition:.18s}
-.tabs button:hover{border-color:var(--teal-l);color:var(--white)}
-.tabs button.on{background:linear-gradient(135deg,var(--teal) 0%,var(--purple) 140%);
-  border-color:var(--teal-l);color:#03222a;box-shadow:0 0 18px rgba(18,179,184,.30)}
-.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:18px}
-@media(max-width:900px){.grid{grid-template-columns:1fr}}
-.card{background:var(--card);border:1px solid rgba(18,179,184,.28);border-radius:13px;
-      padding:14px 16px}
-.card h3{margin:0 0 10px;font-size:14px;letter-spacing:2px;text-transform:uppercase;
-         color:var(--teal-l);font-weight:normal}
-svg.stage{width:100%;height:auto;display:block;touch-action:none}
-svg.stage text{font-family:var(--serif);user-select:none}
-.narr{min-height:52px;margin-top:10px;padding:10px 12px;border-left:3px solid var(--orange);
-      background:rgba(255,151,54,.07);font-size:16px;line-height:1.55;color:var(--white)}
-.narr code{font-family:var(--mono);font-size:14px;color:var(--orange-l)}
-.narr b{color:var(--orange-l);font-weight:normal}
-.ctrl{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
-.ctrl button{background:rgba(6,40,58,.9);border:1px solid var(--teal-d);color:var(--teal-l);
-  border-radius:8px;padding:7px 13px;cursor:pointer;font-family:var(--serif);font-size:15px;
-  min-width:44px;transition:.15s}
-.ctrl button:hover:not(:disabled){background:var(--teal);color:#03222a}
-.ctrl button:disabled{opacity:.35;cursor:default}
-.ctrl .play{min-width:92px;font-weight:bold;border-color:var(--orange);color:var(--orange-l)}
-.ctrl .play:hover{background:var(--orange);color:#2a1400}
-.ctrl input[type=range]{width:120px;accent-color:var(--purple)}
-.stepno{color:var(--grey);font-size:14px;font-family:var(--mono)}
-.chips{display:flex;flex-wrap:wrap;gap:6px;min-height:30px}
-.chip{border:1px solid var(--teal-d);border-radius:6px;padding:3px 9px;font-family:var(--mono);
-      font-size:14px;color:var(--pale);background:rgba(18,179,184,.10)}
-.chip.hot{border-color:var(--orange);color:var(--orange-l);background:rgba(255,151,54,.14)}
-.chip.act{border-color:var(--purple);color:var(--purple-l);background:rgba(157,107,255,.16)}
-.chip.ok{border-color:var(--teal-l);color:var(--teal-l);background:rgba(63,224,221,.12)}
-.chip.dim{border-color:#2f5661;color:var(--grey);background:transparent}
-.chip.bad{border-color:var(--red);color:#ff9a9a;background:rgba(255,92,92,.14)}
-.chip.empty{border-style:dashed;color:var(--grey);border-color:#2f5661}
-.panel+.panel{margin-top:12px}
-.panel .lbl{font-size:13px;letter-spacing:1.6px;text-transform:uppercase;color:var(--grey);
-  margin-bottom:5px}
-pre.code{margin:0;font-family:var(--mono);font-size:13.5px;line-height:1.72;overflow-x:auto;
-  color:#a8c8d0}
-pre.code .ln{display:block;padding:0 8px;border-left:3px solid transparent;white-space:pre}
-pre.code .ln.on{background:rgba(255,151,54,.12);border-left-color:var(--orange);color:var(--white)}
-pre.code .cm{color:#5f7b85;font-style:italic}
-.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:13.5px;color:var(--grey)}
-.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;
-  vertical-align:-1px;border:1px solid rgba(255,255,255,.22)}
-.note{font-size:15px;line-height:1.65;color:var(--pale)}
-.note b{color:var(--purple-l);font-weight:normal}
-.note code{font-family:var(--mono);font-size:13.5px;color:var(--teal-l)}
-.toggle-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
-.toggle-row button{border:1px solid rgba(18,179,184,.45);border-radius:8px;padding:6px 13px;
-  cursor:pointer;font-family:var(--serif);font-size:14px;
-  background:rgba(6,40,58,.75);color:var(--pale)}
-.toggle-row button.on{background:var(--purple);border-color:var(--purple-l);color:#150a2b}
-footer{margin-top:32px;padding-top:16px;border-top:1px solid rgba(18,179,184,.25);
-  color:var(--grey);font-size:14px;display:flex;gap:18px;flex-wrap:wrap}
-</style>
-</head>
-<body>
-<div class="wrap">
-<header>
-  <span class="day">Day 63</span>
-  <h1 data-i18n="title">GPU 記憶體階層與 roofline：為什麼有些 kernel 再怎麼優化都不會變快</h1>
-  <span class="spacer"></span>
-  <div class="lang">
-    <button id="btn-zh" class="on" onclick="setLang('zh')">中文</button>
-    <button id="btn-en" onclick="setLang('en')">EN</button>
-  </div>
-</header>
-<p class="sub" data-i18n="sub">這個系列裡每一個效能數字最後都是記憶體數字——decode 慢是因為每個 token 都要讀一遍權重、KV cache 是容量上限、MoE 是通訊問題、量化有用是因為位元變少。這一天把底下那個模型寫出來：階層長什麼樣、roofline 怎麼決定一個 kernel 是被算力還是被記憶體卡住，以及 tiling（包含 FlashAttention）為什麼是唯一能提高運算密度的辦法。</p>
-
-<div class="tabs" id="tabs"></div>
-
-<div class="grid">
-  <div>
-    <div class="card">
-      <h3 id="stage-title"></h3>
-      <svg class="stage" id="stage" viewBox="0 0 10 6.4" preserveAspectRatio="xMidYMid meet"></svg>
-      <div class="legend" id="legend"></div>
-      <div class="narr" id="narr"></div>
-      <div class="ctrl">
-        <button onclick="reset()" title="reset">⟲</button>
-        <button id="prev" onclick="step(-1)">◀</button>
-        <button class="play" id="play" onclick="togglePlay()" data-i18n="play">▶ 播放</button>
-        <button id="next" onclick="step(1)">▶</button>
-        <span class="stepno" id="stepno">0 / 0</span>
-        <span class="spacer"></span>
-        <span style="font-size:13px;color:var(--grey)" data-i18n="speed">速度</span>
-        <input type="range" id="speed" min="180" max="1600" step="20" value="820">
-      </div>
-      <div class="toggle-row" id="extra"></div>
-    </div>
-  </div>
-  <div>
-    <div class="card" id="state-card">
-      <h3 data-i18n="state">演算法狀態</h3>
-      <div id="panels"></div>
-    </div>
-    <div class="card" style="margin-top:18px">
-      <h3 data-i18n="code">程式碼</h3>
-      <pre class="code" id="code"></pre>
-    </div>
-    <div class="card" style="margin-top:18px">
-      <h3 data-i18n="idea">重點</h3>
-      <div class="note" id="idea"></div>
-    </div>
-  </div>
-</div>
-
-<footer>
-  <span>100 Days of Python — Day 63</span>
-  <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2063%20-%20memory%20hierarchy%20and%20roofline" target="_blank" rel="noopener">GitHub</a>
-  <a href="https://medium.com/100-days-of-python" target="_blank" rel="noopener">Medium</a>
-</footer>
-</div>
-<script>
-// DAY: 63
+// DAY: 62.5
 // TITLE_ZH: GPU 記憶體階層與 roofline：為什麼有些 kernel 再怎麼優化都不會變快
 // TITLE_EN: The memory hierarchy and the roofline: why some kernels never get faster
 // SUB_ZH: 這個系列裡每一個效能數字最後都是記憶體數字——decode 慢是因為每個 token 都要讀一遍權重、KV cache 是容量上限、MoE 是通訊問題、量化有用是因為位元變少。這一天把底下那個模型寫出來：階層長什麼樣、roofline 怎麼決定一個 kernel 是被算力還是被記憶體卡住，以及 tiling（包含 FlashAttention）為什麼是唯一能提高運算密度的辦法。
 // SUB_EN: Every performance number in this series turned out to be a memory number: decode is slow because it reads the weights once per token, the KV cache is the capacity limit, MoE is a communication problem, quantization helps because fewer bits means fewer bytes. This day writes down the model underneath: the hierarchy, the roofline that decides whether a kernel is limited by arithmetic or by memory, and why tiling - FlashAttention included - is the only way to raise arithmetic intensity.
-// FOLDER: day%2063%20-%20memory%20hierarchy%20and%20roofline
+// FOLDER: day%2062.5%20-%20memory%20hierarchy%20and%20roofline
 // MEDIUM: https://medium.com/100-days-of-python
 const VIEW = [9.8, 6.4];
 function chip(t, cls){ return {t:t, cls:cls || ''}; }
@@ -228,17 +67,17 @@ function polyline(sh, panel, pts, st, w){
   return sh;
 }
 const FRAG = {"reqs": 240, "rejC": 12, "rejFrag": 12, "rejP": 5, "utilC": 65.7, "utilP": 68.5, "capacity": 16384};
-const HIER = [{"name": "registers", "gbs": 100000.0, "ns": 1, "cap": 262144}, {"name": "shared memory / LDS", "gbs": 20000.0, "ns": 20, "cap": 163840}, {"name": "L2 cache", "gbs": 7000.0, "ns": 200, "cap": 52428800}, {"name": "HBM", "gbs": 5300.0, "ns": 600, "cap": 206158430208}, {"name": "host memory over PCIe", "gbs": 64.0, "ns": 2000, "cap": 1099511627776}, {"name": "another node over RDMA", "gbs": 50.0, "ns": 10000, "cap": 0}];
-const SEQ = [{"kb": 64, "gbs": 9.7}, {"kb": 256, "gbs": 11.5}, {"kb": 1024, "gbs": 11.2}, {"kb": 4096, "gbs": 12.9}, {"kb": 16384, "gbs": 12.8}, {"kb": 65536, "gbs": 13.3}, {"kb": 262144, "gbs": 13.0}];
-const RND = [{"kb": 16, "ns": 1.98}, {"kb": 64, "ns": 2.17}, {"kb": 256, "ns": 2.51}, {"kb": 1024, "ns": 3.59}, {"kb": 4096, "ns": 8.86}, {"kb": 16384, "ns": 11.42}, {"kb": 65536, "ns": 13.4}];
-const RF = [{"name": "decode: one linear (GEMV)", "ai": 1.0, "bound": "memory", "ms": 0.022}, {"name": "prefill: one linear (GEMM)", "ai": 3185.78, "bound": "compute", "ms": 0.37}, {"name": "decode: attention over KV", "ai": 1.0, "bound": "memory", "ms": 0.013}, {"name": "prefill: attention (no tiling)", "ai": 128.0, "bound": "memory", "ms": 0.405}, {"name": "RMSNorm", "ai": 1.0, "bound": "memory", "ms": 0.013}, {"name": "residual add", "ai": 0.17, "bound": "memory", "ms": 0.019}, {"name": "softmax over the vocabulary", "ai": 1.25, "bound": "memory", "ms": 0.0}, {"name": "decode: the whole model", "ai": 1.0, "bound": "memory", "ms": 26.415}];
-const MACH = {"tflops": 1300.0, "gbs": 5300.0, "balance": 245.3};
-const BATCH = [{"b": 1, "ai": 1.0, "bound": "memory", "ms": 0.022, "us": 22.16}, {"b": 4, "ai": 4.0, "bound": "memory", "ms": 0.022, "us": 5.54}, {"b": 16, "ai": 15.96, "bound": "memory", "ms": 0.022, "us": 1.39}, {"b": 64, "ai": 63.43, "bound": "memory", "ms": 0.022, "us": 0.35}, {"b": 256, "ai": 247.17, "bound": "compute", "ms": 0.023, "us": 0.09}, {"b": 1024, "ai": 896.0, "bound": "compute", "ms": 0.093, "us": 0.09}];
+const HIER = {"MI300X": [{"name": "registers (VGPR per CU)", "gbs": 100000.0, "ns": 1, "cap": 524288, "src": "estimate"}, {"name": "LDS / shared memory per CU", "gbs": 20000.0, "ns": 20, "cap": 65536, "src": "estimate"}, {"name": "L2 per XCD (8 of them)", "gbs": 10000.0, "ns": 200, "cap": 4194304, "src": "estimate"}, {"name": "Infinity Cache (MALL)", "gbs": 17000.0, "ns": 300, "cap": 268435456, "src": "spec"}, {"name": "HBM3", "gbs": 5300.0, "ns": 600, "cap": 206158430208, "src": "spec"}, {"name": "host memory over PCIe 5 x16", "gbs": 64.0, "ns": 2000, "cap": 0, "src": "spec"}, {"name": "another node over RDMA", "gbs": 50.0, "ns": 10000, "cap": 0, "src": "spec"}], "H200 SXM": [{"name": "registers (per SM)", "gbs": 100000.0, "ns": 1, "cap": 262144, "src": "estimate"}, {"name": "shared memory per SM", "gbs": 20000.0, "ns": 20, "cap": 233472, "src": "estimate"}, {"name": "L2 cache", "gbs": 7000.0, "ns": 200, "cap": 52428800, "src": "estimate"}, {"name": "HBM3e", "gbs": 4800.0, "ns": 600, "cap": 151397597184, "src": "spec"}, {"name": "host memory over PCIe 5 x16", "gbs": 64.0, "ns": 2000, "cap": 0, "src": "spec"}, {"name": "another node over RDMA", "gbs": 50.0, "ns": 10000, "cap": 0, "src": "spec"}], "H100 SXM": [{"name": "registers (per SM)", "gbs": 100000.0, "ns": 1, "cap": 262144, "src": "estimate"}, {"name": "shared memory per SM", "gbs": 20000.0, "ns": 20, "cap": 233472, "src": "estimate"}, {"name": "L2 cache", "gbs": 7000.0, "ns": 200, "cap": 52428800, "src": "estimate"}, {"name": "HBM3", "gbs": 3350.0, "ns": 600, "cap": 85899345920, "src": "spec"}, {"name": "host memory over PCIe 5 x16", "gbs": 64.0, "ns": 2000, "cap": 0, "src": "spec"}, {"name": "another node over RDMA", "gbs": 50.0, "ns": 10000, "cap": 0, "src": "spec"}]};
+const SPECS = {"MI300X": {"vendor": "AMD, CDNA 3", "tflops": 1307.0, "balance": 246.6, "hbm": 5300.0}, "H200 SXM": {"vendor": "NVIDIA, Hopper", "tflops": 990.0, "balance": 206.2, "hbm": 4800.0}, "H100 SXM": {"vendor": "NVIDIA, Hopper", "tflops": 990.0, "balance": 295.5, "hbm": 3350.0}};
+const SEQ = [{"kb": 64, "gbs": 17.7}, {"kb": 256, "gbs": 23.8}, {"kb": 1024, "gbs": 23.5}, {"kb": 4096, "gbs": 25.4}, {"kb": 16384, "gbs": 12.1}, {"kb": 65536, "gbs": 19.3}, {"kb": 262144, "gbs": 15.1}];
+const RND = [{"kb": 16, "ns": 1.4}, {"kb": 64, "ns": 1.05}, {"kb": 256, "ns": 1.12}, {"kb": 1024, "ns": 2.29}, {"kb": 4096, "ns": 7.04}, {"kb": 16384, "ns": 11.29}, {"kb": 65536, "ns": 11.12}];
+const RF = [{"name": "decode: one linear (GEMV)", "ai": 1.0, "bound": "memory", "ms": 0.022}, {"name": "prefill: one linear (GEMM)", "ai": 3185.78, "bound": "compute", "ms": 0.368}, {"name": "decode: attention over KV", "ai": 1.0, "bound": "memory", "ms": 0.013}, {"name": "prefill: attention (no tiling)", "ai": 128.0, "bound": "memory", "ms": 0.405}, {"name": "RMSNorm", "ai": 1.0, "bound": "memory", "ms": 0.013}, {"name": "residual add", "ai": 0.17, "bound": "memory", "ms": 0.019}, {"name": "softmax over the vocabulary", "ai": 1.25, "bound": "memory", "ms": 0.0}, {"name": "decode: the whole model", "ai": 1.0, "bound": "memory", "ms": 26.415}];
+const MACH = {"name": "MI300X", "tflops": 1307.0, "gbs": 5300.0, "balance": 246.6};
+const BATCH = [{"b": 1, "ai": 1.0, "bound": "memory", "ms": 0.022, "us": 22.16}, {"b": 4, "ai": 4.0, "bound": "memory", "ms": 0.022, "us": 5.54}, {"b": 16, "ai": 15.96, "bound": "memory", "ms": 0.022, "us": 1.39}, {"b": 64, "ai": 63.43, "bound": "memory", "ms": 0.022, "us": 0.35}, {"b": 256, "ai": 247.17, "bound": "compute", "ms": 0.023, "us": 0.09}, {"b": 1024, "ai": 896.0, "bound": "compute", "ms": 0.092, "us": 0.09}];
 const TILE = {"n": 4096, "tile": 104, "naiveGB": 549.8, "tiledGB": 5.35, "ratio": 102.7, "naiveAI": 0.25, "tiledAI": 25.67, "sweep": [{"t": 8, "fits": true, "gb": 68.79, "ai": 2.0}, {"t": 16, "fits": true, "gb": 34.43, "ai": 3.99}, {"t": 32, "fits": true, "gb": 17.25, "ai": 7.97}, {"t": 64, "fits": true, "gb": 8.66, "ai": 15.88}, {"t": 128, "fits": false, "gb": 4.36, "ai": 31.51}, {"t": 256, "fits": false, "gb": 2.21, "ai": 62.06}, {"t": 512, "fits": false, "gb": 1.14, "ai": 120.47}]};
-const FL = {"seq": 4096, "block": 160, "passes": 26, "standard_gb": 4.429, "tiled_gb": 1.812, "ratio": 2.444, "standard_ai": 62.061, "tiled_ai": 151.704, "score_matrix_gb": 1.074, "resident_kb": 160.0, "memory_ratio": 6553.6, "standard_passes": 4, "scaling": [{"seq": 512, "std": 0.08, "tiled": 0.04, "ratio": 2.0, "mat": 0.02}, {"seq": 2048, "std": 1.14, "tiled": 0.47, "ratio": 2.4, "mat": 0.27}, {"seq": 8192, "std": 17.45, "tiled": 7.11, "ratio": 2.5, "mat": 4.29}, {"seq": 32768, "std": 275.95, "tiled": 110.6, "ratio": 2.5, "mat": 68.72}]};
+const FL = {"seq": 4096, "block": 64, "passes": 64, "standard_gb": 4.429, "tiled_gb": 4.362, "tiled_hbm_gb": 0.134, "ratio": 1.015, "ratio_hbm": 33.0, "standard_ai": 62.061, "tiled_ai": 2048.0, "score_matrix_gb": 1.074, "kv_per_head_mb": 2.097, "kv_fits_cache": true, "cache_mb": 268.435, "sram_kb": 64.0, "memory_ratio": 16384.0, "standard_passes": 4, "scaling": [{"seq": 512, "std": 0.08, "hbm": 0.02, "ratio": 5.0, "mat": 0.02, "fits": true}, {"seq": 2048, "std": 1.14, "hbm": 0.07, "ratio": 17.0, "mat": 0.27, "fits": true}, {"seq": 8192, "std": 17.45, "hbm": 0.27, "ratio": 65.0, "mat": 4.29, "fits": true}, {"seq": 32768, "std": 275.95, "hbm": 1.07, "ratio": 257.0, "mat": 68.72, "fits": true}]};
 const LIT = {"bandwidth_gbs": 5300.0, "latency_ns": 600.0, "bytes_in_flight": 3180000.0, "requests_in_flight": 24843.8, "bytes_per_request": 128};
-const ST = [{"s": 1, "useful": 16.78, "fetched": 16.78, "eff": 1.0, "ms": 1.1}, {"s": 2, "useful": 8.39, "fetched": 16.78, "eff": 0.5, "ms": 0.97}, {"s": 4, "useful": 4.19, "fetched": 16.78, "eff": 0.25, "ms": 0.91}, {"s": 8, "useful": 2.1, "fetched": 16.78, "eff": 0.125, "ms": 1.09}, {"s": 16, "useful": 1.05, "fetched": 16.78, "eff": 0.062, "ms": 0.89}, {"s": 32, "useful": 0.52, "fetched": 8.39, "eff": 0.062, "ms": 0.47}];
-
+const ST = [{"s": 1, "useful": 16.78, "fetched": 16.78, "eff": 1.0, "ms": 0.86}, {"s": 2, "useful": 8.39, "fetched": 16.78, "eff": 0.5, "ms": 0.71}, {"s": 4, "useful": 4.19, "fetched": 16.78, "eff": 0.25, "ms": 0.49}, {"s": 8, "useful": 2.1, "fetched": 16.78, "eff": 0.125, "ms": 0.42}, {"s": 16, "useful": 1.05, "fetched": 16.78, "eff": 0.062, "ms": 0.59}, {"s": 32, "useful": 0.52, "fetched": 8.39, "eff": 0.062, "ms": 0.35}];
 const LOG = (v, lo, hi) => (Math.log(Math.max(v, lo)) / Math.LN10 - Math.log(lo) / Math.LN10)
                            / (Math.log(hi) / Math.LN10 - Math.log(lo) / Math.LN10);
 
@@ -255,38 +94,60 @@ const CODE_HIER = [
 ];
 function hierStage(o){
   const sh = [];
-  const w = [1.3, 2.1, 3.0, 4.1, 5.3, 6.6];
-  HIER.forEach((r, i) => {
+  const name = o.machine || 'MI300X';
+  const rows = HIER[name];
+  const w = [0.8, 1.3, 1.9, 2.6, 3.4, 4.2, 4.9];
+  rows.forEach((r, i) => {
     if (i > o.upto) return;
-    const y = 4.55 - i * .72;
-    sh.push(box(.70, y, w[i], .54, i === o.upto ? 'hot' : 'ok', r.name, .25));
-    sh.push(fitT(7.60, y + .27, r.gbs.toLocaleString() + ' GB/s',
-                 {anchor:'start', c:COL.pale, fs:.24}));
-    sh.push(fitT(9.30, y + .27, r.ns.toLocaleString() + ' ns',
-                 {anchor:'end', c:COL.grey, fs:.24}));
+    const y = 4.55 - i * .62;
+    sh.push(fitT(3.30, y + .27, r.name, {anchor:'end', c:COL.tealL, fs:.24}));
+    sh.push(S.r(3.45, y, w[i], .50, i === o.upto ? 'hot' : 'ok', null));
+    sh.push(fitT(8.95, y + .27, r.gbs.toLocaleString() + ' GB/s (' +
+                 (r.src === 'spec' ? 'spec' : 'est.') + ')',
+                 {anchor:'end', c:COL.pale, fs:.23}));
+    sh.push(fitT(9.60, y + .27, r.ns.toLocaleString() + ' ns', {anchor:'end', c:COL.grey, fs:.22}));
   });
-  sh.push(fitT(.70, 5.05, {zh:'越寬＝容量越大；每往下一層都更慢、更遠',
-                           en:'wider is bigger; every step down is slower and further away'},
+  sh.push(fitT(.70, 5.05, {zh:name + '（' + SPECS[name].vendor + '，' + SPECS[name].tflops.toFixed(0) + ' TFLOP/s bf16）：越寬＝容量越大',
+                           en:name + ' (' + SPECS[name].vendor + ', ' + SPECS[name].tflops.toFixed(0) + ' TFLOP/s bf16) - wider is bigger'},
                {anchor:'start', c:COL.grey, fs:.26}));
   return caps(sh, o);
 }
 function hierFrames(){
   const F = new Frames();
   const p = (o) => F.push({shapes:hierStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
-  p({upto:2, line:1,
-    cap:{zh:'晶片裡面：暫存器、shared memory、L2', en:'on the chip: registers, shared memory, L2'},
+  p({upto:3, machine:'MI300X', line:1,
+    cap:{zh:'晶片裡面：暫存器、LDS、L2、Infinity Cache',
+         en:'on the chip: registers, LDS, L2 and the Infinity Cache'},
     panels:[{lbl:'registers', chips:[chip('100,000 GB/s', 'ok')]},
             {lbl:'shared', chips:[chip('20,000 GB/s', 'act')]},
             {lbl:'L2', chips:[chip('7,000 GB/s', 'dim')]}],
-    msg:{zh:'每一層大約比上一層慢一個數量級、大兩個數量級。晶片內的三層加起來只有幾十 MB——所有「把資料留在這裡」的優化，爭的都是這幾十 MB。',
-         en:'Each level is roughly an order of magnitude slower and two orders larger than the one above. The three on-chip levels add up to a few tens of megabytes, and every optimisation that tries to keep data close is competing for exactly those.'}});
-  p({upto:HIER.length - 1, line:7,
+    msg:{zh:'先說來源：標 (spec) 的是廠商公布的（產品頁、data sheet、CDNA 3／Hopper 白皮書、PCIe 與乙太標準），標 (est.) 的是我自己估的數量級——**晶片內部的頻寬與延遲幾乎不會寫在規格書上**，所以那些全是估計值。每一層大約比上一層慢一個數量級、大兩個數量級；晶片內的幾層加起來只有幾十 MB，所有「把資料留在這裡」的優化爭的都是這幾十 MB。',
+         en:'Provenance first: rows marked (spec) are published by the vendor - product pages, data sheets, the CDNA 3 and Hopper whitepapers, the PCIe and Ethernet standards - and rows marked (est.) are my own order-of-magnitude figures, because **on-chip bandwidths and latencies are almost never in a datasheet**. Each level is roughly an order of magnitude slower and two orders larger than the one above, and the on-chip levels add up to a few tens of megabytes: every optimisation that keeps data close is competing for exactly those.'}});
+  p({upto:HIER['MI300X'].length - 1, machine:'MI300X', line:7,
     cap:{zh:'晶片外面：HBM、主機記憶體、網路', en:'off the chip: HBM, host memory, the network'},
     panels:[{lbl:'HBM', chips:[chip('5,300 GB/s', 'dim')]},
             {lbl:'PCIe', chips:[chip('64 GB/s', 'bad')]},
             {lbl:'RDMA', chips:[chip('50 GB/s', 'bad')]}],
     msg:{zh:'shared memory 到 HBM 是每個 kernel 都在對抗的那一步。而最後兩列就是前面幾天：**主機記憶體那一列是 HiCache 分層存在的理由**，**RDMA 那一列是 DeepEP 要有兩套 kernel 的理由**。同一張表，三個不同的日子。',
          en:'The step from shared memory to HBM is the one every kernel in this series has been fighting. And the last two rows are earlier days: **the host-memory row is why HiCache has tiers**, and **the RDMA row is why DeepEP ships two different sets of kernels**. One table, three different days.'}});
+  p({upto:HIER['H200 SXM'].length - 1, machine:'H200 SXM', line:7,
+    cap:{zh:'換一台：同樣的形狀，不同的數字', en:'a different part: the same shape, different numbers'},
+    panels:[{lbl:'MI300X', chips:[chip(SPECS['MI300X'].hbm.toLocaleString() + ' GB/s', 'ok'),
+                                  chip(SPECS['MI300X'].balance + ' F/B', 'dim')]},
+            {lbl:'H200 SXM', chips:[chip(SPECS['H200 SXM'].hbm.toLocaleString() + ' GB/s', 'act'),
+                                    chip(SPECS['H200 SXM'].balance + ' F/B', 'dim')]}],
+    msg:{zh:'換成 NVIDIA 的卡，階層的形狀一模一樣，只是數字不同：**L2 大很多（50 MB）、每個 SM 的 shared memory 也多（228 KB vs MI300X 的 64 KB）**——而 shared memory 的大小正是後面 tiling 那幾頁 block 大小的決定因素；代價是中間少了一層 Infinity Cache。HBM 這一列 ' + SPECS['H200 SXM'].hbm.toLocaleString() + ' GB/s，machine balance ' + SPECS['H200 SXM'].balance + ' FLOPs/byte。',
+         en:'Move to an NVIDIA part and the shape of the hierarchy is identical, only the numbers move: **a far larger L2 (50 MB) and more shared memory per SM (228 KB against the MI300X\'s 64 KB)** - and shared memory is exactly what sets the block size in the tiling tabs below. The price is that there is no Infinity Cache in between. HBM runs at ' + SPECS['H200 SXM'].hbm.toLocaleString() + ' GB/s, for a machine balance of ' + SPECS['H200 SXM'].balance + ' FLOPs per byte.'}});
+  p({upto:HIER['H100 SXM'].length - 1, machine:'H100 SXM', line:7,
+    cap:{zh:'三張卡的 machine balance', en:'the machine balance of all three'},
+    panels:[{lbl:'MI300X', chips:[chip(SPECS['MI300X'].hbm.toLocaleString() + ' GB/s', 'ok'),
+                                  chip(SPECS['MI300X'].balance + ' F/B', 'dim')]},
+            {lbl:'H200 SXM', chips:[chip(SPECS['H200 SXM'].hbm.toLocaleString() + ' GB/s', 'ok'),
+                                    chip(SPECS['H200 SXM'].balance + ' F/B', 'act')]},
+            {lbl:'H100 SXM', chips:[chip(SPECS['H100 SXM'].hbm.toLocaleString() + ' GB/s', 'dim'),
+                                    chip(SPECS['H100 SXM'].balance + ' F/B', 'dim')]}],
+    msg:{zh:'**H200 跟 H100 是同一顆晶片**，算力一樣是 ' + SPECS['H100 SXM'].tflops.toFixed(0) + ' TFLOP/s，差別只在記憶體：80 GB HBM3 變成 141 GB HBM3e、3,350 GB/s 變成 4,800 GB/s。所以 machine balance 從 ' + SPECS['H100 SXM'].balance + ' 掉到 ' + SPECS['H200 SXM'].balance + '——**被記憶體卡住的工作，這個數字愈小愈好**，三張卡的順序是 H200、MI300X（' + SPECS['MI300X'].balance + '）、H100。形狀一樣，所以後面的結論三張卡都成立；數字則一律用 MI300X 的。',
+         en:'**H200 is the same die as H100**, same ' + SPECS['H100 SXM'].tflops.toFixed(0) + ' TFLOP/s; only the memory changed - 80 GB of HBM3 became 141 GB of HBM3e, and 3,350 GB/s became 4,800 GB/s. That drops the machine balance from ' + SPECS['H100 SXM'].balance + ' to ' + SPECS['H200 SXM'].balance + ', and **for anything memory-bound lower is better**, so the order is H200, then MI300X (' + SPECS['MI300X'].balance + '), then H100. The shape is the same on all three, so nothing below changes qualitatively; the numbers used below are the MI300X ones.'}});
   return F.list;
 }
 
@@ -402,7 +263,7 @@ function rfFrames(){
   const p = (o) => F.push({shapes:rfStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
   const by = {}; RF.forEach(function(r){ by[r.name] = r; });
   p({upto:1, line:4,
-    cap:{zh:'一台機器只有兩個數字', en:'a machine is two numbers'},
+    cap:{zh:MACH.name + ' 只有兩個數字', en:'the ' + MACH.name + ' is two numbers'},
     panels:[{lbl:'peak', chips:[chip(MACH.tflops + ' TFLOP/s', 'dim')]},
             {lbl:'bandwidth', chips:[chip(MACH.gbs + ' GB/s', 'dim')]},
             {lbl:'balance', chips:[chip(MACH.balance + ' FLOPs/byte', 'hot')]}],
@@ -528,19 +389,20 @@ function flashStage(o){
   const sh = [];
   const bars = [[{zh:'score 矩陣（必須常駐）', en:'the score matrix, resident'}, FL.score_matrix_gb, 'bad'],
                 [{zh:'standard 搬運量', en:'standard, moved'}, FL.standard_gb, 'act'],
-                [{zh:'tiled 搬運量', en:'tiled, moved'}, FL.tiled_gb, 'ok']];
+                [{zh:'tiled：算進每一層', en:'tiled, counting every level'}, FL.tiled_gb, 'idle'],
+                [{zh:'tiled：真的到 HBM 的', en:'tiled, what reaches HBM'}, FL.tiled_hbm_gb, 'ok']];
   const top = Math.max.apply(null, bars.map(b => b[1]));
   bars.forEach((b, i) => {
     if (i > o.upto) return;
-    const y = 4.20 - i * 1.05;
+    const y = 4.40 - i * .85;
     sh.push(fitT(.70, y + .62, b[0], {anchor:'start', c:COL.tealL, fs:.27}));
     sh.push(S.r(.70, y, Math.max(.06, 6.6 * b[1] / top), .44, b[2], null));
     sh.push(fitT(9.30, y + .22, b[1].toFixed(2) + ' GB', {anchor:'end', c:COL.pale, fs:.26}));
   });
-  if (o.upto >= 2)
-    sh.push(fitT(4.9, .95, {zh:'流量只少 ' + FL.ratio.toFixed(1) + ' 倍，但那 ' + FL.score_matrix_gb.toFixed(2) + ' GB **從來沒有被配置過**',
-                            en:'only ' + FL.ratio.toFixed(1) + 'x less traffic - but the ' + FL.score_matrix_gb.toFixed(2) + ' GB is **never allocated at all**'},
-                 {c:COL.pale, fs:.28}));
+  if (o.upto >= 3)
+    sh.push(fitT(4.9, .80, {zh:'算進每一層只少 ' + FL.ratio.toFixed(1) + ' 倍；真的到 HBM 的少 ' + FL.ratio_hbm.toFixed(1) + ' 倍；而那 ' + FL.score_matrix_gb.toFixed(2) + ' GB 從未被配置',
+                            en:'counting every level: ' + FL.ratio.toFixed(1) + 'x. Reaching HBM: ' + FL.ratio_hbm.toFixed(1) + 'x. And the ' + FL.score_matrix_gb.toFixed(2) + ' GB is never allocated'},
+                 {c:COL.pale, fs:.26}));
   return caps(sh, o);
 }
 function flashFrames(){
@@ -553,14 +415,14 @@ function flashFrames(){
             {lbl:'standard', chips:[chip(FL.standard_gb.toFixed(2) + ' GB', 'act')]}],
     msg:{zh:'Day 52 已經證過 online softmax 的恆等式：一趟掃過 K、答案一位不差。它沒講的是「為什麼值得」，而答案就是上一個分頁那張表。標準做法把 ' + FL.seq + '×' + FL.seq + ' 的分數矩陣放進 HBM，再走過它好幾趟。',
          en:'Day 52 proved the online-softmax identity: one pass over the keys, the same answer to the last bit. What it did not say is why that is worth doing, and the answer is the previous tab. The standard implementation puts the ' + FL.seq + 'x' + FL.seq + ' score matrix in HBM and then walks over it several times.'}});
-  p({upto:2, line:6,
-    cap:{zh:'兩個誠實的觀察', en:'two honest observations'},
+  p({upto:3, line:6,
+    cap:{zh:'三個誠實的觀察', en:'three honest observations'},
     panels:[{lbl:'traffic', chips:[chip(FL.ratio.toFixed(1) + 'x', 'act')]},
             {lbl:'block', chips:[chip(FL.block + ' rows', 'dim')]},
             {lbl:'vs SRAM', chips:[chip(Math.round(FL.memory_ratio).toLocaleString() + 'x', 'bad')]}],
-    msg:{zh:'第一：**流量只少 ' + FL.ratio.toFixed(1) + ' 倍，不是十倍。** d_head 128、shared memory 160 KB 時 block 只有 ' + FL.block + ' 列，K/V 要重讀 ' + FL.passes + ' 次；流量的好處取決於 d_head²/SRAM，所以原論文（d_head 64）看起來比現在的模型大。第二：**流量從來不是主要的獎品**——真正買到的是那 ' + FL.score_matrix_gb.toFixed(2) + ' GB 根本不存在，它是 shared memory 的 ' + Math.round(FL.memory_ratio).toLocaleString() + ' 倍。這是容量的論證不是頻寬的論證，也是長 context 能被服務的理由。',
-         en:'First: **the traffic win is ' + FL.ratio.toFixed(1) + 'x, not ten.** With d_head 128 and 160 KB of shared memory the block is only ' + FL.block + ' rows, so K and V are re-read ' + FL.passes + ' times; the traffic saving scales with d_head squared over SRAM, which is why it looked larger in the original paper (d_head 64). Second: **the traffic was never the main prize** - what tiling buys is that the ' + FL.score_matrix_gb.toFixed(2) + ' GB is never allocated, ' + Math.round(FL.memory_ratio).toLocaleString() + 'x the shared memory it runs in. That is a capacity argument, and it is why long contexts are servable at all.'}});
-  p({upto:2, line:8,
+    msg:{zh:'第一：**算進每一層的話流量幾乎沒少（' + FL.ratio.toFixed(1) + ' 倍）**——' + FL.sram_kb.toFixed(0) + ' KB 的 LDS、d_head 128 時 block 只有 ' + FL.block + ' 列，K/V 要重讀 ' + FL.passes + ' 次。第二：**那些重讀大多沒有到 HBM**：一個 head 的 K+V 只有 ' + FL.kv_per_head_mb.toFixed(1) + ' MB，而 Infinity Cache 有 ' + FL.cache_mb.toFixed(0) + ' MB，所以真的跨到 HBM 的只有 ' + FL.tiled_hbm_gb.toFixed(2) + ' GB（少 ' + FL.ratio_hbm.toFixed(1) + ' 倍）——**只算一層的模型會算錯**。第三：**流量從來不是主要的獎品**，真正買到的是那 ' + FL.score_matrix_gb.toFixed(2) + ' GB 根本不存在（LDS 的 ' + Math.round(FL.memory_ratio).toLocaleString() + ' 倍），這是容量的論證。',
+         en:'First: **counted naively the traffic barely moves (' + FL.ratio.toFixed(1) + 'x)** - with ' + FL.sram_kb.toFixed(0) + ' KB of LDS and d_head 128 the block is ' + FL.block + ' rows and K and V are re-read ' + FL.passes + ' times. Second: **those re-reads mostly never reach HBM**: K and V for one head are ' + FL.kv_per_head_mb.toFixed(1) + ' MB against a ' + FL.cache_mb.toFixed(0) + ' MB Infinity Cache, so what actually crosses to HBM is ' + FL.tiled_hbm_gb.toFixed(2) + ' GB, ' + FL.ratio_hbm.toFixed(1) + 'x less - **a model that counts one level will mispredict**. Third: **the traffic was never the main prize** - the ' + FL.score_matrix_gb.toFixed(2) + ' GB is never allocated at all, ' + Math.round(FL.memory_ratio).toLocaleString() + 'x the LDS the kernel runs in, which is a capacity argument.'}});
+  p({upto:3, line:8,
     cap:{zh:'backward 也是同一招：只存 logsumexp，再重算',
          en:'the backward pass is the same trick: store the logsumexp, recompute'},
     panels:[{lbl:'stored', chips:[chip('1 number per row', 'ok')]},
@@ -787,8 +649,6 @@ const DAY_META = {
   ]
 };
 
-</script>
-<script>
 /* =========================================================================
    100 Days of Python - shared demo engine
    palette: teal/blue-green base, purple pointers, orange "current step"
@@ -1077,7 +937,3 @@ document.addEventListener('keydown', e => {
 });
 setLang('zh');
 load();
-
-</script>
-</body>
-</html>

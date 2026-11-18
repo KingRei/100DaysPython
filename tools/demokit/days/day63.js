@@ -1,9 +1,9 @@
 // DAY: 63
-// TITLE_ZH: GPU 記憶體階層與 roofline：為什麼有些 kernel 再怎麼優化都不會變快
-// TITLE_EN: The memory hierarchy and the roofline: why some kernels never get faster
-// SUB_ZH: 這個系列裡每一個效能數字最後都是記憶體數字——decode 慢是因為每個 token 都要讀一遍權重、KV cache 是容量上限、MoE 是通訊問題、量化有用是因為位元變少。這一天把底下那個模型寫出來：階層長什麼樣、roofline 怎麼決定一個 kernel 是被算力還是被記憶體卡住，以及 tiling（包含 FlashAttention）為什麼是唯一能提高運算密度的辦法。
-// SUB_EN: Every performance number in this series turned out to be a memory number: decode is slow because it reads the weights once per token, the KV cache is the capacity limit, MoE is a communication problem, quantization helps because fewer bits means fewer bytes. This day writes down the model underneath: the hierarchy, the roofline that decides whether a kernel is limited by arithmetic or by memory, and why tiling - FlashAttention included - is the only way to raise arithmetic intensity.
-// FOLDER: day%2063%20-%20memory%20hierarchy%20and%20roofline
+// TITLE_ZH: 平行化與集合通訊：一個模型切開之後，到底有多少位元組在線上跑
+// TITLE_EN: Parallelism and collectives: what it costs to split a model across GPUs
+// SUB_ZH: TP、EP、DP、DCP、DDP、FSDP、PP 聽起來像七件事，其實是同樣五個集合通訊原語（all-reduce、all-gather、reduce-scatter、all-to-all、點對點）在不同地方被呼叫。這一天把每一種切法的位元組帳算出來，並示範五種「不會報錯、只會讓結果變爛」的平行化 bug。
+// SUB_EN: TP, EP, DP, DCP, DDP, FSDP and PP sound like seven things; they are the same five collectives - all-reduce, all-gather, reduce-scatter, all-to-all and point-to-point - called in different places. This day counts the bytes each split costs, and shows five parallelism bugs that never raise an error and only make the answers worse.
+// FOLDER: day%2063%20-%20parallelism%20and%20collectives
 // MEDIUM: https://medium.com/100-days-of-python
 const VIEW = [9.8, 6.4];
 function chip(t, cls){ return {t:t, cls:cls || ''}; }
@@ -66,562 +66,747 @@ function polyline(sh, panel, pts, st, w){
   }
   return sh;
 }
-const FRAG = {"reqs": 240, "rejC": 12, "rejFrag": 12, "rejP": 5, "utilC": 65.7, "utilP": 68.5, "capacity": 16384};
-const HIER = [{"name": "registers", "gbs": 100000.0, "ns": 1, "cap": 262144}, {"name": "shared memory / LDS", "gbs": 20000.0, "ns": 20, "cap": 163840}, {"name": "L2 cache", "gbs": 7000.0, "ns": 200, "cap": 52428800}, {"name": "HBM", "gbs": 5300.0, "ns": 600, "cap": 206158430208}, {"name": "host memory over PCIe", "gbs": 64.0, "ns": 2000, "cap": 1099511627776}, {"name": "another node over RDMA", "gbs": 50.0, "ns": 10000, "cap": 0}];
-const SEQ = [{"kb": 64, "gbs": 9.7}, {"kb": 256, "gbs": 11.5}, {"kb": 1024, "gbs": 11.2}, {"kb": 4096, "gbs": 12.9}, {"kb": 16384, "gbs": 12.8}, {"kb": 65536, "gbs": 13.3}, {"kb": 262144, "gbs": 13.0}];
-const RND = [{"kb": 16, "ns": 1.98}, {"kb": 64, "ns": 2.17}, {"kb": 256, "ns": 2.51}, {"kb": 1024, "ns": 3.59}, {"kb": 4096, "ns": 8.86}, {"kb": 16384, "ns": 11.42}, {"kb": 65536, "ns": 13.4}];
-const RF = [{"name": "decode: one linear (GEMV)", "ai": 1.0, "bound": "memory", "ms": 0.022}, {"name": "prefill: one linear (GEMM)", "ai": 3185.78, "bound": "compute", "ms": 0.37}, {"name": "decode: attention over KV", "ai": 1.0, "bound": "memory", "ms": 0.013}, {"name": "prefill: attention (no tiling)", "ai": 128.0, "bound": "memory", "ms": 0.405}, {"name": "RMSNorm", "ai": 1.0, "bound": "memory", "ms": 0.013}, {"name": "residual add", "ai": 0.17, "bound": "memory", "ms": 0.019}, {"name": "softmax over the vocabulary", "ai": 1.25, "bound": "memory", "ms": 0.0}, {"name": "decode: the whole model", "ai": 1.0, "bound": "memory", "ms": 26.415}];
-const MACH = {"tflops": 1300.0, "gbs": 5300.0, "balance": 245.3};
-const BATCH = [{"b": 1, "ai": 1.0, "bound": "memory", "ms": 0.022, "us": 22.16}, {"b": 4, "ai": 4.0, "bound": "memory", "ms": 0.022, "us": 5.54}, {"b": 16, "ai": 15.96, "bound": "memory", "ms": 0.022, "us": 1.39}, {"b": 64, "ai": 63.43, "bound": "memory", "ms": 0.022, "us": 0.35}, {"b": 256, "ai": 247.17, "bound": "compute", "ms": 0.023, "us": 0.09}, {"b": 1024, "ai": 896.0, "bound": "compute", "ms": 0.093, "us": 0.09}];
-const TILE = {"n": 4096, "tile": 104, "naiveGB": 549.8, "tiledGB": 5.35, "ratio": 102.7, "naiveAI": 0.25, "tiledAI": 25.67, "sweep": [{"t": 8, "fits": true, "gb": 68.79, "ai": 2.0}, {"t": 16, "fits": true, "gb": 34.43, "ai": 3.99}, {"t": 32, "fits": true, "gb": 17.25, "ai": 7.97}, {"t": 64, "fits": true, "gb": 8.66, "ai": 15.88}, {"t": 128, "fits": false, "gb": 4.36, "ai": 31.51}, {"t": 256, "fits": false, "gb": 2.21, "ai": 62.06}, {"t": 512, "fits": false, "gb": 1.14, "ai": 120.47}]};
-const FL = {"seq": 4096, "block": 160, "passes": 26, "standard_gb": 4.429, "tiled_gb": 1.812, "ratio": 2.444, "standard_ai": 62.061, "tiled_ai": 151.704, "score_matrix_gb": 1.074, "resident_kb": 160.0, "memory_ratio": 6553.6, "standard_passes": 4, "scaling": [{"seq": 512, "std": 0.08, "tiled": 0.04, "ratio": 2.0, "mat": 0.02}, {"seq": 2048, "std": 1.14, "tiled": 0.47, "ratio": 2.4, "mat": 0.27}, {"seq": 8192, "std": 17.45, "tiled": 7.11, "ratio": 2.5, "mat": 4.29}, {"seq": 32768, "std": 275.95, "tiled": 110.6, "ratio": 2.5, "mat": 68.72}]};
-const LIT = {"bandwidth_gbs": 5300.0, "latency_ns": 600.0, "bytes_in_flight": 3180000.0, "requests_in_flight": 24843.8, "bytes_per_request": 128};
-const ST = [{"s": 1, "useful": 16.78, "fetched": 16.78, "eff": 1.0, "ms": 1.1}, {"s": 2, "useful": 8.39, "fetched": 16.78, "eff": 0.5, "ms": 0.97}, {"s": 4, "useful": 4.19, "fetched": 16.78, "eff": 0.25, "ms": 0.91}, {"s": 8, "useful": 2.1, "fetched": 16.78, "eff": 0.125, "ms": 1.09}, {"s": 16, "useful": 1.05, "fetched": 16.78, "eff": 0.062, "ms": 0.89}, {"s": 32, "useful": 0.52, "fetched": 8.39, "eff": 0.062, "ms": 0.47}];
+const COLL = [{"name": "broadcast", "bytes": "N", "steps": "log2(p)", "mb": 256.0, "us": 2019.3}, {"name": "reduce", "bytes": "N", "steps": "log2(p)", "mb": 256.0, "us": 2019.3}, {"name": "all-reduce", "bytes": "2(p-1)/p * N", "steps": "2(p-1)", "mb": 448.0, "us": 1202.4}, {"name": "reduce-scatter", "bytes": "(p-1)/p * N", "steps": "p-1", "mb": 224.0, "us": 601.2}, {"name": "all-gather", "bytes": "(p-1)/p * N", "steps": "p-1", "mb": 224.0, "us": 601.2}, {"name": "all-to-all", "bytes": "(p-1)/p * N", "steps": "p-1", "mb": 224.0, "us": 601.2}, {"name": "point-to-point", "bytes": "N", "steps": "1", "mb": 256.0, "us": 673.1}];
+const RT = [{"bytes": 4096, "ring": 28.0, "tree": 12.1}, {"bytes": 65536, "ring": 28.3, "tree": 13.0}, {"bytes": 1048576, "ring": 32.6, "tree": 27.7}, {"bytes": 67108864, "ring": 321.6, "tree": 1018.6}, {"bytes": 1073741824, "ring": 4725.6, "tree": 16118.1}];
+const CROSS = 2048;
+const ZERO = [{"stage": "DDP (no sharding)", "gb": 1043, "wire": 228.2, "vs": 1.0, "how": "all-reduce(grad)"}, {"stage": "ZeRO-1 (optimizer)", "gb": 359, "wire": 228.2, "vs": 1.0, "how": "reduce-scatter(grad) + all-gather(param)"}, {"stage": "ZeRO-2 (+ gradients)", "gb": 244, "wire": 228.2, "vs": 1.0, "how": "reduce-scatter(grad) + all-gather(param)"}, {"stage": "ZeRO-3 / FSDP (+ parameters)", "gb": 130, "wire": 342.3, "vs": 1.5, "how": "all-gather(param) x2 + reduce-scatter(grad)"}];
+const BUCK = [{"n": 1, "mb": 1024, "each": 4.73, "all": 4.73, "exp": 4.73}, {"n": 4, "mb": 256, "each": 1.2, "all": 4.81, "exp": 1.2}, {"n": 25, "mb": 41, "each": 0.22, "all": 5.4, "exp": 0.22}];
+const DDP = {"single": 0.014105, "ddp": 0.014105, "diff": 1.19e-07};
+const TPT = {"act_mb": 128.0, "per_all_reduce_mb": 224.0, "all_reduces": 160, "total_gb": 35.0, "us_per_all_reduce": 615.2};
+const SP = {"all_reduce_mb": 224.0, "rs_plus_ag_mb": 224.0, "act_mem_per_rank_mb": 16.0, "act_mem_dp_mb": 128.0};
+const EPT = {"dispatch_mb": 896.0, "combine_mb": 896.0, "total_gb": 140.0, "fp8_total_gb": 70.0};
+const KV = {"total": 2560, "rows": [{"name": "TP, MHA/GQA (KV split by head)", "gb": 320, "why": "heads divide by p"}, {"name": "TP, MLA (one latent per token)", "gb": 2560, "why": "the latent cannot be split by head"}, {"name": "DP attention (requests split)", "gb": 320, "why": "each rank owns whole requests"}, {"name": "context parallel (sequence split)", "gb": 320, "why": "each rank owns a key range"}]};
+const BUB = [{"m": 1, "b": 0.875, "u": 0.125}, {"m": 2, "b": 0.7778, "u": 0.2222}, {"m": 4, "b": 0.6364, "u": 0.3636}, {"m": 8, "b": 0.4667, "u": 0.5333}, {"m": 16, "b": 0.3043, "u": 0.6957}, {"m": 32, "b": 0.1795, "u": 0.8205}, {"m": 64, "b": 0.0986, "u": 0.9014}];
+const PPT = {"per_boundary_mb": 128.0, "boundaries": 7, "total_mb": 896.0};
+const PLACE = [{"axis": "tensor parallel", "gb": 35.0, "steps": 2240, "fast": 98.4, "slow": 774.0, "pen": 7.9, "how": "all-reduce after attention and after MLP, every layer"}, {"axis": "expert parallel", "gb": 140.0, "steps": 1120, "fast": 378.0, "slow": 3017.7, "pen": 8.0, "how": "all-to-all to dispatch tokens and to combine them"}, {"axis": "context parallel", "gb": 17.64, "steps": 560, "fast": 48.5, "slow": 384.3, "pen": 7.9, "how": "all-gather of partial outputs and their log-sum-exp"}, {"axis": "pipeline parallel", "gb": 0.12, "steps": 2, "fast": 0.3, "slow": 2.7, "pen": 8.0, "how": "one point-to-point handoff per stage boundary"}, {"axis": "data parallel", "gb": 228.17, "steps": 14, "fast": 612.5, "slow": 4900.1, "pen": 8.0, "how": "all-reduce of the gradients, once per step, not per layer"}];
+const AVG = [{"steps": 1, "ok": 0.6129, "bad": 6.82}, {"steps": 3, "ok": 0.3251, "bad": 70300.0}, {"steps": 5, "ok": 0.2362, "bad": 17600000000.0}];
+const ORD = {"diff": 32459, "n": 65536, "max": 0.000977, "rel": 0.00012, "rep": true};
+const STRAG = [{"p": 8, "any": 7.7, "loss": 5.2}, {"p": 64, "any": 47.4, "loss": 23.7}, {"p": 512, "any": 99.4, "loss": 49.3}, {"p": 4096, "any": 100.0, "loss": 50.4}];
+const DROP = {"ok": 3e-07, "bad": 2.3, "rel": 0.773};
+const RING = {"start": [[1, 2, 3, 4], [11, 12, 13, 14], [21, 22, 23, 24], [31, 32, 33, 34]], "states": [{"tag": "start", "owner": null, "grid": [[1, 2, 3, 4], [11, 12, 13, 14], [21, 22, 23, 24], [31, 32, 33, 34]]}, {"tag": "rs", "step": 1, "moves": [{"src": 0, "dst": 1, "idx": 0}, {"src": 1, "dst": 2, "idx": 1}, {"src": 2, "dst": 3, "idx": 2}, {"src": 3, "dst": 0, "idx": 3}], "grid": [[1, 2, 3, 38], [12, 12, 13, 14], [21, 34, 23, 24], [31, 32, 56, 34]]}, {"tag": "rs", "step": 2, "moves": [{"src": 0, "dst": 1, "idx": 3}, {"src": 1, "dst": 2, "idx": 0}, {"src": 2, "dst": 3, "idx": 1}, {"src": 3, "dst": 0, "idx": 2}], "grid": [[1, 2, 59, 38], [12, 12, 13, 52], [33, 34, 23, 24], [31, 66, 56, 34]]}, {"tag": "rs", "step": 3, "moves": [{"src": 0, "dst": 1, "idx": 2}, {"src": 1, "dst": 2, "idx": 3}, {"src": 2, "dst": 3, "idx": 0}, {"src": 3, "dst": 0, "idx": 1}], "grid": [[1, 68, 59, 38], [12, 12, 72, 52], [33, 34, 23, 76], [64, 66, 56, 34]]}, {"tag": "ag", "step": 1, "moves": [{"src": 0, "dst": 1, "idx": 1}, {"src": 1, "dst": 2, "idx": 2}, {"src": 2, "dst": 3, "idx": 3}, {"src": 3, "dst": 0, "idx": 0}], "grid": [[64, 68, null, null], [null, 68, 72, null], [null, null, 72, 76], [64, null, null, 76]]}, {"tag": "ag", "step": 2, "moves": [{"src": 0, "dst": 1, "idx": 0}, {"src": 1, "dst": 2, "idx": 1}, {"src": 2, "dst": 3, "idx": 2}, {"src": 3, "dst": 0, "idx": 3}], "grid": [[64, 68, null, 76], [64, 68, 72, null], [null, 68, 72, 76], [64, null, 72, 76]]}, {"tag": "ag", "step": 3, "moves": [{"src": 0, "dst": 1, "idx": 3}, {"src": 1, "dst": 2, "idx": 0}, {"src": 2, "dst": 3, "idx": 1}, {"src": 3, "dst": 0, "idx": 2}], "grid": [[64, 68, 72, 76], [64, 68, 72, 76], [64, 68, 72, 76], [64, 68, 72, 76]]}], "total": [64, 68, 72, 76]};
+const RINGCOST = {"steps": 6, "perN": 1.5, "naiveN": 6};
 
-const LOG = (v, lo, hi) => (Math.log(Math.max(v, lo)) / Math.LN10 - Math.log(lo) / Math.LN10)
-                           / (Math.log(hi) / Math.LN10 - Math.log(lo) / Math.LN10);
+/* ---------------------------------------------------------------- shared bits */
+const RANKS = 4;
+const GX = 2.35, GY = 1.25, GW = 1.62, GH = .80, GDY = .98;
 
-/* ================================================================ tab 1: the hierarchy */
-const CODE_HIER = [
-  '# a level of the hierarchy is three numbers:',
-  '#   capacity   - how much fits',
-  '#   bandwidth  - how fast it streams',
-  '#   latency    - how long one access takes',
-  '',
-  '# and the ratio that matters is between neighbours:',
-  'shared_memory_bandwidth / hbm_bandwidth   # ~4x',
-  'hbm_bandwidth / pcie_bandwidth            # ~80x'
-];
-function hierStage(o){
-  const sh = [];
-  const w = [1.3, 2.1, 3.0, 4.1, 5.3, 6.6];
-  HIER.forEach((r, i) => {
-    if (i > o.upto) return;
-    const y = 4.55 - i * .72;
-    sh.push(box(.70, y, w[i], .54, i === o.upto ? 'hot' : 'ok', r.name, .25));
-    sh.push(fitT(7.60, y + .27, r.gbs.toLocaleString() + ' GB/s',
-                 {anchor:'start', c:COL.pale, fs:.24}));
-    sh.push(fitT(9.30, y + .27, r.ns.toLocaleString() + ' ns',
-                 {anchor:'end', c:COL.grey, fs:.24}));
-  });
-  sh.push(fitT(.70, 5.05, {zh:'越寬＝容量越大；每往下一層都更慢、更遠',
-                           en:'wider is bigger; every step down is slower and further away'},
-               {anchor:'start', c:COL.grey, fs:.26}));
-  return caps(sh, o);
-}
-function hierFrames(){
-  const F = new Frames();
-  const p = (o) => F.push({shapes:hierStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
-  p({upto:2, line:1,
-    cap:{zh:'晶片裡面：暫存器、shared memory、L2', en:'on the chip: registers, shared memory, L2'},
-    panels:[{lbl:'registers', chips:[chip('100,000 GB/s', 'ok')]},
-            {lbl:'shared', chips:[chip('20,000 GB/s', 'act')]},
-            {lbl:'L2', chips:[chip('7,000 GB/s', 'dim')]}],
-    msg:{zh:'每一層大約比上一層慢一個數量級、大兩個數量級。晶片內的三層加起來只有幾十 MB——所有「把資料留在這裡」的優化，爭的都是這幾十 MB。',
-         en:'Each level is roughly an order of magnitude slower and two orders larger than the one above. The three on-chip levels add up to a few tens of megabytes, and every optimisation that tries to keep data close is competing for exactly those.'}});
-  p({upto:HIER.length - 1, line:7,
-    cap:{zh:'晶片外面：HBM、主機記憶體、網路', en:'off the chip: HBM, host memory, the network'},
-    panels:[{lbl:'HBM', chips:[chip('5,300 GB/s', 'dim')]},
-            {lbl:'PCIe', chips:[chip('64 GB/s', 'bad')]},
-            {lbl:'RDMA', chips:[chip('50 GB/s', 'bad')]}],
-    msg:{zh:'shared memory 到 HBM 是每個 kernel 都在對抗的那一步。而最後兩列就是前面幾天：**主機記憶體那一列是 HiCache 分層存在的理由**，**RDMA 那一列是 DeepEP 要有兩套 kernel 的理由**。同一張表，三個不同的日子。',
-         en:'The step from shared memory to HBM is the one every kernel in this series has been fighting. And the last two rows are earlier days: **the host-memory row is why HiCache has tiers**, and **the RDMA row is why DeepEP ships two different sets of kernels**. One table, three different days.'}});
-  return F.list;
-}
-
-/* ================================================================ tab 2: measured */
-const CODE_MEAS = [
-  '# (a) in order: the prefetcher sees it coming',
-  'a = np.ones(n, dtype=np.float32)',
-  'a.sum()                       # 4n bytes read, n adds',
-  '',
-  '# (b) at random: it cannot',
-  'idx = rng.permutation(n)',
-  'a[idx].sum()                  # same bytes, unpredictable order'
-];
-function measStage(o){
-  const sh = [];
-  if (o.upto === 0){
-    const top = Math.max.apply(null, SEQ.map(r => r.gbs));
-    SEQ.forEach((r, i) => {
-      const y = 4.40 - i * .52;
-      sh.push(fitT(2.20, y + .16, r.kb < 1024 ? r.kb + ' KB' : (r.kb / 1024) + ' MB',
-                   {anchor:'end', c:COL.grey, fs:.25}));
-      sh.push(S.r(2.40, y, Math.max(.06, 5.4 * r.gbs / top), .34, 'ok', null));
-      sh.push(fitT(9.30, y + .16, r.gbs.toFixed(1) + ' GB/s', {anchor:'end', c:COL.pale, fs:.24}));
-    });
-    sh.push(fitT(.70, 5.00, {zh:'(a) 依序讀：幾乎看不到階層', en:'(a) reading in order: the hierarchy barely shows'},
-                 {anchor:'start', c:COL.tealL, fs:.27}));
-  } else {
-    const top = Math.max.apply(null, RND.map(r => r.ns));
-    RND.forEach((r, i) => {
-      const y = 4.40 - i * .52;
-      sh.push(fitT(2.20, y + .16, r.kb < 1024 ? r.kb + ' KB' : (r.kb / 1024) + ' MB',
-                   {anchor:'end', c:COL.grey, fs:.25}));
-      sh.push(S.r(2.40, y, Math.max(.06, 5.4 * r.ns / top), .34, 'bad', null));
-      sh.push(fitT(9.30, y + .16, r.ns.toFixed(2) + ' ns', {anchor:'end', c:COL.pale, fs:.24}));
-    });
-    sh.push(fitT(.70, 5.00, {zh:'(b) 隨機讀：整個階層跑出來了',
-                             en:'(b) reading at random: the whole hierarchy appears'},
-                 {anchor:'start', c:COL.tealL, fs:.27}));
+function rankGrid(sh, grid, opt){
+  opt = opt || {};
+  const hl = opt.hl || {};
+  for (let c = 0; c < RANKS; c++)
+    sh.push(fitT(GX + c * GW + GW / 2, GY - .22, 'chunk ' + c, {c:COL.grey, fs:.26}));
+  for (let r = 0; r < RANKS; r++){
+    const y = GY + r * GDY;
+    sh.push(fitT(GX - .18, y + GH * .62, 'rank ' + r, {anchor:'end', c:COL.tealL, fs:.30}));
+    for (let c = 0; c < RANKS; c++){
+      const v = grid[r][c];
+      sh.push(S.r(GX + c * GW, y, GW - .10, GH, hl[r + ',' + c] || (v == null ? 'ghost' : 'idle'),
+                  v == null ? '' : String(v), {fs:.34}));
+    }
   }
-  return caps(sh, o);
+  return sh;
 }
-function measFrames(){
-  const F = new Frames();
-  const p = (o) => F.push({shapes:measStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
-  const sMax = Math.max.apply(null, SEQ.map(r => r.gbs)), sMin = Math.min.apply(null, SEQ.map(r => r.gbs));
-  const rMax = Math.max.apply(null, RND.map(r => r.ns)), rMin = Math.min.apply(null, RND.map(r => r.ns));
-  p({upto:0, line:3,
-    cap:{zh:'這台機器上實測（沒有 GPU，但階層是一樣的）',
-         en:'measured on this machine - no GPU here, but the same shape'},
-    panels:[{lbl:'best', chips:[chip(sMax.toFixed(1) + ' GB/s', 'ok')]},
-            {lbl:'worst', chips:[chip(sMin.toFixed(1) + ' GB/s', 'dim')]},
-            {lbl:'spread', chips:[chip((sMax / sMin).toFixed(1) + 'x', 'dim')]}],
-    msg:{zh:'把陣列加總是純頻寬的工作，照理說一離開快取就該掉下去。實際上只差 ' + (sMax / sMin).toFixed(1) + ' 倍——因為**硬體 prefetcher 看得到循序讀，提早把資料抓進來**，大部分的延遲根本沒有發生。',
-         en:'Summing an array is pure bandwidth, so it ought to fall off a cliff once the array leaves cache. It moves by only ' + (sMax / sMin).toFixed(1) + 'x, because **the prefetcher sees a sequential read coming and starts it early** - most of the latency never happens.'}});
-  p({upto:1, line:6,
-    cap:{zh:'同樣的位元組，換成猜不到的順序', en:'the same bytes, in an order nothing can predict'},
-    panels:[{lbl:'in cache', chips:[chip(rMin.toFixed(2) + ' ns', 'ok')]},
-            {lbl:'out of cache', chips:[chip(rMax.toFixed(2) + ' ns', 'bad')]},
-            {lbl:'spread', chips:[chip((rMax / rMin).toFixed(0) + 'x', 'bad')]}],
-    msg:{zh:'一換成隨機順序，階層立刻現形：在快取裡一次存取 ' + rMin.toFixed(2) + ' ns，掉出快取 ' + rMax.toFixed(2) + ' ns，差 ' + (rMax / rMin).toFixed(0) + ' 倍。**規格表賣你的是頻寬，決定你拿不拿得到的是局部性。** 這個系列裡所有看起來像指標追逐的結構——radix tree、block table、expert 權重的 gather——付的都是這一欄的價錢。',
-         en:'Switch to a random order and the hierarchy appears immediately: ' + rMin.toFixed(2) + ' ns per access while it fits in cache, ' + rMax.toFixed(2) + ' ns when it does not, a factor of ' + (rMax / rMin).toFixed(0) + '. **Bandwidth is what the specification sells; locality decides whether you get it.** Every structure in this series that looks like a pointer chase - a radix tree, a block table, a gather of expert weights - pays the second column.'}});
-  return F.list;
+function moveArrows(sh, moves, st){
+  (moves || []).forEach(m => {
+    const x = GX + m.idx * GW + (GW - .10) / 2;
+    const y1 = GY + m.src * GDY + GH, y2 = GY + m.dst * GDY;
+    if (m.dst === (m.src + 1) % RANKS && m.dst > m.src)
+      sh.push(S.e(x, y1 + .04, x, y2 - .04, {s:st || 'hot', w:.06}));
+    else {                                   // the wrap-around hop, drawn outside
+      const xr = GX + RANKS * GW + .22;
+      sh.push(S.e(x + .3, GY + m.src * GDY + GH / 2, xr, GY + m.src * GDY + GH / 2,
+                  {s:st || 'hot', w:.05, arrow:false}));
+      sh.push(S.e(xr, GY + m.src * GDY + GH / 2, xr, GY + m.dst * GDY + GH / 2,
+                  {s:st || 'hot', w:.05, arrow:false}));
+      sh.push(S.e(xr, GY + m.dst * GDY + GH / 2, x + .3, GY + m.dst * GDY + GH / 2,
+                  {s:st || 'hot', w:.05}));
+    }
+  });
+  return sh;
 }
 
-/* ================================================================ tab 3: the roofline */
-const CODE_RF = [
-  'intensity = flops / bytes_moved       # a property of the kernel',
-  'balance   = peak_flops / bandwidth    # a property of the machine',
+/* ================================================================ tab 1: ring all-reduce */
+const CODE_RING = [
+  'def ring_reduce_scatter(bufs):          # p-1 steps',
+  '    for s in range(p - 1):',
+  '        for r in range(p):              # every rank, every step',
+  '            idx = (r - s) % p           # the chunk r ships now',
+  '            send(to=(r + 1) % p, chunk=idx)',
+  '            recv_and_add(frm=(r - 1) % p)',
+  '    return [chunks[r][(r + 1) % p] for r in range(p)]',
   '',
-  'time  = max(flops / peak_flops, bytes / bandwidth)',
-  'bound = "compute" if intensity > balance else "memory"'
+  'def ring_all_gather(owned):             # p-1 more steps',
+  '    for s in range(p - 1):              # pass the finished chunk on',
+  '        for r in range(p): send(to=(r + 1) % p, chunk=held_by(r))',
+  '',
+  'all_reduce = all_gather(reduce_scatter(x))'
 ];
-function rfStage(o){
-  const sh = [];
-  const X0 = 1.40, Y0 = 4.55, W = 7.4, H = 3.1;
-  const lo = 0.1, hi = 10000;
-  const px = (ai) => X0 + W * LOG(ai, lo, hi);
-  const py = (tf) => Y0 - H * LOG(tf, 1, 2000);
-  sh.push(S.e(X0, Y0, X0 + W, Y0, {s:'ghost', arrow:false, w:.04}));
-  sh.push(S.e(X0, Y0, X0, Y0 - H, {s:'ghost', arrow:false, w:.04}));
-  const ridge = MACH.balance, peak = MACH.tflops;
-  let prev = null;
-  [0.1, 1, 10, 100, ridge, 1000, 10000].forEach(function(ai){
-    const tf = Math.min(peak, ai * MACH.gbs / 1000);
-    const pt = [px(ai), py(tf)];
-    if (prev) sh.push(S.e(prev[0], prev[1], pt[0], pt[1], {s:'bad', arrow:false, w:.055}));
-    prev = pt;
-  });
-  sh.push(S.e(px(ridge), Y0, px(ridge), py(peak), {s:'ghost', arrow:false, w:.03}));
-  sh.push(fitT(px(ridge), py(peak) - .28, {zh:'ridge ' + ridge.toFixed(0) + ' FLOPs/byte',
-                                           en:'ridge ' + ridge.toFixed(0) + ' FLOPs/byte'},
-               {c:'#ffbe6b', fs:.25}));
-  [[0.1, '0.1'], [1, '1'], [100, '100'], [10000, '10k']].forEach(function(t){
-    sh.push(fitT(px(t[0]), Y0 + .30, t[1], {c:COL.grey, fs:.23}));
-  });
-  sh.push(fitT(X0 + W / 2, Y0 + .68, {zh:'運算密度（FLOPs / byte）', en:'arithmetic intensity, FLOPs per byte'},
-               {c:COL.grey, fs:.26}));
-  const picks = ['residual add', 'decode: the whole model', 'prefill: attention (no tiling)',
-                 'prefill: one linear (GEMM)'];
-  picks.forEach(function(name, i){
-    if (i > o.upto) return;
-    const r = RF.filter(function(x){ return x.name === name; })[0];
-    const tf = Math.min(peak, r.ai * MACH.gbs / 1000);
-    sh.push(S.c(px(r.ai), py(tf), .10, 'hot', null));
-    sh.push(fitT(px(r.ai), py(tf) + (i % 2 ? .34 : -.30),
-                 name.replace('prefill: ', '').replace('decode: ', ''),
-                 {c:COL.tealL, fs:.23}));
-  });
-  return caps(sh, o);
-}
-function rfFrames(){
+function ringFrames(){
   const F = new Frames();
-  const p = (o) => F.push({shapes:rfStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
-  const by = {}; RF.forEach(function(r){ by[r.name] = r; });
-  p({upto:1, line:4,
-    cap:{zh:'一台機器只有兩個數字', en:'a machine is two numbers'},
-    panels:[{lbl:'peak', chips:[chip(MACH.tflops + ' TFLOP/s', 'dim')]},
-            {lbl:'bandwidth', chips:[chip(MACH.gbs + ' GB/s', 'dim')]},
-            {lbl:'balance', chips:[chip(MACH.balance + ' FLOPs/byte', 'hot')]}],
-    msg:{zh:'兩個數字的比值就是 machine balance：' + MACH.balance + ' FLOPs/byte。**一個 kernel 如果每讀一個 byte 做的運算比這個少，那它無論怎麼寫都不可能被算力卡住**——時間就是位元組除以頻寬。整個模型跑一次 decode 的運算密度是 ' + by['decode: the whole model'].ai + '，離 ridge 差兩個數量級。',
-         en:'The ratio of the two is the machine balance: ' + MACH.balance + ' FLOPs per byte. **A kernel that does less arithmetic per byte than that cannot be compute-bound however it is written** - its time is bytes divided by bandwidth. A whole decode step sits at ' + by['decode: the whole model'].ai + ' FLOPs per byte, two orders of magnitude below the ridge.'}});
-  p({upto:3, line:4,
-    cap:{zh:'同一層 linear，兩邊都站得到', en:'the same linear layer sits on both sides'},
-    panels:[{lbl:'decode GEMV', chips:[chip(by['decode: one linear (GEMV)'].ai.toFixed(2), 'bad')]},
-            {lbl:'prefill GEMM', chips:[chip(by['prefill: one linear (GEMM)'].ai.toFixed(0), 'ok')]},
-            {lbl:'residual add', chips:[chip(by['residual add'].ai.toFixed(2), 'bad')]}],
-    msg:{zh:'同一組權重、同一個 kernel：decode 時是矩陣×向量，運算密度 ' + by['decode: one linear (GEMV)'].ai.toFixed(2) + '，被記憶體卡死；prefill 時是矩陣×矩陣，密度 ' + by['prefill: one linear (GEMM)'].ai.toFixed(0) + '，被算力卡住。**變的不是 kernel，是列數。** 而 RMSNorm 和 residual add 這種逐元素運算密度不到 1，時間完全是搬運——所以把它們融合進鄰居（省掉一讀一寫，不是省掉乘法）才會那麼值錢。',
-         en:'Same weights, same kernel: in decode it is a matrix-vector product at ' + by['decode: one linear (GEMV)'].ai.toFixed(2) + ' FLOPs per byte and memory-bound; in prefill it is a matrix-matrix product at ' + by['prefill: one linear (GEMM)'].ai.toFixed(0) + ' and compute-bound. **The kernel did not change; the number of rows did.** And the pointwise rows - RMSNorm, a residual add - are below 1 FLOP per byte, so their time is entirely traffic, which is why fusing them into their neighbours (removing a read and a write, not a multiply) is worth so much.'}});
-  return F.list;
-}
+  const st = RING.states;
+  const push = (o) => F.push({shapes:o.shapes, panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  const chips = (s) => [{lbl:'phase', chips:[chip(s, 'act')]}];
 
-/* ================================================================ tab 4: batching */
-const CODE_BATCH = [
-  '# the weights are read once whatever the batch size',
-  'flops = 2 * batch * d_model * d_ff',
-  'bytes = d_model * d_ff * 2     +  2 * batch * d_model * 2',
-  '#       ^ the weights, once       ^ the activations, per row',
-  '',
-  'intensity = flops / bytes      # grows linearly with the batch'
-];
-function batchStage(o){
-  const sh = [];
-  const top = Math.max.apply(null, BATCH.map(r => r.us));
-  BATCH.forEach((r, i) => {
-    if (i > o.upto) return;
-    const y = 4.40 - i * .70;
-    sh.push(fitT(1.60, y + .20, 'batch ' + r.b, {anchor:'end', c:COL.pale, fs:.26}));
-    sh.push(S.r(1.80, y, Math.max(.06, 4.6 * r.us / top), .40,
-                r.bound === 'memory' ? 'bad' : 'ok', null));
-    sh.push(fitT(9.30, y + .20, {zh:r.ai.toFixed(1) + ' FLOPs/byte　每 token ' + r.us.toFixed(1) + ' µs',
-                                 en:r.ai.toFixed(1) + ' FLOPs/byte,  ' + r.us.toFixed(1) + ' us per token'},
-                 {anchor:'end', c:COL.grey, fs:.24}));
-  });
-  sh.push(fitT(.70, 4.95, {zh:'一層 linear 的每 token 成本（越短越好）',
-                           en:'cost per token of one linear layer - shorter is better'},
-               {anchor:'start', c:COL.grey, fs:.26}));
-  return caps(sh, o);
-}
-function batchFrames(){
-  const F = new Frames();
-  const p = (o) => F.push({shapes:batchStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
-  p({upto:2, line:3,
-    cap:{zh:'小 batch：權重讀一遍，只服務幾列', en:'small batch: read all the weights, serve a few rows'},
-    panels:[{lbl:'batch 1', chips:[chip(BATCH[0].us.toFixed(1) + ' us/token', 'bad')]},
-            {lbl:'intensity', chips:[chip(BATCH[0].ai.toFixed(2), 'bad')]}],
-    msg:{zh:'batch 1 的時候，整層權重被讀一遍只為了算一列——運算密度 ' + BATCH[0].ai.toFixed(2) + '，機器的算力完全在空轉。',
-         en:'At batch 1 the whole weight matrix is read to compute a single row: ' + BATCH[0].ai.toFixed(2) + ' FLOPs per byte, and the arithmetic units idle.'}});
-  p({upto:BATCH.length - 1, line:5,
-    cap:{zh:'加大 batch 就是沿著 roofline 往右走', en:'batching is how you move along the roofline'},
-    panels:[{lbl:'batch 256', chips:[chip(BATCH[4].bound, 'ok')]},
-            {lbl:'per token', chips:[chip(BATCH[0].us.toFixed(1) + ' us', 'bad'),
-                                     chip(BATCH[BATCH.length - 1].us.toFixed(2) + ' us', 'ok')]}],
-    msg:{zh:'權重不管 batch 多大都只讀一遍，所以運算密度隨 batch 線性成長，直到越過 ridge。每個 token 的成本從 ' + BATCH[0].us.toFixed(1) + ' µs 掉到 ' + BATCH[BATCH.length - 1].us.toFixed(2) + ' µs——**兩個數量級**，而這就是 serving 的全部經濟學。前面講 speculative decoding 在大 batch 停止划算，量的是同一條曲線的另一端。',
-         en:'The weights are read once whatever the batch, so intensity grows linearly until it crosses the ridge. The cost per token falls from ' + BATCH[0].us.toFixed(1) + ' us to ' + BATCH[BATCH.length - 1].us.toFixed(2) + ' us - **two orders of magnitude**, and that is the entire economics of serving. The day on decoding measured the same curve from the other end, when speculation stopped paying at large batch.'}});
-  return F.list;
-}
+  push({shapes:caps(rankGrid([], RING.start), {
+          cap:{zh:'起點：每個 rank 都有一份完整的、但不一樣的向量',
+               en:'the start: every rank holds a full vector, and they all differ'}}),
+        line:0, panels:chips('start'),
+        msg:{zh:'目標是讓**每個 rank 都拿到四個 rank 的總和**。天真的做法是大家把整份送給 rank 0、rank 0 加完再送回去——那會有 ' + RINGCOST.naiveN + 'N 的位元組全部擠在同一條線上。ring 的想法是把向量切成 p 塊，**每一步只送一塊給右邊的鄰居**。',
+             en:'The goal is for **every rank to end up with the sum of all four**. The naive way is for everyone to send the whole vector to rank 0 and for rank 0 to send the total back - ' + RINGCOST.naiveN + 'N bytes, all through one link. The ring instead cuts the vector into p chunks and **ships one chunk to the right-hand neighbour per step**.'}});
 
-/* ================================================================ tab 5: tiling */
-const CODE_TILE = [
-  '# without tiling, B is re-read for every row of A',
-  'bytes = 2 * n**3 * 4',
-  '',
-  '# with square tiles of size T that stay in cache:',
-  'bytes = 2 * n**3 / T * 4          # T times less traffic',
-  '',
-  '# and T is not free: three tiles must fit at once',
-  'T = int(sqrt(cache_floats / 3))'
-];
-function tileStage(o){
-  const sh = [];
-  const top = TILE.sweep[0].gb;
-  TILE.sweep.forEach((r, i) => {
-    if (i > o.upto + 2) return;
-    const y = 4.50 - i * .55;
-    sh.push(fitT(1.70, y + .17, 'T = ' + r.t, {anchor:'end', c:COL.pale, fs:.25}));
-    sh.push(S.r(1.90, y, Math.max(.06, 4.6 * r.gb / top), .36, r.fits ? 'ok' : 'ghost', null));
-    sh.push(fitT(9.30, y + .17, {zh:r.gb.toFixed(1) + ' GB　' + (r.fits ? '裝得下' : '裝不下'),
-                                 en:r.gb.toFixed(1) + ' GB   ' + (r.fits ? 'fits in cache' : 'does not fit')},
-                 {anchor:'end', c:r.fits ? COL.grey : COL.red, fs:.24}));
-  });
-  sh.push(fitT(.70, 5.05, {zh:TILE.n + 'x' + TILE.n + ' 的 matmul：搬多少位元組（不做 tiling 是 ' + TILE.naiveGB.toFixed(0) + ' GB）',
-                           en:'a ' + TILE.n + 'x' + TILE.n + ' matmul: bytes moved (untiled: ' + TILE.naiveGB.toFixed(0) + ' GB)'},
-               {anchor:'start', c:COL.grey, fs:.26}));
-  return caps(sh, o);
-}
-function tileFrames(){
-  const F = new Frames();
-  const p = (o) => F.push({shapes:tileStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
-  p({upto:0, line:5,
-    cap:{zh:'kernel 不能選 FLOPs，只能選重讀幾次', en:'a kernel cannot choose its FLOPs, only how often it re-reads'},
-    panels:[{lbl:'untiled', chips:[chip(TILE.naiveGB.toFixed(0) + ' GB', 'bad'),
-                                   chip(TILE.naiveAI.toFixed(2) + ' F/B', 'bad')]},
-            {lbl:'tiles of ' + TILE.tile, chips:[chip(TILE.tiledGB.toFixed(1) + ' GB', 'ok'),
-                                                 chip(TILE.tiledAI.toFixed(1) + ' F/B', 'ok')]}],
-    msg:{zh:'同樣的 matmul、同樣的 FLOPs：不做 tiling 要搬 ' + TILE.naiveGB.toFixed(0) + ' GB，切成 ' + TILE.tile + '×' + TILE.tile + ' 的 tile 只要 ' + TILE.tiledGB.toFixed(1) + ' GB，少 ' + TILE.ratio.toFixed(0) + ' 倍。**倍數剛好等於 tile 大小**，因為 B 的每一塊從「每列讀一次」變成「每個 tile-row 讀一次」。',
-         en:'Same matmul, same FLOPs: untiled it moves ' + TILE.naiveGB.toFixed(0) + ' GB, in ' + TILE.tile + 'x' + TILE.tile + ' tiles it moves ' + TILE.tiledGB.toFixed(1) + ' GB, ' + TILE.ratio.toFixed(0) + 'x less. **The factor is exactly the tile size**, because each block of B goes from being read once per row to once per tile-row.'}});
-  p({upto:TILE.sweep.length, line:7,
-    cap:{zh:'而 tile 多大不是自由參數', en:'and the tile size is not a free parameter'},
-    panels:[{lbl:'rule', chips:[chip('T = sqrt(cache / 3)', 'hot')]},
-            {lbl:'here', chips:[chip(String(TILE.tile), 'ok')]}],
-    msg:{zh:'三塊 tile（A、B、C 各一塊）必須同時待在快取裡，所以 T = √(cache/3)，這裡是 ' + TILE.tile + '。表裡「裝不下」的那幾列是模型在騙你：tile 一旦留不住就會被逐出再抓回來，預測的流量根本拿不到。**每一個函式庫裡的 blocked kernel，核心就是這一個算式加上細節。**',
-         en:'Three tiles - one of A, one of B, one of C - must sit in cache at once, so T = sqrt(cache / 3), which is ' + TILE.tile + ' here. The rows marked "does not fit" are the model lying: a tile that cannot stay resident is evicted and re-fetched, so the predicted traffic never materialises. **Every blocked kernel in every library is this one calculation plus the details.**'}});
-  return F.list;
-}
-
-/* ================================================================ tab 6: flash */
-const CODE_FLASH = [
-  '# standard: the seq x seq matrix lives in HBM and is walked several times',
-  'S = Q @ K.T                 # written',
-  'P = softmax(S)              # read, written',
-  'O = P @ V                   # read',
-  '',
-  '# tiled: blocks of Q, K, V, O in SRAM; the matrix is never allocated',
-  'for q_block in Q:           # Br rows at a time',
-  '    for kv_block in zip(K, V):',
-  '        online_softmax_update(acc, q_block, kv_block)'
-];
-function flashStage(o){
-  const sh = [];
-  const bars = [[{zh:'score 矩陣（必須常駐）', en:'the score matrix, resident'}, FL.score_matrix_gb, 'bad'],
-                [{zh:'standard 搬運量', en:'standard, moved'}, FL.standard_gb, 'act'],
-                [{zh:'tiled 搬運量', en:'tiled, moved'}, FL.tiled_gb, 'ok']];
-  const top = Math.max.apply(null, bars.map(b => b[1]));
-  bars.forEach((b, i) => {
-    if (i > o.upto) return;
-    const y = 4.20 - i * 1.05;
-    sh.push(fitT(.70, y + .62, b[0], {anchor:'start', c:COL.tealL, fs:.27}));
-    sh.push(S.r(.70, y, Math.max(.06, 6.6 * b[1] / top), .44, b[2], null));
-    sh.push(fitT(9.30, y + .22, b[1].toFixed(2) + ' GB', {anchor:'end', c:COL.pale, fs:.26}));
-  });
-  if (o.upto >= 2)
-    sh.push(fitT(4.9, .95, {zh:'流量只少 ' + FL.ratio.toFixed(1) + ' 倍，但那 ' + FL.score_matrix_gb.toFixed(2) + ' GB **從來沒有被配置過**',
-                            en:'only ' + FL.ratio.toFixed(1) + 'x less traffic - but the ' + FL.score_matrix_gb.toFixed(2) + ' GB is **never allocated at all**'},
-                 {c:COL.pale, fs:.28}));
-  return caps(sh, o);
-}
-function flashFrames(){
-  const F = new Frames();
-  const p = (o) => F.push({shapes:flashStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
-  p({upto:1, line:1,
-    cap:{zh:'FlashAttention 就是上一個分頁的論證，用在 attention 上',
-         en:'FlashAttention is the previous tab\'s argument, applied to attention'},
-    panels:[{lbl:'score matrix', chips:[chip(FL.score_matrix_gb.toFixed(2) + ' GB', 'bad')]},
-            {lbl:'standard', chips:[chip(FL.standard_gb.toFixed(2) + ' GB', 'act')]}],
-    msg:{zh:'Day 52 已經證過 online softmax 的恆等式：一趟掃過 K、答案一位不差。它沒講的是「為什麼值得」，而答案就是上一個分頁那張表。標準做法把 ' + FL.seq + '×' + FL.seq + ' 的分數矩陣放進 HBM，再走過它好幾趟。',
-         en:'Day 52 proved the online-softmax identity: one pass over the keys, the same answer to the last bit. What it did not say is why that is worth doing, and the answer is the previous tab. The standard implementation puts the ' + FL.seq + 'x' + FL.seq + ' score matrix in HBM and then walks over it several times.'}});
-  p({upto:2, line:6,
-    cap:{zh:'兩個誠實的觀察', en:'two honest observations'},
-    panels:[{lbl:'traffic', chips:[chip(FL.ratio.toFixed(1) + 'x', 'act')]},
-            {lbl:'block', chips:[chip(FL.block + ' rows', 'dim')]},
-            {lbl:'vs SRAM', chips:[chip(Math.round(FL.memory_ratio).toLocaleString() + 'x', 'bad')]}],
-    msg:{zh:'第一：**流量只少 ' + FL.ratio.toFixed(1) + ' 倍，不是十倍。** d_head 128、shared memory 160 KB 時 block 只有 ' + FL.block + ' 列，K/V 要重讀 ' + FL.passes + ' 次；流量的好處取決於 d_head²/SRAM，所以原論文（d_head 64）看起來比現在的模型大。第二：**流量從來不是主要的獎品**——真正買到的是那 ' + FL.score_matrix_gb.toFixed(2) + ' GB 根本不存在，它是 shared memory 的 ' + Math.round(FL.memory_ratio).toLocaleString() + ' 倍。這是容量的論證不是頻寬的論證，也是長 context 能被服務的理由。',
-         en:'First: **the traffic win is ' + FL.ratio.toFixed(1) + 'x, not ten.** With d_head 128 and 160 KB of shared memory the block is only ' + FL.block + ' rows, so K and V are re-read ' + FL.passes + ' times; the traffic saving scales with d_head squared over SRAM, which is why it looked larger in the original paper (d_head 64). Second: **the traffic was never the main prize** - what tiling buys is that the ' + FL.score_matrix_gb.toFixed(2) + ' GB is never allocated, ' + Math.round(FL.memory_ratio).toLocaleString() + 'x the shared memory it runs in. That is a capacity argument, and it is why long contexts are servable at all.'}});
-  p({upto:2, line:8,
-    cap:{zh:'backward 也是同一招：只存 logsumexp，再重算',
-         en:'the backward pass is the same trick: store the logsumexp, recompute'},
-    panels:[{lbl:'stored', chips:[chip('1 number per row', 'ok')]},
-            {lbl:'seq 32768', chips:[chip(FL.scaling[3].mat.toFixed(0) + ' GB matrix', 'bad')]}],
-    msg:{zh:'反向傳遞一樣不存分數矩陣：它只留每一列的 log-sum-exp（一個數字，不是 seq 個數字），再從 Q 和 K 把分數重算出來。**重算比來回搬便宜**，而為什麼便宜，第三個分頁的表已經回答了。seq 32768 時那個矩陣是 ' + FL.scaling[3].mat.toFixed(0) + ' GB——沒有人能存它。',
-         en:'The backward pass does not store the score matrix either: it keeps the log-sum-exp per row - one number instead of seq numbers - and recomputes the scores from Q and K. **Recomputation is cheaper than the round trip**, and the roofline table is why. At seq 32768 that matrix would be ' + FL.scaling[3].mat.toFixed(0) + ' GB, which nobody is going to store.'}});
-  return F.list;
-}
-
-/* ================================================================ tab 7: latency */
-const CODE_LAT = [
-  '# Little\'s law: to keep the pipe full you need',
-  'bytes_in_flight = bandwidth * latency',
-  '5300e9 * 600e-9 = 3.2 MB   # on one GPU, at once',
-  '',
-  '# and a cache line is fetched whole, whatever you asked for',
-  'a[::16].sum()      # a sixteenth of the payload, all of the lines'
-];
-function latStage(o){
-  const sh = [];
-  if (o.upto === 0){
-    sh.push(box(.70, 3.60, 3.0, .70, 'ok', LIT.bandwidth_gbs.toLocaleString() + ' GB/s', .30));
-    sh.push(fitT(4.00, 3.95, 'x', {c:COL.pale, fs:.32}));
-    sh.push(box(4.40, 3.60, 2.2, .70, 'act', LIT.latency_ns + ' ns', .30));
-    sh.push(fitT(6.90, 3.95, '=', {c:COL.pale, fs:.32}));
-    sh.push(box(7.30, 3.60, 1.9, .70, 'hot', (LIT.bytes_in_flight / 1e6).toFixed(1) + ' MB', .30));
-    sh.push(fitT(4.9, 2.70, {zh:'同時必須有 ' + Math.round(LIT.requests_in_flight).toLocaleString() + ' 個請求在路上（每個 ' + LIT.bytes_per_request + ' bytes）',
-                             en:Math.round(LIT.requests_in_flight).toLocaleString() + ' requests have to be in flight at once, at ' + LIT.bytes_per_request + ' bytes each'},
-                 {c:COL.tealL, fs:.30}));
-  } else {
-    ST.forEach((r, i) => {
-      const y = 4.30 - i * .62;
-      sh.push(fitT(1.70, y + .18, 'stride ' + r.s, {anchor:'end', c:COL.pale, fs:.25}));
-      sh.push(S.r(1.90, y, Math.max(.06, 3.4 * r.useful / ST[0].useful), .38, 'ok', null));
-      sh.push(S.r(5.50, y, Math.max(.06, 3.4 * r.fetched / ST[0].fetched), .38, 'bad', null));
-      sh.push(fitT(9.30, y + .18, (r.eff * 100).toFixed(0) + '%　' + r.ms.toFixed(2) + ' ms',
-                   {anchor:'end', c:COL.grey, fs:.23}));
-    });
-    sh.push(fitT(1.90, 4.95, {zh:'有用的位元組', en:'useful bytes'}, {anchor:'start', c:COL.tealL, fs:.25}));
-    sh.push(fitT(5.50, 4.95, {zh:'實際抓進來的', en:'bytes actually fetched'}, {anchor:'start', c:COL.red, fs:.25}));
+  for (let i = 1; i <= 3; i++){
+    const s = st[i], hl = {};
+    s.moves.forEach(m => { hl[m.dst + ',' + m.idx] = 'hot'; });
+    push({shapes:caps(moveArrows(rankGrid([], s.grid, {hl:hl}), s.moves),
+            {cap:{zh:'reduce-scatter 第 ' + s.step + ' 步（共 3 步）',
+                  en:'reduce-scatter, step ' + s.step + ' of 3'}}),
+          line:4, panels:chips('reduce-scatter ' + s.step + '/3'),
+          msg:i < 3
+            ? {zh:'每個 rank 同時送出一塊、收下一塊並**就地加進自己的對應塊**。注意四條線是同時在動的：ring 用滿了所有的連線，而不是讓一條線扛全部。',
+               en:'Every rank ships one chunk and adds the one arriving from its left neighbour **into its own copy of that chunk**. All four links move at once - the ring uses every link in the system instead of funnelling through one.'}
+            : {zh:'三步之後，**每個 rank 各自持有一塊已經加完四份的結果**（橘色格）。整個總和已經算完了，只是分散在四個 rank 上——這一半就叫 reduce-scatter，很多情況下（例如 ZeRO 的梯度）到這裡就夠了。',
+               en:'After three steps **each rank owns one chunk that is already the full four-way sum** (amber). The total is finished, just scattered - this half is reduce-scatter on its own, and for ZeRO-style gradients that is all you need.'}});
   }
-  return caps(sh, o);
-}
-function latFrames(){
-  const F = new Frames();
-  const p = (o) => F.push({shapes:latStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
-  p({upto:0, line:2,
-    cap:{zh:'光有頻寬不夠：還要有足夠多的請求在路上',
-         en:'bandwidth alone is not enough: the requests have to be in flight'},
-    panels:[{lbl:'in flight', chips:[chip((LIT.bytes_in_flight / 1e6).toFixed(1) + ' MB', 'hot')]},
-            {lbl:'requests', chips:[chip(Math.round(LIT.requests_in_flight).toLocaleString(), 'bad')]}],
-    msg:{zh:'記憶體系統有第二個數字，規格表很少跟第一個放在一起：**一次存取要多久**。要把管線填滿，任何時刻都必須有「頻寬 × 延遲」這麼多位元組在路上——這裡是 ' + (LIT.bytes_in_flight / 1e6).toFixed(1) + ' MB，也就是 ' + Math.round(LIT.requests_in_flight).toLocaleString() + ' 個同時在飛的請求。所以一個「發一次 load 然後等」的 kernel 就算完全沒有多餘工作也會慢：硬體需要的是數千個未完成請求，而那只能靠很多執行緒、或一個執行緒展開很多次載入來供應。',
-         en:'A memory system has a second number that specifications rarely put beside the first: **how long one access takes**. To keep the pipe full you need bandwidth times latency bytes in flight at every moment - ' + (LIT.bytes_in_flight / 1e6).toFixed(1) + ' MB here, or ' + Math.round(LIT.requests_in_flight).toLocaleString() + ' simultaneous requests. Which is why a kernel that issues one load and waits is slow even with no redundant work: the hardware wants thousands of outstanding requests, and only many threads - or one thread unrolled over many loads - can supply them.'}});
-  p({upto:1, line:5,
-    cap:{zh:'而且 cache line 是整條抓的（本機實測）',
-         en:'and a cache line is fetched whole - measured here'},
-    panels:[{lbl:'stride 1', chips:[chip('100%', 'ok')]},
-            {lbl:'stride 16', chips:[chip((ST[4].eff * 100).toFixed(0) + '%', 'bad')]},
-            {lbl:'time', chips:[chip(ST[0].ms.toFixed(2) + ' ms', 'dim'),
-                                chip(ST[4].ms.toFixed(2) + ' ms', 'bad')]}],
-    msg:{zh:'到 stride 16 為止，「實際抓進來」那一欄完全不動：不管你跳多遠，每條 cache line 都被碰到，所以有用的比例一路掉到 ' + (ST[4].eff * 100).toFixed(0) + '%，而時間不但沒變少、還變多了。**這就是 GPU 上「coalescing」的全部內容**，在 CPU 上則是 array-of-structs 比 struct-of-arrays 慢的原因——同一個硬體事實。',
-         en:'Up to stride 16 the "fetched" column does not move at all: every cache line is touched whatever the stride, so the useful fraction collapses to ' + (ST[4].eff * 100).toFixed(0) + '% while the time goes *up*. **That is the entire content of coalescing on a GPU**, and on a CPU it is why an array of structs loses to a struct of arrays. One hardware fact, two names.'}});
-  return F.list;
-}
+  for (let i = 4; i <= 6; i++){
+    const s = st[i], hl = {};
+    s.moves.forEach(m => { hl[m.dst + ',' + m.idx] = 'ok'; });
+    push({shapes:caps(moveArrows(rankGrid([], s.grid, {hl:hl}), s.moves, 'ok'),
+            {cap:{zh:'all-gather 第 ' + s.step + ' 步（共 3 步）',
+                  en:'all-gather, step ' + s.step + ' of 3'}}),
+          line:10, panels:chips('all-gather ' + s.step + '/3'),
+          msg:i < 6
+            ? {zh:'第二階段不再做加法，只是**把算好的那一塊傳下去**，每一步每個 rank 都多收到一塊完成品。',
+               en:'The second half adds nothing: it just **passes the finished chunk along**, so every rank gains one completed chunk per step.'}
+            : {zh:'六步之後每個 rank 都有完整的總和（' + RING.total.join(', ') + '）。總共走 ' + RINGCOST.steps + ' 步、每個 rank 送出 ' + RINGCOST.perN + 'N——**和 rank 數無關**，這就是 ring 的重點。',
+               en:'Six steps in, every rank has the whole sum (' + RING.total.join(', ') + '). That is ' + RINGCOST.steps + ' steps and ' + RINGCOST.perN + 'N shipped per rank - **independent of how many ranks there are**, which is the entire point of the ring.'}});
+  }
 
-/* ================================================================ tabs 8-9: the frameworks */
-function mapStage(o){
-  const sh = [], rows = o.rows;
+  const sh = [];
+  sh.push(fitT(.4, 1.0, {zh:'同樣一次 all-reduce，三種實作', en:'one all-reduce, three implementations'},
+               {anchor:'start', c:COL.tealL, fs:.34}));
+  const rows = [['naive (everything through rank 0)', RINGCOST.naiveN + 'N', '2 steps', 'bad'],
+                ['tree (2 log2 p levels)', '2 log2(p) N', '2 log2(p) steps', 'act'],
+                ['ring (reduce-scatter + all-gather)', RINGCOST.perN + 'N', RINGCOST.steps + ' steps', 'ok']];
   rows.forEach((r, i) => {
-    if (i > o.upto) return;
-    const y = 4.30 - i * .80;
-    sh.push(box(.70, y, 3.30, .58, 'idle', r[0], .26));
-    sh.push(S.e(4.15, y + .29, 4.75, y + .29, {s:'ghost', arrow:true, w:.05}));
-    sh.push(box(4.90, y, 4.30, .58, i === o.upto ? 'hot' : 'ok', r[1], .26));
+    const y = 1.7 + i * 1.0;
+    sh.push(S.r(.4, y, 5.0, .72, r[3], null));
+    sh.push(fitT(.55, y + .46, r[0], {anchor:'start', c:COL.pale, fs:.30}));
+    sh.push(fitT(6.6, y + .46, r[1], {anchor:'end', c:COL.orangeL, fs:.32}));
+    sh.push(fitT(9.4, y + .46, r[2], {anchor:'end', c:COL.grey, fs:.30}));
   });
-  sh.push(fitT(2.35, 5.08, {zh:'這個檔案裡的東西', en:'what this file calls it'},
-               {c:COL.grey, fs:.26}));
-  sh.push(fitT(7.05, 5.08, o.title, {c:COL.tealL, fs:.28}));
-  return caps(sh, o);
-}
-const CODE_TORCH = [
-  'with torch.profiler.profile(activities=[CUDA]) as p:',
-  '    model(x)',
-  'p.key_averages().table(sort_by="self_cuda_time_total")',
-  '',
-  'torch.cuda.max_memory_allocated()',
-  'torch.cuda.memory._record_memory_history()',
-  '',
-  'torch.compile(model)                       # fuses the pointwise chains',
-  'F.scaled_dot_product_attention(q, k, v)    # dispatches to a tiled kernel'
-];
-const TORCH_ROWS = [
-  [{zh:'哪個 kernel 花了時間', en:'which kernel spent the time'}, {zh:'torch.profiler', en:'torch.profiler'}],
-  [{zh:'峰值記憶體與去向', en:'peak memory and where it went'}, {zh:'max_memory_allocated ／ _record_memory_history', en:'max_memory_allocated / _record_memory_history'}],
-  [{zh:'逐元素 kernel 的流量', en:'the traffic of pointwise kernels'}, {zh:'torch.compile 的融合', en:'fusion via torch.compile'}],
-  [{zh:'tiling 過的 attention', en:'a tiled attention kernel'}, {zh:'scaled_dot_product_attention ／ sdpa_kernel', en:'scaled_dot_product_attention / sdpa_kernel'}]
-];
-function torchFrames(){
-  const F = new Frames();
-  const p = (o) => F.push({shapes:mapStage(Object.assign({rows:TORCH_ROWS, title:'PyTorch'}, o)),
-                           panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
-  p({upto:1, line:3,
-    cap:{zh:'profiler 回答的是位元組，不是 FLOPs', en:'the profiler answers in bytes, not FLOPs'},
-    panels:[{lbl:'profiler', chips:[chip('per-kernel time', 'ok')]},
-            {lbl:'memory', chips:[chip('peak + history', 'act')]}],
-    msg:{zh:'把 roofline 放在手邊再去讀 profile，是完全不同的體驗：一個只跑到峰值算力 20% 的 kernel 不一定寫得爛，它可能已經到了峰值頻寬的 95%，而解法是**給它更高的運算密度**，不是給它更多執行緒。',
-         en:'Reading a profile with the roofline in hand is a different experience: a kernel at 20% of peak FLOPs is not necessarily badly written - it may be at 95% of peak bandwidth, and the fix is **more arithmetic per byte**, not more threads.'}});
-  p({upto:3, line:7,
-    cap:{zh:'而最高槓桿的工具是融合', en:'and the highest-leverage tool is fusion'},
-    panels:[{lbl:'torch.compile', chips:[chip('fuses pointwise', 'ok')]},
-            {lbl:'SDPA', chips:[chip('tiled attention', 'act')]}],
-    msg:{zh:'第三個分頁說了：逐元素 kernel 的時間完全是搬運。所以 `torch.compile` 把 norm＋add＋activation 融成一個 kernel，省掉的是一讀一寫而不是乘法——這是對記憶體有界的工作最有效的一招。而 `F.scaled_dot_product_attention` 就是幫你呼叫別人 tiling 好的 attention kernel（必要時用 `sdpa_kernel` 指定後端）。',
-         en:'Tab three said it: a pointwise kernel\'s time is entirely traffic. So `torch.compile` fuses norm + add + activation into one kernel and saves a read and a write rather than a multiply - the most effective single move for memory-bound work. And `F.scaled_dot_product_attention` is how you call the tiled attention kernel somebody already wrote (with `sdpa_kernel` to pin the backend).'}});
+  push({shapes:caps(sh, {cap:{zh:'p = 4：位元組與步數的取捨', en:'p = 4: bytes against steps'}}),
+        line:12, panels:[{lbl:'ring', chips:[chip(RINGCOST.perN + 'N', 'ok'), chip(RINGCOST.steps + ' steps', 'dim')]}],
+        msg:{zh:'**訊息大的時候看位元組**（ring 贏：' + RINGCOST.perN + 'N vs ' + RINGCOST.naiveN + 'N），**訊息小的時候看步數**（tree 贏：步數只有 2log2(p)）。在這個模型的鏈路上交叉點大約在 ' + CROSS + ' KB，所以 NCCL/RCCL 會依訊息大小在兩種實作之間切換。這也是為什麼 decode 時那個很小的 all-reduce 不是免費的：它付的是「跳數」不是「位元組」。',
+             en:'**Large messages are decided by bytes** (the ring wins: ' + RINGCOST.perN + 'N against ' + RINGCOST.naiveN + 'N) and **small ones by hops** (the tree wins: only 2log2(p) steps). On this link model the crossover is around ' + CROSS + ' KB, which is why NCCL and RCCL switch implementation by size - and why the tiny all-reduce inside a decode step is not free: it pays in hops, not in bytes.'}});
   return F.list;
 }
-const CODE_JAX = [
-  'compiled = jax.jit(f).lower(x).compile()',
-  'compiled.memory_analysis()     # bytes in, out, temporaries',
-  'compiled.cost_analysis()       # the FLOP count to divide by',
-  '',
-  'jax.jit(f, donate_argnums=(0,))   # reuse the input buffer',
-  'jax.profiler.trace("/tmp/tb")',
-  '',
-  '# and when the compiler\'s tiling is not enough: Pallas,',
-  '# where you choose the block sizes against the same constraint'
+
+/* ================================================================ tab 2: the zoo */
+const CODE_ZOO = [
+  'dist.broadcast(x, src=0)              # one -> all,      N bytes',
+  'dist.all_reduce(x)                    # sum everywhere,  2(p-1)/p N',
+  'dist.reduce_scatter_tensor(out, x)    # sum, keep 1/p,   (p-1)/p N',
+  'dist.all_gather_into_tensor(out, x)   # 1/p -> whole,    (p-1)/p N',
+  'dist.all_to_all_single(out, x, ...)   # transpose,       (p-1)/p N',
+  'dist.send(x, dst) / dist.recv(x, src) # one hop,         N'
 ];
-const JAX_ROWS = [
-  [{zh:'流量與 FLOPs', en:'traffic and FLOPs'}, {zh:'memory_analysis ／ cost_analysis', en:'memory_analysis / cost_analysis'}],
-  [{zh:'逐元素 kernel 的流量', en:'the traffic of pointwise kernels'}, {zh:'XLA 預設就融合', en:'XLA fuses by default'}],
-  [{zh:'少配置一塊 buffer', en:'one buffer fewer'}, {zh:'donate_argnums', en:'donate_argnums'}],
-  [{zh:'自己選 tile 大小', en:'choosing the block sizes yourself'}, {zh:'Pallas（＝Triton 那個模型）', en:'Pallas, the Triton model'}]
+const ZOO = [
+  {id:'broadcast', before:[['A','A','A','A'], [null,null,null,null], [null,null,null,null], [null,null,null,null]],
+   after:[['A','A','A','A'], ['A','A','A','A'], ['A','A','A','A'], ['A','A','A','A']]},
+  {id:'all-gather', before:[['a',null,null,null], [null,'b',null,null], [null,null,'c',null], [null,null,null,'d']],
+   after:[['a','b','c','d'], ['a','b','c','d'], ['a','b','c','d'], ['a','b','c','d']]},
+  {id:'reduce-scatter', before:[['1','2','3','4'], ['1','2','3','4'], ['1','2','3','4'], ['1','2','3','4']],
+   after:[['4',null,null,null], [null,'8',null,null], [null,null,'12',null], [null,null,null,'16']]},
+  {id:'all-to-all', before:[['a0','a1','a2','a3'], ['b0','b1','b2','b3'], ['c0','c1','c2','c3'], ['d0','d1','d2','d3']],
+   after:[['a0','b0','c0','d0'], ['a1','b1','c1','d1'], ['a2','b2','c2','d2'], ['a3','b3','c3','d3']]}
 ];
-function jaxFrames(){
+const ZOO_MSG = {
+  'broadcast':{zh:'**broadcast**：一個 rank 有、所有人都要。權重載入、把取樣用的隨機種子發下去都是它。每個 rank 收 N 個位元組，但沿著樹走只要 log2(p) 步。',
+               en:'**broadcast**: one rank has it, everybody needs it - loading weights, handing out a sampling seed. Every rank receives N bytes, and a tree reaches all of them in log2(p) steps.'},
+  'all-gather':{zh:'**all-gather**：每個 rank 有 1/p，大家都要完整的那一份。**FSDP 在每一層開始前做的就是這件事**：把切開的權重暫時拼回來，算完立刻丟掉。',
+                en:'**all-gather**: each rank holds 1/p and everybody needs the whole thing. **This is what FSDP does before every layer**: temporarily reassemble the sharded weights, then throw them away again.'},
+  'reduce-scatter':{zh:'**reduce-scatter**：大家各有一份部分和，加起來之後**每個 rank 只留 1/p**。ZeRO 的梯度就這樣存——反正每個 rank 只需要更新自己負責的那一段參數。',
+                    en:'**reduce-scatter**: everybody holds a partial sum; add them up and **each rank keeps only 1/p**. That is how ZeRO stores gradients, because each rank only updates the slice of parameters it owns.'},
+  'all-to-all':{zh:'**all-to-all**：rank r 手上有要給每個 rank 的一份資料，做完之後矩陣被轉置。**MoE 的 dispatch 與 combine 就是兩次 all-to-all**，Day 62 的 DeepEP 整篇在優化的就是它。',
+                en:'**all-to-all**: rank r holds one shard addressed to each other rank, and the operation transposes the rank-by-shard matrix. **MoE dispatch and combine are exactly two all-to-alls** - the whole of DeepEP from Day 62 is about making this one fast.'}
+};
+function zooStage(ix){
+  const z = ZOO[ix], sh = [];
+  const draw = (grid, x0, title, stv) => {
+    sh.push(fitT(x0 + 1.75, .92, title, {c:COL.tealL, fs:.30}));
+    for (let r = 0; r < RANKS; r++){
+      if (x0 < 1.0) sh.push(fitT(x0 - .18, 1.55 + r * .95 + .46, 'r' + r,
+                                 {anchor:'end', c:COL.grey, fs:.26}));
+      for (let c = 0; c < RANKS; c++){
+        const v = grid[r][c];
+        sh.push(S.r(x0 + c * .90, 1.55 + r * .95, .82, .72, v == null ? 'ghost' : stv,
+                    v == null ? '' : String(v), {fs:.30}));
+      }
+    }
+  };
+  draw(z.before, .85, {zh:'之前', en:'before'}, 'idle');
+  draw(z.after, 5.75, {zh:'之後', en:'after'}, 'ok');
+  sh.push(S.e(4.75, 3.0, 5.55, 3.0, {s:'hot', w:.07}));
+  sh.push(fitT(5.15, 2.72, z.id, {c:COL.orangeL, fs:.28}));
+  return sh;
+}
+function zooFrames(){
   const F = new Frames();
-  const p = (o) => F.push({shapes:mapStage(Object.assign({rows:JAX_ROWS, title:'JAX'}, o)),
-                           panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
-  p({upto:1, line:3,
-    cap:{zh:'編譯器可以在你跑之前就給你 roofline',
-         en:'the compiler can hand you a roofline before you run anything'},
-    panels:[{lbl:'memory_analysis', chips:[chip('bytes', 'ok')]},
-            {lbl:'cost_analysis', chips:[chip('FLOPs', 'act')]}],
-    msg:{zh:'`compiled.memory_analysis()` 給你這個函式搬了多少位元組、`cost_analysis()` 給你 FLOPs——兩個相除就是運算密度。**這是編譯器在你還沒執行之前就算好的 roofline**，而 XLA 預設就會融合，所以大部分逐元素的流量不用你開口就消失了。',
-         en:'`compiled.memory_analysis()` gives the bytes this function moves and `cost_analysis()` gives the FLOPs; divide one by the other and you have its arithmetic intensity. **That is a roofline computed by the compiler before you run anything** - and XLA fuses by default, so most of the pointwise traffic disappears without being asked.'}});
-  p({upto:3, line:7,
-    cap:{zh:'而 tiling 住在不同的地方', en:'and the tiling lives somewhere else'},
-    panels:[{lbl:'XLA', chips:[chip('tiles the fused region', 'ok')]},
-            {lbl:'Pallas', chips:[chip('you choose the blocks', 'act')]}],
-    msg:{zh:'跟 PyTorch 真正的差別在於 tiling 住在哪裡：PyTorch 是你呼叫別人 tiling 好的 kernel，或自己用 Triton 寫一個；JAX 是編譯器自己把融合後的區塊 tiling 掉，而當那還不夠好的時候你降到 Pallas——那就是 Triton 的模型：**你自己選 block 大小，而你在對抗的約束就是第五個分頁那一條。**',
-         en:'The real difference from PyTorch is where the tiling lives. In PyTorch you call a kernel somebody tiled for you, or you write one in Triton. In JAX the compiler tiles the fused region itself, and when that is not good enough you drop to Pallas - which is the Triton model: **you choose the block sizes, and the constraint you are choosing against is the one in tab five.**'}});
+  ZOO.forEach((z, i) => {
+    const row = COLL.filter(c => c.name === z.id)[0];
+    F.push({shapes:caps(zooStage(i), {cap:{zh:z.id + '：' + row.bytes + ' 位元組，' + row.steps + ' 步',
+                                           en:z.id + ': ' + row.bytes + ' bytes per rank, ' + row.steps + ' steps'}}),
+            line:[0, 3, 2, 4][i],
+            panels:[{lbl:'per rank', chips:[chip(row.mb + ' MB', 'act')]},
+                    {lbl:'of a 256 MB tensor', chips:[chip(row.steps, 'dim')]}],
+            msg:ZOO_MSG[z.id], view:VIEW});
+  });
+  return F.list;
+}
+
+/* ================================================================ tab 3: data parallel */
+const CODE_DP = [
+  '# every rank: full weights, 1/p of the batch',
+  'loss = model(x_shard).mse(y_shard)',
+  'loss.backward()',
+  '',
+  'for g in grads:                    # DDP does this for you,',
+  '    dist.all_reduce(g)             # bucketed and overlapped',
+  '    g /= world_size                # <- the average, not the sum',
+  'opt.step()',
+  '',
+  '# ZeRO-3 / FSDP: the weights are sharded too',
+  'all_gather(layer.weight)           # just before the layer runs',
+  'reduce_scatter(layer.grad)         # keep only my slice'
+];
+function dpFrames(){
+  const F = new Frames();
+  const sh1 = [];
+  sh1.push(fitT(4.9, .95, {zh:'四個 rank，各看四分之一的 batch', en:'four ranks, a quarter of the batch each'},
+                {c:COL.tealL, fs:.32}));
+  for (let r = 0; r < 4; r++){
+    const x = .55 + r * 2.30;
+    sh1.push(S.r(x, 1.45, 1.95, .70, 'idle', 'batch ' + r, {fs:.30}));
+    sh1.push(S.r(x, 2.35, 1.95, .70, 'act', 'grad g' + r, {fs:.30}));
+    sh1.push(S.e(x + .97, 3.12, x + .97, 3.55, {s:'act', w:.055}));
+    sh1.push(S.r(x, 4.35, 1.95, .70, 'ok', 'same w', {fs:.30}));
+    sh1.push(S.e(x + .97, 4.25, x + .97, 4.32, {s:'ok', w:.05}));
+  }
+  sh1.push(S.r(.55, 3.55, 8.70, .68, 'hot', 'all-reduce(g0 + g1 + g2 + g3) / 4', {fs:.34}));
+  F.push({shapes:caps(sh1, {cap:{zh:'梯度平均＝全 batch 的梯度', en:'the averaged gradient is the full-batch gradient'}}),
+          line:5, view:VIEW,
+          panels:[{lbl:'one device', chips:[chip(DDP.single, 'dim')]},
+                  {lbl:'4 ranks', chips:[chip(DDP.ddp, 'ok')]},
+                  {lbl:'weight diff', chips:[chip(DDP.diff, 'act')]}],
+          msg:{zh:'把同一個小網路訓練兩次：一台機器吃完整 batch，和四個 rank 各吃四分之一再做 all-reduce，60 步之後 loss 都是 ' + DDP.ddp + '、權重最大差 ' + DDP.diff + '。**會相等是因為 loss 是平均**：各 rank 梯度的平均剛好等於全 batch 的梯度。所以 data parallel 的全部內容就是「每步做一次梯度 all-reduce」，模型本身一點都沒被切開——也因此它完全不省記憶體。',
+               en:'The same small network trained twice: one device on the full batch, and four ranks on a quarter each with an all-reduce between them. After 60 steps both reach loss ' + DDP.ddp + ', with a largest weight difference of ' + DDP.diff + '. **They match because the loss is a mean** - the average of the per-rank gradients is exactly the full-batch gradient. So data parallelism is nothing but one gradient all-reduce per step, and because the model itself is never split, it saves no memory at all.'}});
+
+  const sh2 = [];
+  sh2.push(fitT(4.9, .95, {zh:'把 all-reduce 切成 bucket，藏進 backward 裡',
+                           en:'cutting the all-reduce into buckets so it hides under the backward pass'},
+                {c:COL.tealL, fs:.30}));
+  BUCK.forEach((b, i) => {
+    const y = 1.6 + i * 1.15;
+    sh2.push(fitT(1.55, y + .45, b.n + ' x ' + b.mb + ' MB', {anchor:'end', c:COL.pale, fs:.30}));
+    sh2.push(S.r(1.70, y, 4.75, .70, 'idle', 'backward (100 ms)', {fs:.28}));
+    const w = Math.max(.22, 1.5 * b.exp / BUCK[0].exp);
+    sh2.push(S.r(6.55, y, w, .70, i === BUCK.length - 1 ? 'ok' : 'hot', null));
+    sh2.push(fitT(6.65 + w, y + .45, b.exp + ' ms', {anchor:'start', c:COL.orangeL, fs:.26}));
+  });
+  F.push({shapes:caps(sh2, {cap:{zh:'橘色＝沒藏住、真的加在 step 時間上的部分',
+                                 en:'amber is the part that is exposed and really adds to the step'}}),
+          line:4, view:VIEW,
+          panels:[{lbl:'1 bucket', chips:[chip(BUCK[0].exp + ' ms', 'hot')]},
+                  {lbl:'25 buckets', chips:[chip(BUCK[2].exp + ' ms', 'ok')]}],
+          msg:{zh:'梯度是**從最後一層往前**算出來的，所以最前面的 bucket 一算完就可以開始飛，整個 backward 都還在跑。只有最後一個 bucket 沒東西可以蓋，' + BUCK[0].n + ' 個 bucket 時曝露 ' + BUCK[0].exp + ' ms，切成 ' + BUCK[2].n + ' 個只剩 ' + BUCK[2].exp + ' ms；代價是總通訊量從 ' + BUCK[0].all + ' 變成 ' + BUCK[2].all + ' ms（每個 bucket 都要再付一次延遲）。',
+               en:'Gradients are produced **back to front**, so the earliest bucket can start flying while the rest of the backward pass is still running. Only the last bucket has nothing left to hide under: with ' + BUCK[0].n + ' bucket that is ' + BUCK[0].exp + ' ms exposed, with ' + BUCK[2].n + ' buckets only ' + BUCK[2].exp + ' ms. The price is total traffic going from ' + BUCK[0].all + ' to ' + BUCK[2].all + ' ms, because every bucket pays the latency again.'}});
+
+  const sh3 = [];
+  sh3.push(fitT(4.9, .95, {zh:'70B + Adam，8 張卡：每張卡要放多少',
+                           en:'70B with Adam on 8 GPUs: memory per rank'}, {c:COL.tealL, fs:.32}));
+  const top = ZERO[0].gb;
+  ZERO.forEach((z, i) => {
+    const y = 1.55 + i * 1.05;
+    sh3.push(fitT(3.05, y + .45, z.stage, {anchor:'end', c:COL.pale, fs:.28}));
+    const w = Math.max(.35, 4.6 * z.gb / top);
+    sh3.push(S.r(3.20, y, w, .70, i === ZERO.length - 1 ? 'ok' : 'idle', null));
+    sh3.push(fitT(3.32 + w, y + .45, z.gb + ' GB', {anchor:'start', c:COL.orangeL, fs:.28}));
+    sh3.push(fitT(9.5, y + .45, z.vs + 'x wire', {anchor:'end', c:COL.grey, fs:.26}));
+  });
+  F.push({shapes:caps(sh3, {cap:{zh:'ZeRO 三階段：切 optimizer、切梯度、切參數',
+                                 en:'the three ZeRO stages: shard the optimizer, the gradients, the parameters'}}),
+          line:10, view:VIEW,
+          panels:[{lbl:'DDP', chips:[chip(ZERO[0].gb + ' GB', 'dim')]},
+                  {lbl:'FSDP', chips:[chip(ZERO[3].gb + ' GB', 'ok'), chip(ZERO[3].vs + 'x', 'hot')]}],
+          msg:{zh:'Adam 在混合精度下每個參數要 16 個位元組（bf16 權重 2 ＋ bf16 梯度 2 ＋ fp32 master 4 ＋ m 4 ＋ v 4）＝**權重本身的 8 倍**，所以 70B 複製一份要 ' + ZERO[0].gb + ' GB。ZeRO 一階一階把它切掉，到 ZeRO-3／FSDP 連參數都切，剩 ' + ZERO[3].gb + ' GB；代價是線上多跑 ' + ZERO[3].vs + ' 倍（每層算之前 all-gather 權重、算完丟掉）。**這就是 Day 62.5 的 recompute vs store 換成了 refetch vs store。**',
+               en:'Adam in mixed precision keeps 16 bytes per parameter (2 for the bf16 weight, 2 for the bf16 gradient, 4 for the fp32 master copy, 4 and 4 for m and v) - **eight times the weights themselves** - so one replica of 70B is ' + ZERO[0].gb + ' GB. ZeRO shards that one stage at a time, and ZeRO-3 / FSDP shards the parameters too, reaching ' + ZERO[3].gb + ' GB. The price is ' + ZERO[3].vs + 'x the traffic, because every layer is all-gathered just before it runs and dropped straight after. **It is Day 62.5 recompute-versus-store, with refetch in place of recompute.**'}});
+  return F.list;
+}
+
+/* ================================================================ tab 4: tensor parallel */
+const CODE_TP = [
+  '# Megatron pair: column-split, then row-split',
+  'w1_r = w1[:, r::p]        # each rank owns whole hidden units',
+  'h_r  = relu(x @ w1_r)     # no communication: the non-linearity is local',
+  '',
+  'w2_r = w2[r::p, :]        # rows of the second matrix',
+  'y_r  = h_r @ w2_r         # a PARTIAL sum of the full-width output',
+  '',
+  'dist.all_reduce(y_r)      # <- this is what makes it correct',
+  '',
+  '# sequence parallel: the same bytes, less memory',
+  'reduce_scatter(y) ; norm_on_my_shard() ; all_gather(y)'
+];
+function tpStage(stage){
+  const sh = [];
+  const cols = ['r0', 'r1', 'r2', 'r3'];
+  sh.push(fitT(1.75, 1.0, 'w1 (columns)', {c:COL.tealL, fs:.30}));
+  cols.forEach((c, i) => sh.push(S.r(.55 + i * .62, 1.3, .54, 1.5,
+                                     stage >= 0 ? 'act' : 'idle', c, {fs:.26})));
+  sh.push(fitT(4.55, 1.0, 'w2 (rows)', {c:COL.tealL, fs:.30}));
+  cols.forEach((c, i) => sh.push(S.r(3.55, 1.3 + i * .40, 2.0, .34,
+                                     stage >= 1 ? 'act' : 'idle', c, {fs:.24})));
+  sh.push(fitT(8.0, 1.0, {zh:'輸出', en:'output'}, {c:COL.tealL, fs:.30}));
+  cols.forEach((c, i) => {
+    const st = stage >= 2 ? 'ok' : (stage >= 1 ? 'hot' : 'ghost');
+    sh.push(S.r(6.6, 1.3 + i * .40, 2.7, .34, st,
+                stage >= 2 ? 'full y' : (stage >= 1 ? 'partial y' : ''), {fs:.24}));
+  });
+  if (stage >= 2)
+    sh.push(S.r(6.6, 3.15, 2.7, .62, stage === 3 ? 'bad' : 'hot',
+                stage === 3 ? 'no all-reduce' : 'all-reduce', {fs:.28}));
+  const lines = stage === 3
+    ? [['dropped the all-reduce:', COL.red, .30],
+       ['shape is still right, error = ' + (DROP.rel * 100).toFixed(0) + '% of the output', COL.orangeL, .28],
+       ['max |error| ' + DROP.bad + ' instead of ' + DROP.ok, COL.grey, .28]]
+    : [['8-way TP, 8,192 tokens', COL.tealL, .30],
+       [TPT.all_reduces + ' all-reduces x ' + TPT.per_all_reduce_mb + ' MB', COL.pale, .28],
+       ['= ' + TPT.total_gb + ' GB per forward pass', COL.orangeL, .28]];
+  side(sh, .55, 4.35, lines, .52);
+  return sh;
+}
+function tpFrames(){
+  const F = new Frames();
+  const p = (stage, o) => F.push({shapes:caps(tpStage(stage), {cap:o.cap}), line:o.line,
+                                  panels:o.panels, msg:o.msg, view:VIEW});
+  p(0, {cap:{zh:'第一個矩陣照「行」切（column-parallel）', en:'the first matrix is split by columns'},
+        line:1, panels:[{lbl:'collectives so far', chips:[chip('none', 'dim')]}],
+        msg:{zh:'切法是挑過的：**按 column 切 w1，等於每個 rank 拿到完整的幾個隱藏單元**，所以 ReLU／SwiGLU 這種逐元素的非線性完全不需要通訊，各算各的就好。如果反過來按 row 切，非線性之前就得先把整列湊齊，每一層要多一次 all-gather。',
+             en:'The split is chosen, not arbitrary: **cutting w1 by columns gives each rank whole hidden units**, so an elementwise non-linearity like ReLU or SwiGLU needs no communication at all. Split it the other way and you would have to gather the full row before the non-linearity, adding an all-gather per layer.'}});
+  p(1, {cap:{zh:'第二個矩陣照「列」切，結果是部分和', en:'the second matrix is split by rows, so the output is partial'},
+        line:5, panels:[{lbl:'each rank holds', chips:[chip('partial y', 'hot')]}],
+        msg:{zh:'w2 按 row 切之後，每個 rank 算出來的是**整個寬度的輸出，但只加了自己那一份**。形狀對、數值不對——這是本日最重要的一個形狀陷阱：它不會報錯。',
+             en:'With w2 split by rows, each rank produces the **full-width output with only its own share added in**. The shape is right and the values are wrong - the single most important trap of the day, because nothing raises.'}});
+  p(2, {cap:{zh:'一次 all-reduce 把這一塊收尾', en:'one all-reduce closes the block'},
+        line:7, panels:[{lbl:'per layer', chips:[chip('2 all-reduce', 'ok')]},
+                        {lbl:'per pass', chips:[chip(TPT.total_gb + ' GB', 'act')]}],
+        msg:{zh:'attention 之後一次、MLP 之後一次，80 層就是 ' + TPT.all_reduces + ' 次 all-reduce，每次 ' + TPT.per_all_reduce_mb + ' MB（8,192 個 token 的 activation）。**注意它跟著 token 數長，不是跟著參數長**——這跟 data parallel 剛好相反。所以 TP 在 decode（一個 token）便宜、在長 prefill 很貴，而且必須放在節點內的快連線上。',
+             en:'One after attention and one after the MLP, so 80 layers means ' + TPT.all_reduces + ' all-reduces of ' + TPT.per_all_reduce_mb + ' MB each - the activation for 8,192 tokens. **The bill scales with tokens, not parameters**, which is the exact opposite of data parallelism. That is why TP is cheap for a single decode token, brutal for a long prefill, and has to live on the fast links inside one node.'}});
+  p(3, {cap:{zh:'把那一行 all-reduce 刪掉會怎樣', en:'what happens if that one line is removed'},
+        line:7, panels:[{lbl:'shape', chips:[chip('still correct', 'dim')]},
+                        {lbl:'error', chips:[chip((DROP.rel * 100).toFixed(0) + '%', 'bad')]}],
+        msg:{zh:'拿掉 all-reduce，模型**照常生成文字**，只是每一層都少加了四分之三的東西，輸出誤差 ' + DROP.bad + '（約輸出尺度的 ' + (DROP.rel * 100).toFixed(0) + '%）。沒有 exception、沒有 NaN、形狀全對。所以任何平行化改動的第一個測試永遠是：**把 world size 設成 1，結果還一樣嗎**。',
+             en:'Remove the all-reduce and the model **keeps generating text**; it just leaves three quarters of every layer out, for an output error of ' + DROP.bad + ' - about ' + (DROP.rel * 100).toFixed(0) + '% of the output scale. No exception, no NaN, every shape correct. Which is why the first test for any parallelism change is always: **does this still match the single-rank answer**.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 5: expert parallel */
+const CODE_EP = [
+  '# the experts stay put; the tokens travel',
+  'idx   = router(x).topk(k).indices       # Day 62',
+  'order = idx.argsort()                   # group tokens by owner',
+  '',
+  'dist.all_to_all_single(recv, send,      # dispatch',
+  '                       out_splits, in_splits)',
+  'out = my_experts(recv)                  # local grouped matmul',
+  'dist.all_to_all_single(back, out,       # combine',
+  '                       in_splits, out_splits)'
+];
+function epStage(phase){
+  const sh = [];
+  const expOwner = ['r0', 'r0', 'r1', 'r1', 'r2', 'r2', 'r3', 'r3'];
+  sh.push(fitT(4.9, .95, phase === 0
+    ? {zh:'dispatch：token 飛到擁有該 expert 的 rank', en:'dispatch: tokens fly to whoever owns the expert'}
+    : {zh:'combine：算完的 token 飛回原來的 rank', en:'combine: the finished tokens fly back'},
+    {c:COL.tealL, fs:.32}));
+  for (let r = 0; r < 4; r++){
+    const x = .55 + r * 2.30;
+    sh.push(S.r(x, 1.45, 1.95, .62, phase === 0 ? 'act' : 'ok',
+                phase === 0 ? 'tokens on r' + r : 'results on r' + r, {fs:.26}));
+    sh.push(S.r(x, 3.95, 1.95, .62, 'idle', 'experts ' + (2 * r) + ',' + (2 * r + 1), {fs:.26}));
+    for (let k = 0; k < 2; k++){
+      const sx = x + .25 + k * 1.0;
+      sh.push(S.e(phase === 0 ? sx : sx + .2, phase === 0 ? 2.15 : 3.85,
+                  phase === 0 ? sx + .2 : sx, phase === 0 ? 3.85 : 2.15,
+                  {s:'hot', w:.05}));
+    }
+  }
+  sh.push(S.r(.55, 2.75, 8.70, .62, 'hot', 'all-to-all', {fs:.32}));
+  return sh;
+}
+function epFrames(){
+  const F = new Frames();
+  F.push({shapes:caps(epStage(0), {cap:{zh:'權重不動，動的是 token', en:'the weights never move, the tokens do'}}),
+          line:4, view:VIEW,
+          panels:[{lbl:'dispatch', chips:[chip(EPT.dispatch_mb + ' MB', 'hot')]},
+                  {lbl:'per layer', chips:[chip('2 all-to-all', 'act')]}],
+          msg:{zh:'Day 62 的 router 決定每個 token 要去哪幾個 expert；expert parallel 把 expert 分給 rank，所以 token 必須**飛到擁有那個 expert 的卡上**。這一步就是 all-to-all：每個 rank 手上都有一份要給其他每個 rank 的資料。8,192 個 token、top-8 時單趟 ' + EPT.dispatch_mb + ' MB。',
+               en:'The Day 62 router decides which experts each token needs, and expert parallelism hands the experts out to ranks, so the tokens have to **travel to whichever GPU owns their expert**. That step is an all-to-all: every rank holds a shard addressed to every other rank. At 8,192 tokens with top-8 routing, one direction is ' + EPT.dispatch_mb + ' MB.'}});
+  F.push({shapes:caps(epStage(1), {cap:{zh:'一層兩次 all-to-all，位元組跟著 tokens x top-k 長',
+                                        en:'two all-to-alls per layer, scaling with tokens x top-k'}}),
+          line:7, view:VIEW,
+          panels:[{lbl:'per pass', chips:[chip(EPT.total_gb + ' GB', 'bad')]},
+                  {lbl:'fp8 dispatch', chips:[chip(EPT.fp8_total_gb + ' GB', 'ok')]}],
+          msg:{zh:'80 層各兩趟，總共 ' + EPT.total_gb + ' GB——比同樣 token 數下 tensor parallel 的 ' + TPT.total_gb + ' GB 還多 ' + Math.round(EPT.total_gb / TPT.total_gb) + ' 倍，因為每個 token 被送去 k 個 expert。**把 dispatch 量化成 fp8 直接砍一半**（' + EPT.fp8_total_gb + ' GB），這正是 DeepEP 會有一條量化 dispatch 路徑的原因；MoE 的服務效能最後是被網路決定的，不是被 GPU。',
+               en:'Eighty layers, two trips each: ' + EPT.total_gb + ' GB, which is ' + Math.round(EPT.total_gb / TPT.total_gb) + 'x what tensor parallelism moves for the same tokens, because every token is sent to k experts. **Quantizing the dispatch to fp8 halves it** to ' + EPT.fp8_total_gb + ' GB - exactly why DeepEP ships a quantized dispatch path, and why MoE serving is decided by the interconnect rather than by the GPUs.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 6: context parallel */
+const CODE_CP = [
+  '# each rank owns a slice of the keys and values',
+  's   = q @ k_r.T / sqrt(d)',
+  'm   = s.max(-1)                 # local maximum',
+  'num = exp(s - m) @ v_r          # local numerator',
+  'lse = m + log(exp(s - m).sum(-1))',
+  '',
+  'all_gather(num, lse)            # tiny: one vector per query token',
+  'g   = lse.max(0)                # merge, exactly as in Day 52',
+  'out = sum(num_r * exp(m_r - g)) / sum(exp(lse_r - g))'
+];
+function cpFrames(){
+  const F = new Frames();
+  const sh = [];
+  sh.push(fitT(4.9, .95, {zh:'KV 沿著序列切成四段，每段在不同的卡上',
+                          en:'the keys and values are cut into four ranges, one per GPU'},
+                {c:COL.tealL, fs:.32}));
+  for (let r = 0; r < 4; r++){
+    const x = .55 + r * 2.30;
+    sh.push(S.r(x, 1.35, 1.95, .70, 'idle', 'KV ' + (r * 32) + 'K-' + ((r + 1) * 32) + 'K', {fs:.26}));
+    sh.push(S.r(x, 2.30, 1.95, .62, 'act', 'partial out', {fs:.26}));
+    sh.push(S.r(x, 3.05, 1.95, .50, 'hot', 'lse', {fs:.26}));
+    sh.push(S.e(x + .97, 2.10, x + .97, 2.26, {s:'act', w:.05}));
+    sh.push(S.e(x + .97, 3.60, x + .97, 3.95, {s:'hot', w:.05}));
+  }
+  sh.push(S.r(.55, 3.95, 8.70, .66, 'ok', 'all-gather(partial out, lse)  ->  merge', {fs:.30}));
+  sh.push(fitT(4.9, 5.15, {zh:'跟單卡 attention 一致到 1e-16', en:'identical to single-GPU attention to 1e-16'},
+               {c:COL.orangeL, fs:.30}));
+  F.push({shapes:caps(sh, {cap:{zh:'Day 52 的 online softmax 恆等式，換成跨卡版',
+                                en:'the Day 52 online-softmax identity, now across GPUs'}}),
+          line:7, view:VIEW,
+          panels:[{lbl:'moved', chips:[chip('out + lse', 'ok')]},
+                  {lbl:'not moved', chips:[chip('the KV itself', 'dim')]}],
+          msg:{zh:'每個 rank 只看自己那段 key，算出**部分輸出**和**那段的 log-sum-exp**；合併時用全域最大值重新縮放再相加，結果跟單卡一模一樣。這就是 Day 52 證明過的那個恆等式——當時兩半在不同的暫存器裡，現在兩半在不同的 GPU 上。**真正省下來的是 KV 本身不用搬**。',
+               en:'Each rank sees only its own key range and produces a **partial output** plus the **log-sum-exp of that range**; the merge rescales by the global maximum and adds. The answer is identical to the single-GPU one. This is the identity Day 52 proved, except the two halves were in different registers then and are on different GPUs now. **What is saved is that the KV itself never moves.**'}});
+
+  const sh2 = [];
+  sh2.push(fitT(4.9, .95, {zh:'64 個請求 x 128K token 的 KV cache：' + KV.total + ' GB',
+                           en:'the KV cache for 64 requests x 128K tokens: ' + KV.total + ' GB'},
+                {c:COL.tealL, fs:.32}));
+  KV.rows.forEach((r, i) => {
+    const y = 1.6 + i * 1.0;
+    const big = r.gb === KV.total;
+    sh2.push(fitT(4.55, y + .44, r.name, {anchor:'end', c:COL.pale, fs:.27}));
+    sh2.push(S.r(4.70, y, Math.max(.35, 3.2 * r.gb / KV.total), .68, big ? 'bad' : 'ok', null));
+    sh2.push(fitT(8.15, y + .44, r.gb + ' GB', {anchor:'start', c:big ? COL.red : COL.tealL, fs:.28}));
+  });
+  F.push({shapes:caps(sh2, {cap:{zh:'同一份 KV，四種放法', en:'the same KV cache, four layouts'}}),
+          line:0, view:VIEW,
+          panels:[{lbl:'MLA under TP', chips:[chip(KV.total + ' GB', 'bad')]},
+                  {lbl:'sequence split', chips:[chip(Math.round(KV.total / 8) + ' GB', 'ok')]}],
+          msg:{zh:'會想切 KV 是因為它根本放不下。GQA 的 KV 可以照 head 分給 TP 的各個 rank，但 **MLA 把 KV 壓成每個 token 一個 latent，head 這個維度沒了**，於是 TP 的每個 rank 都得存一整份（紅色那列）。剩下能切的只有「照請求切」（DP attention）和「照序列位置切」（context parallel），這兩個就是服務長 context 時真正在用的兩條路。',
+               en:'The reason to split the KV at all is that it does not fit. With GQA the cache divides neatly by head across TP ranks, but **MLA compresses the KV into one latent per token and the head dimension disappears**, so every TP rank keeps a full copy (the red row). That leaves splitting by request - DP attention - or splitting by position - context parallelism - which are exactly the two layouts long-context serving actually uses.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 7: pipeline */
+const CODE_PP = [
+  '# stage s holds layers [s*L/p : (s+1)*L/p]',
+  'for micro_batch in batch.split(m):',
+  '    h = recv(from=s - 1)        # point-to-point, not a collective',
+  '    h = my_layers(h)',
+  '    send(h, to=s + 1)',
+  '',
+  'bubble = (stages - 1) / (m + stages - 1)'
+];
+function ppStage(hi){
+  const sh = [], stages = 4, micro = 4, slots = micro + stages - 1;
+  const cw = 1.08, ch = .86, x0 = 1.65, y0 = 1.35;
+  sh.push(fitT(4.9, .95, {zh:'4 個 stage、4 個 micro-batch 的 1F1B 排程',
+                          en:'a 1F1B schedule with 4 stages and 4 micro-batches'}, {c:COL.tealL, fs:.32}));
+  for (let s = 0; s < stages; s++){
+    sh.push(fitT(x0 - .18, y0 + s * ch + ch * .62, 'stage ' + s, {anchor:'end', c:COL.tealL, fs:.26}));
+    for (let t = 0; t < slots; t++){
+      const busy = s <= t && t < s + micro;
+      sh.push(S.r(x0 + t * cw, y0 + s * ch, cw - .08, ch - .08,
+                  busy ? (hi && t === hi ? 'hot' : 'ok') : 'ghost',
+                  busy ? String(t - s) : '', {fs:.30}));
+    }
+  }
+  sh.push(fitT(x0 + slots * cw / 2, y0 + stages * ch + .36, {zh:'時間 ->', en:'time ->'},
+               {c:COL.grey, fs:.26}));
+  return sh;
+}
+function ppFrames(){
+  const F = new Frames();
+  const b4 = BUB.filter(b => b.m === 4)[0];
+  F.push({shapes:caps(ppStage(3), {cap:{zh:'空格就是 bubble：' + Math.round(b4.b * 100) + '% 的格子沒事做',
+                                        en:'the empty cells are the bubble: ' + Math.round(b4.b * 100) + '% of the slots idle'}}),
+          line:4, view:VIEW,
+          panels:[{lbl:'moved per boundary', chips:[chip(PPT.per_boundary_mb + ' MB', 'ok')]},
+                  {lbl:'bubble', chips:[chip(Math.round(b4.b * 100) + '%', 'hot')]}],
+          msg:{zh:'pipeline 把層切成 stage，**跨 stage 只送邊界的 activation，而且是點對點不是集合通訊**：8,192 個 token 一次只有 ' + PPT.per_boundary_mb + ' MB、' + PPT.boundaries + ' 個邊界。比 tensor parallel 少三個數量級，所以 stage 可以放在不同節點。代價寫在圖上：stage 3 要等第一個 micro-batch 走過前三站才開工。',
+               en:'Pipelining cuts the layers into stages and **only the boundary activation crosses, point to point rather than as a collective**: ' + PPT.per_boundary_mb + ' MB across ' + PPT.boundaries + ' boundaries for 8,192 tokens. That is three orders of magnitude less than tensor parallelism moves, which is why stages can sit on different nodes. The cost is in the picture: stage 3 has nothing to do until the first micro-batch has walked through the first three.'}});
+  const sh = [];
+  sh.push(fitT(4.9, .95, {zh:'8 個 stage 時，bubble 怎麼隨 micro-batch 數縮小',
+                          en:'how the bubble shrinks with micro-batches, at 8 stages'}, {c:COL.tealL, fs:.32}));
+  BUB.slice(0, 6).forEach((b, i) => {
+    const y = 1.5 + i * .72;
+    sh.push(fitT(2.55, y + .36, b.m + ' micro-batches', {anchor:'end', c:COL.pale, fs:.27}));
+    sh.push(S.r(2.70, y, 5.4 * b.u, .56, b.u > .8 ? 'ok' : 'idle', null));
+    sh.push(S.r(2.70 + 5.4 * b.u, y, 5.4 * b.b, .56, 'ghost', null));
+    sh.push(fitT(8.35, y + .36, Math.round(b.u * 100) + '% busy', {anchor:'start', c:COL.grey, fs:.26}));
+  });
+  F.push({shapes:caps(sh, {cap:{zh:'bubble = (stages - 1) / (micro-batches + stages - 1)',
+                                en:'bubble = (stages - 1) / (micro-batches + stages - 1)'}}),
+          line:6, view:VIEW,
+          panels:[{lbl:'1 micro-batch', chips:[chip(Math.round(BUB[0].u * 100) + '% busy', 'bad')]},
+                  {lbl:'32', chips:[chip(Math.round(BUB[5].u * 100) + '% busy', 'ok')]}],
+          msg:{zh:'解法永遠是「切更多 micro-batch」：1 個時只有 ' + Math.round(BUB[0].u * 100) + '% 的格子在做事，32 個時是 ' + Math.round(BUB[5].u * 100) + '%。但 micro-batch 一小，每個 matmul 的 M 就小，GPU 又填不滿——**這就回到 Day 62.5 的 roofline**：bubble 換來的並行度，最後是被每個 kernel 夠不夠胖擋住的。',
+               en:'The fix is always more micro-batches: with one, only ' + Math.round(BUB[0].u * 100) + '% of the slots do work; with 32 it is ' + Math.round(BUB[5].u * 100) + '%. But small micro-batches mean small matmuls, and a small matmul does not fill the GPU - **which lands straight back on the Day 62.5 roofline**: the parallelism you buy by shrinking the bubble is capped by how fat each kernel still is.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 8: placement */
+const CODE_PLACE = [
+  '# one mesh, one axis per kind of parallelism',
+  'mesh = init_device_mesh("cuda", (2, 2, 4),',
+  '                        mesh_dim_names=("pp", "dp", "tp"))',
+  '',
+  '# the rule the table below writes for you:',
+  '#   tensor / expert  -> inside one node  (most bytes, every layer)',
+  '#   pipeline / data  -> across nodes     (few bytes, or hideable)'
+];
+function placeStage(mode){
+  const sh = [];
+  sh.push(fitT(4.9, .95, mode === 0
+    ? {zh:'一個 rank 一步要送多少（8,192 token，每軸 8-way）',
+       en:'bytes one rank ships per step (8,192 tokens, 8-way on each axis)'}
+    : {zh:'同樣的量，搬到跨節點的慢線上', en:'the same traffic, moved onto the slow cross-node link'},
+    {c:COL.tealL, fs:.30}));
+  const top = Math.max.apply(null, PLACE.map(r => Math.log10(r.gb) + 2));
+  PLACE.forEach((r, i) => {
+    const y = 1.5 + i * .92;
+    sh.push(fitT(2.55, y + .40, r.axis, {anchor:'end', c:COL.pale, fs:.27}));
+    if (mode === 0){
+      const w = .3 + 4.4 * (Math.log10(r.gb) + 2) / top;
+      sh.push(S.r(2.70, y, w, .64, r.gb > 10 ? 'hot' : 'ok', null));
+      sh.push(fitT(2.82 + w, y + .40, r.gb + ' GB', {anchor:'start', c:COL.orangeL, fs:.27}));
+    } else {
+      const wf = Math.max(.18, 1.5 * r.fast / PLACE[4].fast);
+      const ws = Math.max(.18, 1.5 * r.slow / PLACE[4].slow);
+      sh.push(S.r(2.70, y, wf, .64, 'ok', null));
+      sh.push(fitT(2.80 + wf, y + .40, r.fast + ' ms', {anchor:'start', c:COL.tealL, fs:.25}));
+      sh.push(S.r(5.80, y, ws, .64, 'bad', null));
+      sh.push(fitT(5.90 + ws, y + .40, r.slow + ' ms', {anchor:'start', c:COL.red, fs:.25}));
+      sh.push(fitT(9.6, y + .40, r.pen + 'x', {anchor:'end', c:COL.grey, fs:.25}));
+    }
+  });
+  if (mode === 1){
+    sh.push(fitT(2.70, 1.15, {zh:'節點內', en:'in-node'}, {anchor:'start', c:COL.tealL, fs:.26}));
+    sh.push(fitT(5.80, 1.15, {zh:'跨節點', en:'cross-node'}, {anchor:'start', c:COL.red, fs:.26}));
+  }
+  return sh;
+}
+function placeFrames(){
+  const F = new Frames();
+  F.push({shapes:caps(placeStage(0), {cap:{zh:'橘色＝每一層都要付的幾十 GB', en:'amber: tens of GB, paid in every layer'}}),
+          line:5, view:VIEW,
+          panels:[{lbl:'most bytes', chips:[chip('expert parallel', 'hot')]},
+                  {lbl:'least', chips:[chip('pipeline', 'ok')]}],
+          msg:{zh:'把五條軸放在同一個單位下比較，部署方式就自己寫好了：**tensor 與 expert 每一層都要付幾十 GB**，只能放在節點內的短連線上；**pipeline 幾乎不送東西**（' + PLACE[3].gb + ' GB），跨節點完全沒問題；**data parallel 量很大（' + PLACE[4].gb + ' GB）但一步只付一次**，而且可以藏在 backward 底下，所以也能跨節點。',
+               en:'Put all five axes in the same unit and the deployment writes itself: **tensor and expert parallelism pay tens of GB in every layer**, so they have to stay on the short links inside a node; **pipeline moves almost nothing** (' + PLACE[3].gb + ' GB) and is happy crossing the network; **data parallelism moves a lot (' + PLACE[4].gb + ' GB) but only once per step**, and hides under the backward pass, so it crosses the network too.'}});
+  F.push({shapes:caps(placeStage(1), {cap:{zh:'同一個軸搬到慢線上，時間大約乘以 ' + PLACE[0].pen,
+                                           en:'moving an axis onto the slow link costs about ' + PLACE[0].pen + 'x'}}),
+          line:6, view:VIEW,
+          panels:[{lbl:'TP in-node', chips:[chip(PLACE[0].fast + ' ms', 'ok')]},
+                  {lbl:'TP cross-node', chips:[chip(PLACE[0].slow + ' ms', 'bad')]}],
+          msg:{zh:'這張圖只是把同樣的位元組換一條線（節點內 400 GB/s、跨節點 50 GB/s 的 400Gb 網卡），時間就乘上約 ' + PLACE[0].pen + ' 倍。**真正重要的不是倍率，而是哪一軸負擔得起**：pipeline 從 ' + PLACE[3].fast + ' ms 變 ' + PLACE[3].slow + ' ms 沒人在意，tensor parallel 從 ' + PLACE[0].fast + ' ms 變 ' + PLACE[0].slow + ' ms 就直接毀掉這個模型的延遲。',
+               en:'This frame changes nothing but the link - 400 GB/s inside a node against 50 GB/s for a 400 Gb NIC - and time goes up by about ' + PLACE[0].pen + 'x. **The ratio is not the interesting part; which axis can afford it is**: pipeline going from ' + PLACE[3].fast + ' ms to ' + PLACE[3].slow + ' ms bothers nobody, while tensor parallelism going from ' + PLACE[0].fast + ' ms to ' + PLACE[0].slow + ' ms destroys the latency of the whole model.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 9: silent failures */
+const CODE_FAIL = [
+  'dist.all_reduce(g)        # 1. forgot the / world_size below',
+  'g /= world_size',
+  '',
+  'if my_tokens > 0:         # 2. a rank-dependent branch...',
+  '    dist.all_reduce(x)    #    ...around a collective = hang',
+  '',
+  '# 3. ring and tree sum in different orders -> different bits',
+  '# 4. a collective is a barrier -> the slowest rank is the step',
+  '# 5. a dropped all-reduce changes values, never shapes'
+];
+function failStage(which){
+  const sh = [];
+  if (which === 0){
+    sh.push(fitT(4.9, .95, {zh:'1. 梯度用加的沒有除以 world size', en:'1. summing the gradients instead of averaging them'},
+                 {c:COL.tealL, fs:.32}));
+    AVG.forEach((r, i) => {
+      const y = 1.6 + i * 1.1;
+      sh.push(fitT(2.15, y + .42, r.steps + ' steps', {anchor:'end', c:COL.pale, fs:.28}));
+      sh.push(S.r(2.30, y, 2.6, .66, 'ok', 'loss ' + r.ok, {fs:.28}));
+      sh.push(S.r(5.30, y, 3.9, .66, 'bad', 'loss ' + r.bad, {fs:.28}));
+    });
+    sh.push(fitT(2.30, 1.30, {zh:'平均（對的）', en:'averaged (correct)'}, {anchor:'start', c:COL.tealL, fs:.26}));
+    sh.push(fitT(5.30, 1.30, {zh:'相加（學習率變 4 倍）', en:'summed (4x the learning rate)'},
+                 {anchor:'start', c:COL.red, fs:.26}));
+  } else if (which === 1){
+    sh.push(fitT(4.9, .95, {zh:'2. 不同 rank 走到不同的 collective', en:'2. two ranks arrive at different collectives'},
+                 {c:COL.tealL, fs:.32}));
+    [['rank 0', ['all_reduce(grad)', 'all_reduce(loss)'], 0],
+     ['rank 1', ['all_reduce(loss)', 'all_reduce(grad)'], 1]].forEach((r, i) => {
+      const y = 1.6 + i * 1.5;
+      sh.push(fitT(1.55, y + .45, r[0], {anchor:'end', c:COL.tealL, fs:.30}));
+      r[1].forEach((op, k) => sh.push(S.r(1.70 + k * 3.7, y, 3.5, .70,
+                                          k === 0 ? 'bad' : 'ghost', op, {fs:.28})));
+    });
+    sh.push(S.r(1.70, 4.65, 7.5, .70, 'bad', 'both wait for the other - forever, no error', {fs:.30}));
+  } else if (which === 2){
+    sh.push(fitT(4.9, .95, {zh:'3. 相加的順序也是答案的一部分', en:'3. the reduction order is part of the answer'},
+                 {c:COL.tealL, fs:.32}));
+    sh.push(S.r(.70, 1.7, 3.9, .80, 'ok', 'ring all-reduce', {fs:.30}));
+    sh.push(S.r(5.20, 1.7, 3.9, .80, 'act', 'tree all-reduce', {fs:.30}));
+    side(sh, .70, 3.1, [
+      [{zh:'同樣的資料、同樣的總和，' + ORD.diff.toLocaleString() + ' / ' + ORD.n.toLocaleString() + ' 個值的位元不同',
+        en:ORD.diff.toLocaleString() + ' of ' + ORD.n.toLocaleString() + ' values differ in their bits'}, COL.orangeL, .30],
+      [{zh:'最大絕對差 ' + ORD.max + '（相對 ' + ORD.rel + '）',
+        en:'largest absolute difference ' + ORD.max + ' (relative ' + ORD.rel + ')'}, COL.pale, .28],
+      [{zh:'同一種重跑：位元完全一樣', en:'re-running one of them is bit-identical'}, COL.grey, .28],
+      [{zh:'所以不是亂數，是浮點加法不符合結合律',
+        en:'so this is not randomness - float addition is not associative'}, COL.grey, .28]], .58);
+  } else {
+    sh.push(fitT(4.9, .95, {zh:'4. collective 是 barrier，最慢的 rank 決定一切',
+                            en:'4. a collective is a barrier, so the slowest rank sets the pace'},
+                 {c:COL.tealL, fs:.30}));
+    STRAG.forEach((r, i) => {
+      const y = 1.5 + i * .95;
+      sh.push(fitT(2.15, y + .38, r.p + ' ranks', {anchor:'end', c:COL.pale, fs:.28}));
+      sh.push(S.r(2.30, y, Math.max(.3, 5.0 * r.any / 100), .60,
+                  r.any > 50 ? 'bad' : 'hot', null));
+      sh.push(fitT(7.45, y + .38, r.any + '% of steps', {anchor:'start', c:COL.orangeL, fs:.26}));
+      sh.push(fitT(9.5, y + .38, '+' + r.loss + '%', {anchor:'end', c:COL.grey, fs:.26}));
+    });
+  }
+  return sh;
+}
+function failFrames(){
+  const F = new Frames();
+  F.push({shapes:caps(failStage(0), {cap:{zh:'沒有例外、沒有警告，只有 loss 跑掉',
+                                          en:'no exception, no warning, the loss simply leaves'}}),
+          line:1, view:VIEW,
+          panels:[{lbl:'averaged', chips:[chip(AVG[2].ok, 'ok')]},
+                  {lbl:'summed', chips:[chip(AVG[2].bad, 'bad')]}],
+          msg:{zh:'all-reduce 做的是**加**，要的是**平均**，少除一次 world size 等於學習率乘以 rank 數。五步之後 loss 從 ' + AVG[2].ok + ' 變成 ' + AVG[2].bad + '。這種 bug 在單卡上永遠測不出來，因為 world size 是 1 的時候加跟平均一樣。',
+               en:'An all-reduce **sums**; what the update needs is the **mean**, so a missing division by the world size multiplies the learning rate by the number of ranks. After five steps the loss goes from ' + AVG[2].ok + ' to ' + AVG[2].bad + '. It can never be caught on one GPU, because with a world size of 1 the sum and the mean are the same number.'}});
+  F.push({shapes:caps(failStage(1), {cap:{zh:'collective 是用「呼叫順序」配對的，不是用名字',
+                                          en:'collectives are matched by call order, not by name'}}),
+          line:4, view:VIEW,
+          panels:[{lbl:'rank 0 waits at', chips:[chip('grad', 'bad')]},
+                  {lbl:'rank 1 waits at', chips:[chip('loss', 'bad')]}],
+          msg:{zh:'只要有一個 rank 的分支條件跟別人不同——「這個 rank 這一步沒有 token 要送給任何 expert，那就跳過 all-reduce 吧」——兩邊就會在不同的 collective 上互等。**NCCL 不會報錯，它就是停住**，最後你看到的只是一個卡住的 job 和一張 100% 使用率的 GPU。所以 MoE 的實作寧可送空的 buffer 也不敢跳過。',
+               en:'As soon as one rank takes a different branch - "this rank has no tokens for any expert this step, so skip the all-reduce" - the two sit at different collectives waiting for each other. **NCCL does not raise; it simply stops**, and what you see is a hung job with a GPU at 100% utilisation. Which is why MoE implementations send empty buffers rather than skip the call.'}});
+  F.push({shapes:caps(failStage(2), {cap:{zh:'同一個 seed、不同的 world size，就是不同的 loss 曲線',
+                                          en:'same seed, different world size, different loss curve'}}),
+          line:6, view:VIEW,
+          panels:[{lbl:'values differing', chips:[chip(ORD.diff.toLocaleString(), 'act')]},
+                  {lbl:'repeatable', chips:[chip(String(ORD.rep), 'ok')]}],
+          msg:{zh:'浮點加法不符合結合律，而 ring 跟 tree 的相加順序不一樣，所以同一批資料會得到不同的最後幾個位元（' + ORD.diff.toLocaleString() + ' / ' + ORD.n.toLocaleString() + ' 個值不同）。**重跑同一種實作是逐位元一樣的**，所以這不是亂數，而是「排程也是數值的一部分」。追 reproducibility 的時候要固定的不只是 seed，還有 world size 與 collective 的演算法。',
+               en:'Float addition is not associative and the ring and the tree add in different orders, so the same data gives different last bits (' + ORD.diff.toLocaleString() + ' of ' + ORD.n.toLocaleString() + ' values differ). **Re-running one implementation is bit-identical**, so this is not randomness: the schedule is part of the number. Reproducibility therefore needs a fixed world size and a fixed collective algorithm, not just a fixed seed.'}});
+  F.push({shapes:caps(failStage(3), {cap:{zh:'1% 的機率，在 512 張卡上就是 ' + STRAG[2].any + '%',
+                                          en:'a 1% chance per rank is ' + STRAG[2].any + '% per step at 512 ranks'}}),
+          line:7, view:VIEW,
+          panels:[{lbl:'8 ranks', chips:[chip('+' + STRAG[0].loss + '%', 'hot')]},
+                  {lbl:'512 ranks', chips:[chip('+' + STRAG[2].loss + '%', 'bad')]}],
+          msg:{zh:'假設每個 rank 每步有 1% 的機率卡一下（一次 page fault、一次 checkpoint、一條慢掉的鏈路）。8 張卡時整步只慢 ' + STRAG[0].loss + '%，512 張卡時**幾乎每一步都至少有一個 rank 在卡**（' + STRAG[2].any + '%），整體慢 ' + STRAG[2].loss + '%。**擴大規模放大的是「出事的機會數」，不是每次出事的大小**——這也是大規模訓練要盯 per-rank 時間分佈而不是平均值的理由。',
+               en:'Give every rank a 1% chance of stalling on any given step - a page fault, a checkpoint, one slow link. At 8 ranks the step is only ' + STRAG[0].loss + '% slower; at 512 ranks **almost every step contains a stalled rank** (' + STRAG[2].any + '%) and the job runs ' + STRAG[2].loss + '% slower. **Scaling out multiplies the number of chances to be unlucky, not the size of each one** - which is why large runs watch the distribution of per-rank step times rather than the average.'}});
   return F.list;
 }
 
 const DAY_META = {
-  title: {zh:'記憶體階層與 roofline', en:'The memory hierarchy and the roofline'},
-  sub: {zh:'為什麼有些 kernel 再怎麼優化都不會變快，以及 tiling 為什麼是唯一的出路',
-        en:'why some kernels never get faster, and why tiling is the only way out'},
+  title: {zh:'平行化與集合通訊', en:'Parallelism and collective communication'},
+  sub: {zh:'TP、EP、DP、DCP、DDP、FSDP、PP 其實是同樣幾個集合通訊，在不同地方被呼叫',
+        en:'TP, EP, DP, DCP, DDP, FSDP and PP are the same few collectives, called in different places'},
   tabs: [
-    {id:'hier', label:{zh:'階層', en:'the hierarchy'},
-     stage:{zh:'容量、頻寬、延遲', en:'capacity, bandwidth, latency'},
-     view:VIEW, code:CODE_HIER, build:hierFrames,
-     idea:{zh:'每一層大約比上一層慢一個數量級、大兩個數量級。shared memory → HBM 是每個 kernel 都在對抗的那一步；而**主機記憶體那一列是 HiCache 分層的理由、RDMA 那一列是 DeepEP 要兩套 kernel 的理由**——同一張表，三個不同的日子。',
-           en:'Each level is about an order of magnitude slower and two orders larger than the one above. The step from shared memory to HBM is what every kernel here fights, and the last two rows are earlier days: **host memory is why HiCache has tiers, RDMA is why DeepEP ships two sets of kernels**.'},
-     legend:[['#ff9736', {zh:'目前這一層', en:'the level being shown'}],
-             ['#12b3b8', {zh:'已經看過的', en:'levels already shown'}]]},
-    {id:'meas', label:{zh:'實測：順序決定一切', en:'measured: order is everything'},
-     stage:{zh:'依序讀 vs 隨機讀', en:'reading in order against at random'},
-     view:VIEW, code:CODE_MEAS, build:measFrames,
-     idea:{zh:'同一台機器、同樣的位元組：依序讀只差 1.x 倍（prefetcher 把延遲藏掉了），隨機讀差 ' + (Math.max.apply(null, RND.map(r => r.ns)) / Math.min.apply(null, RND.map(r => r.ns))).toFixed(0) + ' 倍。**規格表賣你的是頻寬，決定你拿不拿得到的是局部性。**',
-           en:'Same machine, same bytes: read in order the spread is only about 1.x (the prefetcher hides the latency), read at random it is ' + (Math.max.apply(null, RND.map(r => r.ns)) / Math.min.apply(null, RND.map(r => r.ns))).toFixed(0) + 'x. **Bandwidth is what the specification sells; locality decides whether you get it.**'},
-     legend:[['#12b3b8', {zh:'依序讀（GB/s）', en:'in order, GB/s'}],
-             ['#ff5c5c', {zh:'隨機讀（ns／次）', en:'at random, ns per access'}]]},
-    {id:'roof', label:{zh:'roofline', en:'the roofline'},
-     stage:{zh:'運算密度決定被誰卡住', en:'arithmetic intensity decides the limit'},
-     view:VIEW, code:CODE_RF, build:rfFrames,
-     idea:{zh:'機器只有兩個數字，比值是 machine balance（' + MACH.balance + ' FLOPs/byte）。低於它的 kernel 無論怎麼寫都不可能被算力卡住。**同一層 linear：decode 時密度 1.0 被記憶體卡死、prefill 時密度 3186 被算力卡住——變的不是 kernel，是列數。**',
-           en:'A machine is two numbers and their ratio is the balance (' + MACH.balance + ' FLOPs per byte); anything below it cannot be compute-bound however it is written. **The same linear layer: 1.0 FLOPs per byte in decode and memory-bound, 3186 in prefill and compute-bound - the kernel did not change, the number of rows did.**'},
-     legend:[['#ff5c5c', {zh:'roofline', en:'the roofline'}],
-             ['#ff9736', {zh:'這個系列裡的 kernel', en:'kernels from this series'}]]},
-    {id:'batch', label:{zh:'batch 怎麼移動你', en:'what batching does'},
-     stage:{zh:'沿著 roofline 往右走', en:'moving along the roofline'},
-     view:VIEW, code:CODE_BATCH, build:batchFrames,
-     idea:{zh:'權重不管 batch 多大都只讀一遍，所以運算密度隨 batch 線性成長：batch 1 的密度 1.0、batch 256 越過 ridge，而每個 token 的成本從 ' + BATCH[0].us.toFixed(1) + ' µs 掉到 ' + BATCH[BATCH.length - 1].us.toFixed(2) + ' µs。**這就是 serving 的全部經濟學**，也是 speculative decoding 在大 batch 停止划算的同一條曲線。',
-           en:'The weights are read once whatever the batch, so intensity grows linearly: 1.0 at batch 1, past the ridge by batch 256, and the cost per token falls from ' + BATCH[0].us.toFixed(1) + ' to ' + BATCH[BATCH.length - 1].us.toFixed(2) + ' us. **That is the entire economics of serving** - and the same curve that makes speculative decoding stop paying at large batch.'},
-     legend:[['#ff5c5c', {zh:'被記憶體卡住', en:'memory bound'}],
-             ['#12b3b8', {zh:'被算力卡住', en:'compute bound'}]]},
-    {id:'tile', label:{zh:'tiling', en:'tiling'},
-     stage:{zh:'唯一能提高運算密度的辦法', en:'the only way to raise arithmetic intensity'},
-     view:VIEW, code:CODE_TILE, build:tileFrames,
-     idea:{zh:'kernel 不能選 FLOPs，只能選「同樣的位元組重讀幾次」。' + TILE.n + 'x' + TILE.n + ' 的 matmul：不 tiling 搬 ' + TILE.naiveGB.toFixed(0) + ' GB，切成 ' + TILE.tile + ' 的 tile 只搬 ' + TILE.tiledGB.toFixed(1) + ' GB（少 ' + TILE.ratio.toFixed(0) + ' 倍，**倍數剛好等於 tile 大小**）。而 tile 大小由快取決定：T = sqrt(cache/3)。',
-           en:'A kernel cannot choose its FLOPs, only how often it re-reads the same bytes. A ' + TILE.n + 'x' + TILE.n + ' matmul moves ' + TILE.naiveGB.toFixed(0) + ' GB untiled and ' + TILE.tiledGB.toFixed(1) + ' GB in tiles of ' + TILE.tile + ' - ' + TILE.ratio.toFixed(0) + 'x less, **and the factor is exactly the tile size**. The tile size itself is set by the cache: T = sqrt(cache / 3).'},
-     legend:[['#12b3b8', {zh:'裝得進快取', en:'fits in cache'}],
-             ['#8fa3ac', {zh:'裝不進（模型失效）', en:'does not fit: the model stops holding'}]]},
-    {id:'flash', label:{zh:'FlashAttention', en:'FlashAttention'},
-     stage:{zh:'同一個論證，用在 attention 上', en:'the same argument, applied to attention'},
-     view:VIEW, code:CODE_FLASH, build:flashFrames,
-     idea:{zh:'Day 52 證過 online softmax 的恆等式；這裡是「為什麼值得」。誠實地說：**流量只少 ' + FL.ratio.toFixed(1) + ' 倍**（d_head 128 下 block 只有 ' + FL.block + ' 列），真正的獎品是那 ' + FL.score_matrix_gb.toFixed(2) + ' GB 的分數矩陣**從來沒有被配置過**——那是容量的論證，也是長 context 能被服務的理由。backward 一樣只存 logsumexp 再重算。',
-           en:'Day 52 proved the online-softmax identity; this is why it is worth doing. Honestly: **the traffic win is only ' + FL.ratio.toFixed(1) + 'x** (at d_head 128 the block is just ' + FL.block + ' rows). The real prize is that the ' + FL.score_matrix_gb.toFixed(2) + ' GB score matrix **is never allocated** - a capacity argument, and the reason long contexts are servable. The backward pass does the same thing: store the logsumexp, recompute the scores.'},
-     legend:[['#ff5c5c', {zh:'必須常駐的矩陣', en:'the resident matrix'}],
-             ['#9d6bff', {zh:'standard 搬運量', en:'standard traffic'}],
-             ['#12b3b8', {zh:'tiled 搬運量', en:'tiled traffic'}]]},
-    {id:'lat', label:{zh:'延遲與 cache line', en:'latency and cache lines'},
-     stage:{zh:'光有頻寬不夠', en:'bandwidth alone is not enough'},
-     view:VIEW, code:CODE_LAT, build:latFrames,
-     idea:{zh:'Little 法則：要填滿管線就必須隨時有「頻寬 × 延遲」＝ ' + (LIT.bytes_in_flight / 1e6).toFixed(1) + ' MB（約 ' + Math.round(LIT.requests_in_flight).toLocaleString() + ' 個請求）在路上，所以「發一次 load 然後等」的 kernel 再乾淨也慢。另一半是 cache line 整條抓：本機實測 stride 16 時有用比例只剩 ' + (ST[4].eff * 100).toFixed(0) + '%，而時間還變多——這就是 coalescing。',
-           en:'Little\'s law: keeping the pipe full needs bandwidth times latency - ' + (LIT.bytes_in_flight / 1e6).toFixed(1) + ' MB, about ' + Math.round(LIT.requests_in_flight).toLocaleString() + ' requests - in flight at all times, so a kernel that issues one load and waits is slow however clean it is. The other half is that cache lines are fetched whole: measured here, at stride 16 only ' + (ST[4].eff * 100).toFixed(0) + '% of the fetched bytes are useful and the time goes up. That is coalescing.'},
-     legend:[['#12b3b8', {zh:'有用的位元組', en:'useful bytes'}],
-             ['#ff5c5c', {zh:'實際抓進來的', en:'bytes fetched'}]]},
-    {id:'torch', label:{zh:'在 PyTorch 裡', en:'in PyTorch'},
-     stage:{zh:'profiler 與融合', en:'the profiler and fusion'},
-     view:VIEW, code:CODE_TORCH, build:torchFrames,
-     idea:{zh:'`torch.profiler` 告訴你時間花在哪個 kernel、`max_memory_allocated` 與 `_record_memory_history` 告訴你記憶體去哪了。而最高槓桿的是 `torch.compile` 的融合（省掉一讀一寫）與 `scaled_dot_product_attention`（呼叫別人 tiling 好的 kernel）。**拿著 roofline 讀 profile**：只到峰值算力 20% 的 kernel 可能已經在峰值頻寬的 95%。',
-           en:'`torch.profiler` says which kernel spent the time; `max_memory_allocated` and `_record_memory_history` say where the memory went. The highest-leverage tools are `torch.compile` fusion (saving a read and a write) and `scaled_dot_product_attention` (calling a kernel somebody tiled). **Read the profile with the roofline in hand**: a kernel at 20% of peak FLOPs may be at 95% of peak bandwidth.'},
-     legend:[['#ff9736', {zh:'目前這一列', en:'the row being shown'}],
-             ['#12b3b8', {zh:'PyTorch 的工具', en:'the PyTorch tool'}],
-             ['#8fa3ac', {zh:'這個檔案裡的東西', en:'what this file calls it'}]]},
-    {id:'jax', label:{zh:'在 JAX 裡', en:'in JAX'},
-     stage:{zh:'編譯器先算給你看', en:'the compiler computes it for you'},
-     view:VIEW, code:CODE_JAX, build:jaxFrames,
-     idea:{zh:'`memory_analysis()` 給位元組、`cost_analysis()` 給 FLOPs，相除就是運算密度——**編譯器在你執行之前就算好的 roofline**。XLA 預設融合，所以逐元素的流量自己消失；而 tiling 住在編譯器裡，不夠好時降到 Pallas 自己選 block 大小，對抗的就是 tiling 那一頁的約束。',
-           en:'`memory_analysis()` gives the bytes and `cost_analysis()` the FLOPs; divide them and you have the intensity - **a roofline the compiler computed before you ran anything**. XLA fuses by default so pointwise traffic disappears on its own, and the tiling lives in the compiler: when that is not enough you drop to Pallas and choose the block sizes against the constraint from the tiling tab.'},
-     legend:[['#ff9736', {zh:'目前這一列', en:'the row being shown'}],
-             ['#12b3b8', {zh:'JAX 的工具', en:'the JAX tool'}],
-             ['#8fa3ac', {zh:'這個檔案裡的東西', en:'what this file calls it'}]]}
+    {id:'ring', label:{zh:'ring all-reduce', en:'ring all-reduce'},
+     stage:{zh:'一次 all-reduce 的六個步驟', en:'the six steps of one all-reduce'},
+     view:VIEW, code:CODE_RING, build:ringFrames,
+     idea:{zh:'all-reduce = reduce-scatter + all-gather。切成 p 塊、每步只送一塊給右邊鄰居，**每個 rank 總共只送 2(p-1)/p N**，而不是把整份塞給 rank 0 的 ' + RINGCOST.naiveN + 'N。小訊息看步數（tree 贏），大訊息看位元組（ring 贏），交叉點在這個鏈路上約 ' + CROSS + ' KB。',
+           en:'all-reduce = reduce-scatter + all-gather. Cut the vector into p chunks and ship one to the right-hand neighbour per step, and **each rank sends only 2(p-1)/p N** instead of the ' + RINGCOST.naiveN + 'N that funnelling through rank 0 costs. Small messages are decided by hops (the tree wins), large ones by bytes (the ring wins); on this link the crossover is near ' + CROSS + ' KB.'},
+     legend:[['#ff9736', {zh:'這一步在加的塊', en:'the chunk being added this step'}],
+             ['#3fe0dd', {zh:'已經是完整總和', en:'already the complete sum'}]]},
+    {id:'zoo', label:{zh:'五個原語', en:'the primitives'},
+     stage:{zh:'broadcast / all-gather / reduce-scatter / all-to-all', en:'broadcast, all-gather, reduce-scatter, all-to-all'},
+     view:VIEW, code:CODE_ZOO, build:zooFrames,
+     idea:{zh:'整天只有這幾個動作。**all-gather 是 FSDP 每一層在做的事、reduce-scatter 是 ZeRO 存梯度的方式、all-to-all 是 MoE 的 dispatch 與 combine**，而 all-reduce 不過是前兩個接在一起。',
+           en:'The whole day is built from these. **all-gather is what FSDP does before every layer, reduce-scatter is how ZeRO stores gradients, all-to-all is MoE dispatch and combine** - and an all-reduce is just the first two glued together.'},
+     legend:[['#3fe0dd', {zh:'操作之後', en:'after the operation'}],
+             ['#12b3b8', {zh:'操作之前', en:'before'}]]},
+    {id:'dp', label:{zh:'DDP 與 FSDP', en:'DDP and FSDP'},
+     stage:{zh:'梯度 all-reduce、bucket、ZeRO 三階段', en:'the gradient all-reduce, buckets, the ZeRO stages'},
+     view:VIEW, code:CODE_DP, build:dpFrames,
+     idea:{zh:'data parallel 的全部就是每步一次梯度 all-reduce，而它會對是因為**loss 是平均**：四個 rank 各吃四分之一 batch，60 步後權重差 ' + DDP.diff + '。它完全不省記憶體，所以才有 ZeRO：把 optimizer、梯度、參數依序切開，' + ZERO[0].gb + ' GB 變 ' + ZERO[3].gb + ' GB，代價是線上多 ' + ZERO[3].vs + ' 倍。',
+           en:'Data parallelism is one gradient all-reduce per step, and it is correct because **the loss is a mean**: four ranks on a quarter of the batch each land within ' + DDP.diff + ' of the single-device weights after 60 steps. It saves no memory at all, which is why ZeRO exists - shard the optimizer, then the gradients, then the parameters, and ' + ZERO[0].gb + ' GB becomes ' + ZERO[3].gb + ' GB for ' + ZERO[3].vs + 'x the traffic.'},
+     legend:[['#9d6bff', {zh:'每個 rank 自己的梯度', en:'per-rank gradients'}],
+             ['#ff9736', {zh:'集合通訊', en:'the collective'}],
+             ['#3fe0dd', {zh:'同步之後', en:'after synchronising'}]]},
+    {id:'tp', label:{zh:'tensor parallel', en:'tensor parallel'},
+     stage:{zh:'column-split、row-split、一次 all-reduce', en:'column split, row split, one all-reduce'},
+     view:VIEW, code:CODE_TP, build:tpFrames,
+     idea:{zh:'w1 按行切讓非線性不用通訊，w2 按列切讓每個 rank 拿到**部分和**，一次 all-reduce 收尾。位元組跟著 token 數長（8,192 token、8-way 時每趟 ' + TPT.total_gb + ' GB），**跟 data parallel 剛好相反**。把那行 all-reduce 刪掉不會報錯，只會錯 ' + (DROP.rel * 100).toFixed(0) + '%。',
+           en:'Splitting w1 by columns keeps the non-linearity local; splitting w2 by rows leaves every rank with a **partial sum** that one all-reduce closes. The bill scales with tokens (' + TPT.total_gb + ' GB per pass at 8,192 tokens, 8-way), **the opposite of data parallelism**. Delete that all-reduce and nothing raises - the output is just ' + (DROP.rel * 100).toFixed(0) + '% wrong.'},
+     legend:[['#9d6bff', {zh:'被切開的權重', en:'the split weights'}],
+             ['#ff9736', {zh:'部分和 / 集合通訊', en:'partial sums and the collective'}],
+             ['#ff5c5c', {zh:'少了 all-reduce', en:'the all-reduce removed'}]]},
+    {id:'ep', label:{zh:'expert parallel', en:'expert parallel'},
+     stage:{zh:'兩次 all-to-all', en:'two all-to-alls'},
+     view:VIEW, code:CODE_EP, build:epFrames,
+     idea:{zh:'expert 分給 rank，**權重不動、token 飛過去再飛回來**：一層兩次 all-to-all，8,192 token、top-8 時整趟 ' + EPT.total_gb + ' GB，是 tensor parallel 的 ' + Math.round(EPT.total_gb / TPT.total_gb) + ' 倍。fp8 dispatch 直接砍一半，這就是 DeepEP 的主題。',
+           en:'The experts are handed out to ranks, so **the weights stay and the tokens fly there and back**: two all-to-alls per layer, ' + EPT.total_gb + ' GB per pass at 8,192 tokens with top-8 routing - ' + Math.round(EPT.total_gb / TPT.total_gb) + 'x what tensor parallelism moves. An fp8 dispatch halves it, which is what DeepEP is about.'},
+     legend:[['#9d6bff', {zh:'要被送走的 token', en:'tokens about to travel'}],
+             ['#ff9736', {zh:'all-to-all', en:'the all-to-all'}],
+             ['#3fe0dd', {zh:'回到原 rank 的結果', en:'results back home'}]]},
+    {id:'cp', label:{zh:'context parallel 與 KV', en:'context parallel and the KV'},
+     stage:{zh:'切 KV，用 log-sum-exp 合併', en:'split the KV, merge with the log-sum-exp'},
+     view:VIEW, code:CODE_CP, build:cpFrames,
+     idea:{zh:'每個 rank 只看一段 key，回傳部分輸出與 lse，合併之後**和單卡 attention 一致到 1e-16**——就是 Day 52 的恆等式搬到跨卡。要這麼做是因為 KV 放不下：64 個請求 x 128K token 要 ' + KV.total + ' GB，而 **MLA 把 head 維度壓掉之後 TP 切不動它**，只剩「照請求切」和「照位置切」。',
+           en:'Each rank sees one key range and returns a partial output plus its log-sum-exp; merged, the result is **identical to single-GPU attention to 1e-16** - the Day 52 identity, moved across GPUs. The reason to bother is capacity: 64 requests of 128K tokens need ' + KV.total + ' GB, and **MLA removes the head dimension that TP was splitting**, leaving only splitting by request or by position.'},
+     legend:[['#9d6bff', {zh:'部分輸出', en:'partial outputs'}],
+             ['#ff9736', {zh:'log-sum-exp', en:'the log-sum-exp'}],
+             ['#ff5c5c', {zh:'切不動的那一種', en:'the layout that cannot be split'}]]},
+    {id:'pp', label:{zh:'pipeline 與 bubble', en:'pipeline and the bubble'},
+     stage:{zh:'位元組最少，代價是閒置', en:'the fewest bytes, paid for in idle time'},
+     view:VIEW, code:CODE_PP, build:ppFrames,
+     idea:{zh:'pipeline 只在 stage 邊界送 activation，而且是點對點：8,192 token 時每個邊界 ' + PPT.per_boundary_mb + ' MB，比 tensor parallel 少三個數量級，所以可以跨節點。代價是 bubble =(stages-1)/(micro+stages-1)，**切更多 micro-batch 會把 bubble 變小、也會把每個 matmul 變瘦**。',
+           en:'Pipelining only ships the boundary activation, point to point: ' + PPT.per_boundary_mb + ' MB per boundary at 8,192 tokens, three orders of magnitude below tensor parallelism, which is why stages can cross nodes. The cost is bubble = (stages-1)/(micro+stages-1), and **more micro-batches shrink the bubble while making every matmul thinner**.'},
+     legend:[['#3fe0dd', {zh:'有事做的格子', en:'busy slots'}],
+             ['#ff9736', {zh:'目前這一格', en:'the current slot'}],
+             ['#123f4d', {zh:'bubble', en:'the bubble'}]]},
+    {id:'place', label:{zh:'哪一軸放哪裡', en:'which axis goes where'},
+     stage:{zh:'把五條軸放在同一個單位下比', en:'all five axes in the same unit'},
+     view:VIEW, code:CODE_PLACE, build:placeFrames,
+     idea:{zh:'**tensor 與 expert 每層都要付幾十 GB**（' + PLACE[0].gb + ' / ' + PLACE[1].gb + ' GB），只能放節點內；**pipeline 只送 ' + PLACE[3].gb + ' GB**，跨節點沒差；**data parallel 量大但一步只付一次**而且藏得住。mesh 的形狀就是照這張表挑的。',
+           en:'**Tensor and expert parallelism pay tens of GB in every layer** (' + PLACE[0].gb + ' and ' + PLACE[1].gb + ' GB) and have to stay inside a node; **pipeline ships ' + PLACE[3].gb + ' GB** and does not care about the network; **data parallelism moves a lot but only once per step** and hides under the backward pass. The shape of the mesh is chosen from exactly this table.'},
+     legend:[['#ff9736', {zh:'每層都要付的幾十 GB', en:'tens of GB, every layer'}],
+             ['#3fe0dd', {zh:'負擔得起慢鏈路', en:'can afford the slow link'}],
+             ['#ff5c5c', {zh:'跨節點的時間', en:'time on the cross-node link'}]]},
+    {id:'fail', label:{zh:'不會報錯的四種壞掉', en:'four silent failures'},
+     stage:{zh:'平均、順序、位元、barrier', en:'the average, the order, the bits, the barrier'},
+     view:VIEW, code:CODE_FAIL, build:failFrames,
+     idea:{zh:'平行化的 bug 幾乎都不是 crash：忘了除以 world size（loss 直接飛掉）、rank 之間 collective 順序不一致（永遠互等）、ring 與 tree 的相加順序不同（' + ORD.diff.toLocaleString() + ' 個值位元不同）、一個 rank 偶爾卡一下（512 卡時 ' + STRAG[2].any + '% 的步都中）。**第一個測試永遠是：world size 設成 1，答案還一樣嗎。**',
+           en:'Parallelism bugs almost never crash: a missing division by the world size (the loss leaves), ranks meeting different collectives (both wait forever), ring and tree summing in different orders (' + ORD.diff.toLocaleString() + ' values differ in their bits), one rank hiccuping occasionally (' + STRAG[2].any + '% of steps at 512 ranks). **The first test is always: set the world size to 1 and check the answer is unchanged.**'},
+     legend:[['#ff5c5c', {zh:'壞掉但不報錯', en:'broken, and silent'}],
+             ['#3fe0dd', {zh:'正確的做法', en:'the correct version'}]]}
   ]
 };

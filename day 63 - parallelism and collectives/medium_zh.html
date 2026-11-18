@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 63 — 集合通訊：把模型切到很多張 GPU 上，而答案不變</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 63 — 集合通訊：把模型切到很多張 GPU 上，而答案不變</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2063%20-%20parallelism%20and%20collectives">day 63 on GitHub</a></p>
+<p><em>100 Days of Python - day 63</em></p>
+<p>一個 70B 模型用 Adam 訓練，如果每張卡都放一份完整副本，<strong>每張卡要 1,043 GB</strong>——比任何一張卡實際有的記憶體多一個數量級。同一個模型拿去服務、開 8-way tensor parallel，<strong>每一次 8,192 個 token 的 forward 要在線上搬 35 GB</strong>，分成 160 次 all-reduce。省下多少記憶體、付出多少位元組：所有平行化方法都是這個取捨上的一個點，今天把每一種的兩個欄位都算出來。</p>
+<p>TP、EP、DP、DCP、DDP、FSDP、PP——七個縮寫，其實是同一個決定在七個地方被做：<strong>哪一個集合通訊會跑、跑幾次、每次多少位元組</strong>。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2063%20-%20parallelism%20and%20collectives/imgs/day63_0.png?raw=true">
+<h2>五個原語</h2>
+<pre><code>集合通訊        用來做什麼                         每個 rank 送出的位元組  步數
+--------------  ---------------------------------  ----------------------  -------
+broadcast       一個 rank 有，所有人都要           N                       log2(p)
+all-reduce      大家各有部分和，所有人都要總和     2(p-1)/p · N            2(p-1)
+reduce-scatter  大家各有部分和，每個人只留 1/p     (p-1)/p · N             p-1
+all-gather      每個人有 1/p，所有人都要完整的     (p-1)/p · N             p-1
+all-to-all      rank r 手上有要給每個 rank 的一份  (p-1)/p · N             p-1
+point-to-point  把一個 tensor 交給下一個 rank      N                       1</code></pre>
+<p>這張表最重要的一列是：<strong>all-reduce 根本不是原語</strong>，它是 reduce-scatter 接 all-gather。這既解釋了它為什麼要付兩倍，也是後面很多段落的全部內容——同一句話套用兩次。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2063%20-%20parallelism%20and%20collectives/imgs/day63_1.png?raw=true">
+<p>我在模擬的 8 個 rank 上跑了 ring 版本，向量 64 KB：14 步、每個 rank 送出 114,688 個位元組，最後每個 rank 都拿到同一個總和。天真的做法——大家把整份送給 rank 0、rank 0 加完再送回去——會有 917,504 個位元組全部擠在同一條線上。ring 的關鍵是<strong>任何時刻沒有任何 rank 握著超過一塊的總和</strong>，所以每個 rank 的量不會隨卡數長大，長大的只有步數。</p>
+<p>這也就直接寫出了實作規則。訊息小的時候看跳數，tree 只要 2log2(p) 跳、ring 要 2(p-1) 步；訊息大的時候看位元組，ring 贏。在這個模組用的鏈路模型上，交叉點大約在 <strong>2 MB</strong>。這就是 NCCL／RCCL 會依訊息大小換演算法的原因，也是為什麼 decode 裡那個很小的 all-reduce 一點都不免費——<strong>它付的是跳數，不是位元組</strong>。</p>
+<h2>data parallel 的正確性只有一行數學</h2>
+<p>四個 rank、各吃四分之一的 batch、訓練 60 步。一台機器吃完整 batch 的 loss 是 0.014105，四個 rank 的也是 0.014105，權重最大差 1.19e-07。會相等是因為 <strong>loss 是平均</strong>：各 rank 梯度的平均剛好等於全 batch 的梯度，而 all-reduce 就是在強制這個平均。data parallel 的全部內容就這樣。</p>
+<p>但要注意它<strong>沒有</strong>做什麼：模型本身一點都沒被切開，所以每張卡的記憶體完全沒變。這一句話就是後面所有段落存在的理由。</p>
+<p>工程上唯一要記的細節是 bucket。梯度是從最後一層往前算出來的，所以 all-reduce 可以一邊飛、backward 一邊還在跑：</p>
+<pre><code>bucket 數  每個大小  每次 all-reduce  總通訊   最後曝露
+---------  --------  ---------------  -------  --------
+1          1024 MB   4.73 ms          4.73 ms  4.73 ms
+4          256 MB    1.20 ms          4.81 ms  1.20 ms
+25         41 MB     0.22 ms          5.40 ms  0.22 ms</code></pre>
+<p>bucket 愈多，總通訊量稍微變大（每個都要再付一次延遲），但真正曝露在 step 時間上的少很多。</p>
+<h2>ZeRO 與 FSDP：能切的就不要複製</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2063%20-%20parallelism%20and%20collectives/imgs/day63_4.png?raw=true">
+<p>Adam 在混合精度下每個參數要 16 個位元組：bf16 權重 2、bf16 梯度 2、fp32 master 4、兩個動量各 4。<strong>是權重本身的 8 倍</strong>——所以讓訓練塞不下的不是模型，是 optimizer。</p>
+<pre><code>階段                       每個 rank GB  線上 GB  相對 DDP  用到的集合通訊
+-------------------------  ------------  -------  --------  -------------------------------------------
+DDP（完全不切）            1043          228.2    1.00x     all-reduce(grad)
+ZeRO-1（切 optimizer）     359           228.2    1.00x     reduce-scatter(grad) + all-gather(param)
+ZeRO-2（再切梯度）         244           228.2    1.00x     reduce-scatter(grad) + all-gather(param)
+ZeRO-3 / FSDP（再切參數）  130           342.3    1.50x     all-gather(param) x2 + reduce-scatter(grad)</code></pre>
+<p>前兩階是<strong>免費的</strong>，理由就在第一張表：all-reduce 本來就是 reduce-scatter 加 all-gather。把它拆成兩半、中間只留自己負責的那一段梯度，記憶體省掉一大半而一個位元組都沒多送。要付錢的是第三階：參數本身被切開，所以每一層都要在開跑前 all-gather 回來、算完立刻丟掉，位元組 1.5 倍換記憶體 1/8。Day 62.5 把這個取捨叫做「重算 vs 存起來」，這裡是「重抓 vs 存起來」，同一條曲線。</p>
+<h2>tensor parallel：帳單跟著 token 長</h2>
+<p>第一個矩陣照 column 切、第二個照 row 切。column 這個方向是挑過的：<strong>它讓每個 rank 拿到完整的幾個隱藏單元</strong>，所以兩個矩陣之間那個逐元素的非線性完全不用通訊。到第二個矩陣之後，每個 rank 手上是「整個寬度、但只加了自己那一份」的<strong>部分和</strong>，一次 all-reduce 收尾。跟單卡比：4.77e-07。</p>
+<p>8,192 個 token、8-way 時：activation 是 128 MB，每次 all-reduce 每個 rank 搬 224 MB，一次 forward 有 160 次（80 層，attention 之後一次、MLP 之後一次），合計 35 GB。<strong>它跟著 token 數長、不是跟著參數長</strong>，跟 data parallel 剛好相反——所以 tensor parallel 在 decode（一次一個 token）很便宜，在長 prefill 很兇。</p>
+<p>sequence parallel 是把第一張表再套一次：all-reduce 本來就是 reduce-scatter 加 all-gather，中間那段保持切開的狀態，於是中間的 norm 與 residual 只在 1/p 的序列上跑。位元組一模一樣（兩邊都是 224 MB），而每個 rank 的 activation 從 128 MB 降到 16 MB。</p>
+<h2>expert parallel：權重不動，動的是 token</h2>
+<p>Day 62 的 router 決定每個 token 要去哪幾個 expert；expert parallel 把 expert 分給各個 rank，於是 token 必須飛到擁有那個 expert 的卡上。一層兩次 all-to-all（dispatch 與 combine），跟單卡 MoE 逐位元相同。</p>
+<p>8,192 個 token、top-8、8-way 時：每層送出 896 MB、收回 896 MB，<strong>整趟 forward 是 140 GB，是同樣 token 數下 tensor parallel 的四倍</strong>，因為每個 token 被送去 k 個 expert 而不是一個。把 dispatch 量化成 fp8 直接砍到 70 GB——這正是 DeepEP 會有一條量化 dispatch 路徑的原因，也是為什麼 MoE 的服務效能最後是被網路決定的，不是被 GPU。</p>
+<h2>context parallel：切 KV，用 log-sum-exp 合併</h2>
+<p>每個 rank 只擁有一段 key 與 value，算出自己那段的部分輸出與 log-sum-exp，合併時用共同的最大值重新縮放再相加。跟完整 attention 比，2／4／8 個 rank 分別是 1.0e-16、8.0e-17、1.7e-16。</p>
+<p>這就是 Day 52 為 FlashAttention 證過的那個恆等式——兩個部分 softmax 只要帶著各自的最大值與總和就能合併——只是當時兩半在不同的暫存器裡，現在在不同的 GPU 上。同一套代數，往記憶體階層上面移了一層。</p>
+<p>會想這麼做是因為容量：64 個請求 x 128K token 的 KV cache 是 2,560 GB。</p>
+<pre><code>放法                               每個 rank 的 KV GB  為什麼
+---------------------------------  ------------------  ----------------------------
+TP，MHA/GQA（照 head 切）          320                 head 剛好被 p 整除
+TP，MLA（每個 token 一個 latent）  2,560               head 這個維度已經不存在了
+DP attention（照請求切）           320                 每個 rank 擁有完整的幾個請求
+context parallel（照位置切）       320                 每個 rank 擁有一段 key</code></pre>
+<p>MLA 那一列是意外的那個：把 KV 壓成每個 token 一個 latent，<strong>正好消掉了 tensor parallel 原本在切的那個維度</strong>，於是每個 rank 都得存一整份。剩下能切的只有「照請求切」（服務端說的 DP attention）和「照位置切」（context parallel）。</p>
+<h2>pipeline parallel：線上最便宜，代價付在閒置</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2063%20-%20parallelism%20and%20collectives/imgs/day63_3.png?raw=true">
+<p>只有 stage 邊界的 activation 要過去，而且是點對點、根本不是集合通訊：每個邊界 128 MB、7 個邊界，整趟 forward 896 MB。比 tensor parallel 少三個數量級，所以 stage 可以放在不同節點上。</p>
+<p>代價是 bubble——最後一個 stage 要等第一個 micro-batch 走完前面所有站才有事做：</p>
+<pre><code>micro-batch 數  bubble  使用率
+--------------  ------  ------
+1               87.5%   12.5%
+4               63.6%   36.4%
+16              30.4%   69.6%
+64              9.9%    90.1%</code></pre>
+<p>bubble =(stages - 1) / (micro-batch 數 + stages - 1)。解法永遠是切更多 micro-batch，直到它們小到每個 matmul 填不滿 GPU 為止——<strong>Day 62.5 的 roofline 在底下擋著</strong>。</p>
+<h2>哪一軸該放在哪裡</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2063%20-%20parallelism%20and%20collectives/imgs/day63_2.png?raw=true">
+<p>一個 rank、一步、8,192 個 token、每軸 8-way：</p>
+<pre><code>軸                     每步 GB  節點內    跨節點     倍率
+---------------------  -------  --------  ---------  ----
+tensor parallel        35.00    98.4 ms   774.0 ms   7.9x
+expert parallel        140.00   378.1 ms  3017.7 ms  8.0x
+context parallel       17.64    48.5 ms   384.3 ms   7.9x
+pipeline parallel      0.12     0.3 ms    2.7 ms     8.0x
+data parallel（梯度）  228.17   612.5 ms  4900.1 ms  8.0x</code></pre>
+<p>看第一欄，部署方式就自己寫好了。tensor 與 expert <strong>每一層</strong>都要付幾十 GB，只能待在節點內的短連線上；pipeline 幾乎不送東西，跨網路完全無所謂；data parallel 量最大，但<strong>一步只付一次而不是每層一次</strong>，而且藏得進 backward，所以也能跨節點。真正的叢集會同時疊上所有這些軸、一個 mesh 維度配一種，而 mesh 的形狀就是照這張表挑的。</p>
+<h2>五種不會報錯的壞法</h2>
+<p><strong>梯度用加的、忘了除以 world size。</strong> 學習率被無聲地乘上卡數。第 1／3／5 步，對的那條是 0.6129、0.3251、0.2362，加總的那條是 6.82、70,331、1.76e+10。這個 bug 在單卡上永遠測不出來——world size 是 1 的時候，加跟平均是同一個數。</p>
+<p><strong>不同 rank 走到不同分支。</strong> 集合通訊是用<strong>呼叫順序</strong>配對的，不是用名字。「這個 rank 這一步沒有 token 要給任何 expert，那就跳過 all-reduce」會讓 rank 0 停在一個 collective、rank 1 停在另一個，互等到天荒地老。NCCL 不會報錯，它就是停住，而你看到的是一個卡住的 job 配上 100% 使用率的 GPU。所以 MoE 的實作寧可送空 buffer 也不敢跳過。</p>
+<p><strong>相加的順序也是答案的一部分。</strong> 同一批資料，ring 與 tree 的 all-reduce 結果在 65,536 個值裡有 32,459 個位元不同，最大差 9.77e-04（相對 1.2e-04）。重跑同一種實作是逐位元一樣的，所以這不是亂數：<strong>浮點加法不符合結合律</strong>，兩種排程只是加的順序不同。同一個 seed、不同的 world size，就是不同的 loss 曲線。</p>
+<p><strong>一個慢的 rank 就是整步的時間</strong>，因為集合通訊就是 barrier。假設每個 rank 每步有 1% 的機率卡一下：8 張卡時 7.7% 的步會中、整體慢 5.2%；512 張卡時 99.4% 的步都中、整體慢 49.3%。<strong>規模放大的是「出事的機會數」，不是每次出事的大小。</strong></p>
+<p><strong>少做一次 all-reduce。</strong> 把 row-parallel 那層的 all-reduce 拿掉：形狀全對、沒有 NaN，輸出誤差 2.30，大約是輸出尺度的 77%。模型照樣生成文字，只是生得比較爛。所以任何平行化改動的第一個測試永遠是：<strong>把 world size 設成 1，答案有沒有變。</strong></p>
+<h2>PyTorch 怎麼寫</h2>
+<pre><code>mesh = init_device_mesh(&quot;cuda&quot;, (2, 4), mesh_dim_names=(&quot;dp&quot;, &quot;tp&quot;))
+
+DistributedDataParallel(model)              # all-reduce(grad)，自動分 bucket
+fully_shard(model, mesh=mesh[&quot;dp&quot;])         # FSDP2 = ZeRO-3
+parallelize_module(block, mesh[&quot;tp&quot;], {
+    &quot;w1&quot;: ColwiseParallel(), &quot;w2&quot;: RowwiseParallel()})</code></pre>
+<p><code>ColwiseParallel</code> 與 <code>RowwiseParallel</code> 就是上面 tensor parallel 那一節：前者把輸出標成 sharded、後者標成 partial，而當一個 partial 的 tensor 被要求變成 replicated 時，DTensor 就插進那次 all-reduce。<strong>你標的是 placement，collective 是框架推導出來的</strong>——所以 profile 裡冒出一次意料之外的 all-reduce，通常是某個 placement 逼出來的。</p>
+<h2>JAX 怎麼寫</h2>
+<pre><code>mesh = jax.make_mesh((2, 4), (&quot;dp&quot;, &quot;tp&quot;))
+x = jax.device_put(x, NamedSharding(mesh, P(&quot;dp&quot;, None)))
+w = jax.device_put(w, NamedSharding(mesh, P(None, &quot;tp&quot;)))</code></pre>
+<p>你完全不呼叫集合通訊。你只說陣列放在哪裡，XLA 自己插入需要的 all-reduce、all-gather 或 all-to-all。data parallel 是把 batch 軸切開、tensor parallel 是把特徵軸切開、FSDP 是把參數軸切開再加 <code>jax.remat</code>。自動選得不好時，<code>shard_map</code> 讓你自己寫 <code>jax.lax.psum</code> 與 <code>jax.lax.all_to_all</code>；而 <code>jax.jit(f).lower(x).compile().as_text()</code> 會把 XLA 插進去的每一個 collective 都印出來——<strong>在 JAX 裡做平行化 review 是讀 HLO，在 PyTorch 裡是讀 profiler trace。</strong></p>
+<h2>服務端怎麼開</h2>
+<pre><code>--tensor-parallel-size 8      --expert-parallel-size 8
+--data-parallel-size 2        --pipeline-parallel-size 2
+--context-parallel-size 2</code></pre>
+<p>推論把算式改了兩個地方。沒有梯度，所以<strong>整張表裡最大的那一列（data parallel 的 all-reduce）直接消失</strong>，data parallel 只剩記憶體成本。而 decode 的 activation 是一個請求一個 token，所以上面看起來很貴的 tensor parallel all-reduce 變成被延遲決定：一樣 2(p-1) 跳，位元組幾乎是零。這就是為什麼 decode 被「鏈路把一個小訊息來回轉一次要多久」卡住，也是為什麼各家 stack 能融合的時候會把 all-reduce 跟下一個 norm 融在一起。</p>
+<h2>我自己的收穫</h2>
+<p>標題裡每一個縮寫，都是同一張表用不同方向讀。data parallel 的帳單跟著參數、tensor 與 context 跟著 token、expert 跟著 token 乘 k、pipeline 不付位元組而是付閒置。底下的集合通訊從頭到尾就那幾個，變的只是數字——而且這些 bug 全部都是無聲的，所以唯一真正的測試是：<strong>一個 rank 的答案，跟完全不切的時候還一不一樣。</strong></p>
+<p>明天：continuous batching，以及決定哪些請求能一起跑的排程器。</p>
+</body>
+</html>

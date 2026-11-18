@@ -1,4 +1,4 @@
-"""Day 63 - the memory hierarchy: why some kernels never get faster.
+"""Day 62.5 - the memory hierarchy: why some kernels never get faster.
 
 Every performance number in this series has turned out to be a memory number.  Decode
 is slow because it reads the weights once per token.  The KV cache is the capacity
@@ -24,26 +24,87 @@ import numpy as np
 
 
 # ================================================================ 1. the hierarchy
-# Vendor specifications, not measurements.  Capacity per unit, bandwidth aggregate.
-GPU_LEVELS = [
-    ('registers', 256 * 1024, 100_000.0, 1),
-    ('shared memory / LDS', 160 * 1024, 20_000.0, 20),
-    ('L2 cache', 50 * 1024 * 1024, 7_000.0, 200),
-    ('HBM', 192 * 1024 ** 3, 5_300.0, 600),
-    ('host memory over PCIe', 1024 * 1024 ** 3, 64.0, 2_000),
-    ('another node over RDMA', 0, 50.0, 10_000),
+# Everything here is public.  Each row is tagged with where its numbers come from:
+#
+#   'spec'     - published by the vendor: product pages, datasheets, the CDNA 3 and
+#                Hopper architecture whitepapers, the PCIe and Ethernet standards.
+#   'estimate' - my own order-of-magnitude figure, derived from unit counts and
+#                clocks or from published third-party microbenchmarks.  On-chip
+#                bandwidths and access latencies are almost never in a datasheet, so
+#                every one of those is an estimate and should be read as "about".
+MACHINES = {
+    'MI300X': {
+        'vendor': 'AMD, CDNA 3',
+        'tflops_bf16': 1307.0,                       # spec
+        'levels': [
+            # (name, capacity, GB/s, ns, capacity source, bandwidth source)
+            ('registers (VGPR per CU)', 512 * 1024, 100_000.0, 1, 'spec', 'estimate'),
+            ('LDS / shared memory per CU', 64 * 1024, 20_000.0, 20, 'spec', 'estimate'),
+            ('L2 per XCD (8 of them)', 4 * 1024 * 1024, 10_000.0, 200, 'spec', 'estimate'),
+            ('Infinity Cache (MALL)', 256 * 1024 * 1024, 17_000.0, 300, 'spec', 'spec'),
+            ('HBM3', 192 * 1024 ** 3, 5_300.0, 600, 'spec', 'spec'),
+            ('host memory over PCIe 5 x16', 0, 64.0, 2_000, '-', 'spec'),
+            ('another node over RDMA', 0, 50.0, 10_000, '-', 'spec'),
+        ],
+    },
+    'H200 SXM': {
+        'vendor': 'NVIDIA, Hopper',
+        'tflops_bf16': 990.0,                        # spec, dense; same die as H100
+        'levels': [
+            ('registers (per SM)', 256 * 1024, 100_000.0, 1, 'spec', 'estimate'),
+            ('shared memory per SM', 228 * 1024, 20_000.0, 20, 'spec', 'estimate'),
+            ('L2 cache', 50 * 1024 * 1024, 7_000.0, 200, 'spec', 'estimate'),
+            ('HBM3e', 141 * 1024 ** 3, 4_800.0, 600, 'spec', 'spec'),
+            ('host memory over PCIe 5 x16', 0, 64.0, 2_000, '-', 'spec'),
+            ('another node over RDMA', 0, 50.0, 10_000, '-', 'spec'),
+        ],
+    },
+    'H100 SXM': {
+        'vendor': 'NVIDIA, Hopper',
+        'tflops_bf16': 990.0,                        # spec, dense
+        'levels': [
+            ('registers (per SM)', 256 * 1024, 100_000.0, 1, 'spec', 'estimate'),
+            ('shared memory per SM', 228 * 1024, 20_000.0, 20, 'spec', 'estimate'),
+            ('L2 cache', 50 * 1024 * 1024, 7_000.0, 200, 'spec', 'estimate'),
+            ('HBM3', 80 * 1024 ** 3, 3_350.0, 600, 'spec', 'spec'),
+            ('host memory over PCIe 5 x16', 0, 64.0, 2_000, '-', 'spec'),
+            ('another node over RDMA', 0, 50.0, 10_000, '-', 'spec'),
+        ],
+    },
+}
+
+SOURCES = [
+    'AMD Instinct MI300X product page and data sheet (192 GB HBM3, 5.3 TB/s, '
+    '1307 TFLOP/s bf16, 256 MB Infinity Cache at ~17 TB/s)',
+    'AMD CDNA 3 architecture whitepaper and the CDNA 3 ISA guide '
+    '(512 KB VGPR and 64 KB LDS per CU, 4 MB L2 per XCD, 8 XCDs)',
+    'NVIDIA H100 and H200 data sheets and the Hopper architecture whitepaper '
+    '(H100 80 GB HBM3 at 3.35 TB/s, H200 141 GB HBM3e at 4.8 TB/s, the same die at '
+    '989 TFLOP/s bf16 dense, 50 MB L2, 228 KB shared memory per SM)',
+    'PCIe 5.0 x16 is 64 GB/s each way by the standard; 50 GB/s is a 400 Gb/s NIC',
+    'latencies and on-chip bandwidths: my estimates, in line with published '
+    'third-party microbenchmarks - treat them as magnitudes, not measurements',
 ]
 
 
-def hierarchy_table():
-    """Capacity, bandwidth and latency, with each level relative to the next."""
+def hierarchy_table(machine='MI300X'):
+    """Capacity, bandwidth and latency, with each level relative to the one above."""
     rows = []
-    for i, (name, cap, bw, lat) in enumerate(GPU_LEVELS):
-        prev = GPU_LEVELS[i - 1][2] if i else None
-        rows.append({'name': name, 'bytes': cap, 'gbs': bw, 'ns': lat,
-                     'slower_than_above': bw and prev and prev / bw,
-                     'bytes_per_flop_time': bw})
+    levels = MACHINES[machine]['levels']
+    for i, (name, cap, bw, lat, cap_src, bw_src) in enumerate(levels):
+        prev = levels[i - 1][2] if i else None
+        rows.append({'machine': machine, 'name': name, 'bytes': cap, 'gbs': bw,
+                     'ns': lat, 'capacity_source': cap_src, 'bandwidth_source': bw_src,
+                     'slower_than_above': bw and prev and prev / bw})
     return rows
+
+
+def hbm(machine='MI300X'):
+    """The level everything in this series is actually fighting."""
+    for name, cap, bw, lat, _c, _b in MACHINES[machine]['levels']:
+        if name.startswith('HBM'):
+            return {'machine': machine, 'bytes': cap, 'gbs': bw, 'ns': lat}
+    raise KeyError(machine)
 
 
 def measure_sequential(sizes_kb=(64, 256, 1024, 4096, 16384, 65536, 262144),
@@ -95,12 +156,18 @@ def measure_random(sizes_kb=(16, 64, 256, 1024, 4096, 16384, 65536),
 
 # ================================================================ 2. the roofline
 class Machine:
-    """A machine is two numbers: how fast it computes and how fast it reads."""
+    """A machine is two numbers: how fast it computes and how fast it reads.
 
-    def __init__(self, tflops=1300.0, bandwidth_gbs=5300.0, name='an MI355X-class GPU'):
-        self.flops = tflops * 1e12
-        self.bw = bandwidth_gbs * 1e9
+    Both come from the table above, so the roofline below is the same specification
+    sheet seen from a different angle rather than a second set of numbers.
+    """
+
+    def __init__(self, name='MI300X', tflops=None, bandwidth_gbs=None):
+        spec = MACHINES.get(name)
+        self.flops = (tflops if tflops is not None else spec['tflops_bf16']) * 1e12
+        self.bw = (bandwidth_gbs if bandwidth_gbs is not None else hbm(name)['gbs']) * 1e9
         self.name = name
+        self.vendor = spec['vendor'] if spec else ''  
 
     @property
     def balance(self):
@@ -195,17 +262,19 @@ def tile_sweep(n=4096, cache_floats=32 * 1024, tiles=(8, 16, 32, 64, 128, 256, 5
     return rows
 
 
-def flash_io(seq=4096, d_head=128, n_heads=32, sram_bytes=160 * 1024, bytes_per=2,
-             standard_passes=4):
+def flash_io(seq=4096, d_head=128, n_heads=32, sram_bytes=64 * 1024, bytes_per=2,
+             standard_passes=4, cache_bytes=256 * 1024 ** 2):
     """FlashAttention, read as an IO problem rather than a softmax trick.
 
-    Standard attention materialises the seq x seq score matrix in HBM and then walks
-    over it several times - write S, read it to softmax, write P, read it for P@V,
-    plus any mask or dropout pass.  `standard_passes` is how many of those there are.
+    Standard attention materialises the seq x seq score matrix in HBM and walks over
+    it several times - write S, read it to softmax, write P, read it for P@V, plus any
+    mask or dropout pass.  `standard_passes` counts those.
 
     Tiled attention keeps blocks of Q, K, V and O in SRAM and never writes the matrix.
-    For each block row of Q it reads all of K and V, so its traffic is
-    (Q + O) + (K + V) * ceil(seq / Br), where Br is set by what fits in SRAM.
+    For each block row of Q it re-reads K and V, so the traffic to the next level down
+    is (Q + O) + (K + V) * ceil(seq / Br), with Br set by what fits in SRAM.  Whether
+    that next level is HBM or a cache is what `cache_bytes` decides: if K and V for a
+    head fit in the L2 or Infinity Cache, the re-reads never reach HBM at all.
     """
     per_head = seq * d_head * bytes_per
     qo = 2 * per_head
@@ -215,13 +284,17 @@ def flash_io(seq=4096, d_head=128, n_heads=32, sram_bytes=160 * 1024, bytes_per=
     passes = max(1, math.ceil(seq / block))
     standard = n_heads * (qo + kv + standard_passes * scores)
     tiled = n_heads * (qo + kv * passes)
+    fits = kv <= cache_bytes
+    tiled_hbm = n_heads * (qo + kv) if fits else tiled   # re-reads caught by the cache
     flops = 4 * seq * seq * n_heads * d_head
     return {'seq': seq, 'block': block, 'passes': passes,
             'standard_gb': standard / 1e9, 'tiled_gb': tiled / 1e9,
-            'ratio': standard / tiled,
-            'standard_ai': flops / standard, 'tiled_ai': flops / tiled,
+            'tiled_hbm_gb': tiled_hbm / 1e9,
+            'ratio': standard / tiled, 'ratio_hbm': standard / tiled_hbm,
+            'standard_ai': flops / standard, 'tiled_ai': flops / tiled_hbm,
             'score_matrix_gb': n_heads * scores / 1e9,
-            'resident_kb': sram_bytes / 1024,
+            'kv_per_head_mb': kv / 1e6, 'kv_fits_cache': fits,
+            'cache_mb': cache_bytes / 1e6, 'sram_kb': sram_bytes / 1024,
             'memory_ratio': n_heads * scores / sram_bytes,
             'standard_passes': standard_passes}
 
@@ -231,13 +304,15 @@ def flash_scaling(seqs=(512, 2048, 8192, 32768), **kw):
 
 
 # ================================================================ 4. latency
-def little(bandwidth_gbs=5300.0, latency_ns=600.0, bytes_per_request=128):
+def little(bandwidth_gbs=None, latency_ns=600.0, bytes_per_request=128,
+           machine='MI300X'):
     """Little's law: to keep a pipe full you need bandwidth x latency in flight.
 
     This is why a GPU kernel that issues one load per thread and waits is slow even
     when nothing is wrong with it: the hardware needs thousands of requests in the
     air at once, and that number is a property of the machine, not of the code.
     """
+    bandwidth_gbs = bandwidth_gbs if bandwidth_gbs is not None else hbm(machine)['gbs']
     in_flight_bytes = bandwidth_gbs * 1e9 * latency_ns * 1e-9
     return {'bandwidth_gbs': bandwidth_gbs, 'latency_ns': latency_ns,
             'bytes_in_flight': in_flight_bytes,
@@ -275,6 +350,16 @@ def strided_cost(n=1 << 22, strides=(1, 2, 4, 8, 16, 32), bytes_per=4, line=64):
 # ================================================================ 5. checks
 def check():
     m = Machine()
+    # every row declares where its numbers came from, and nothing is unsourced
+    for name in MACHINES:
+        for r in hierarchy_table(name):
+            assert r['capacity_source'] in ('spec', '-')
+            assert r['bandwidth_source'] in ('spec', 'estimate')
+    assert any('MI300X' in s for s in SOURCES) and any('H200' in s for s in SOURCES)
+    # H200 is the same die as H100 with more memory: same peak, lower balance
+    assert Machine('H200 SXM').flops == Machine('H100 SXM').flops
+    assert Machine('H200 SXM').balance < Machine('MI300X').balance < Machine('H100 SXM').balance
+    assert list(MACHINES)[0] == 'MI300X'
     # the ridge point is where the two limits cross, by construction
     assert abs(m.balance - m.flops / m.bw) < 1e-9
     assert m.bound(m.balance * 1e6 * 1.1, 1e6) == 'compute'
@@ -300,10 +385,10 @@ def check():
     assert all(a['gb'] >= b['gb'] for a, b in zip(sweep, sweep[1:]))
     assert any(not r['fits'] for r in sweep)           # the cache sets the limit
     # FlashAttention: a modest traffic win, and an enormous capacity one
-    small, big = flash_io(seq=1024), flash_io(seq=16384)
-    assert big['ratio'] > small['ratio'] > 1.0
-    assert big['tiled_ai'] > big['standard_ai']
-    assert big['memory_ratio'] > 1000           # the matrix never fits in SRAM
+    big = flash_io(seq=16384)
+    assert big['memory_ratio'] > 1000              # the matrix never fits in SRAM
+    assert big['ratio_hbm'] >= big['ratio']        # the cache absorbs the re-reads
+    assert flash_io(sram_bytes=228 * 1024)['ratio'] > flash_io(sram_bytes=64 * 1024)['ratio']
     # fewer passes over the score matrix narrows the gap, as it should
     assert flash_io(standard_passes=2)['ratio'] < flash_io(standard_passes=6)['ratio']
     # measured: a random access costs more once the working set leaves the cache
@@ -325,22 +410,49 @@ def header(t):
 
 def main():
     header('1. The hierarchy, and what it costs to go one level down')
-    print('  Vendor specifications for a current data-centre GPU, not measurements:\n')
-    print('  level                      capacity        bandwidth      latency')
-    for r in hierarchy_table():
-        cap = ('-' if not r['bytes'] else
-               f'{r["bytes"] / 1024:.0f} KB' if r['bytes'] < 1 << 20 else
-               f'{r["bytes"] / 1024 ** 2:.0f} MB' if r['bytes'] < 1 << 30 else
-               f'{r["bytes"] / 1024 ** 3:.0f} GB')
-        slower = '' if not r['slower_than_above'] else f'   {r["slower_than_above"]:.0f}x slower'
-        print(f'  {r["name"]:26} {cap:>9}   {r["gbs"]:9,.0f} GB/s   '
-              f'{r["ns"]:6,.0f} ns{slower}')
-    print('\n  Two things to notice.  Each level is roughly an order of magnitude')
+    print('  Two named parts, from public sources only.  Each number is tagged with')
+    print('  where it comes from: "spec" is published by the vendor, "est." is my own')
+    print('  order-of-magnitude figure.  On-chip bandwidths and latencies are almost')
+    print('  never in a datasheet, so those are all estimates.\n')
+    for name in MACHINES:
+        spec = MACHINES[name]
+        print(f'  {name} ({spec["vendor"]}, {spec["tflops_bf16"]:.0f} TFLOP/s bf16)\n')
+        print('    level                            capacity        bandwidth         latency')
+        for r in hierarchy_table(name):
+            cap = ('-' if not r['bytes'] else
+                   f'{r["bytes"] / 1024:.0f} KB' if r['bytes'] < 1 << 20 else
+                   f'{r["bytes"] / 1024 ** 2:.0f} MB' if r['bytes'] < 1 << 30 else
+                   f'{r["bytes"] / 1024 ** 3:.0f} GB')
+            cs = '' if r['capacity_source'] == '-' else f' ({r["capacity_source"][:4]})'
+            bs = ' (est.)' if r['bandwidth_source'] == 'estimate' else ' (spec)'
+            print(f'    {r["name"]:30} {cap:>9}{cs:<7} {r["gbs"]:9,.0f} GB/s{bs:<8}'
+                  f'{r["ns"]:7,.0f} ns (est.)')
+        print()
+    print('  Three things to notice.  Each level is roughly an order of magnitude')
     print('  slower and two orders larger than the one above it, and the drop from')
     print('  shared memory to HBM is the one every kernel in this series has been')
-    print('  fighting.  The last two rows are the previous days: the host memory row')
-    print('  is why HiCache tiers exist, and the RDMA row is why DeepEP has two')
-    print('  different sets of kernels.')
+    print('  fighting.\n')
+    print('  The parts differ in ways that matter later.  The MI300X has the most HBM')
+    print('  at the most bandwidth, and a 256 MB Infinity Cache between L2 and HBM')
+    print('  that the Hopper parts do not have.  Both NVIDIA parts have a much larger')
+    print('  L2 (50 MB) and more shared memory per SM (228 KB against 64 KB) - and')
+    print('  shared memory is exactly what sets the block size in the tiling sections')
+    print('  below.  H200 is the same die as H100 with more and faster memory, which')
+    print('  is why it has the same peak arithmetic and a different balance:\n')
+    for name in MACHINES:
+        mm = Machine(name)
+        print(f'    {name:10} {mm.flops / 1e12:6.0f} TFLOP/s   '
+              f'{mm.bw / 1e9:6,.0f} GB/s   balance {mm.balance:5.0f} FLOPs/byte')
+    print('\n  Lower is better for everything memory-bound, so on that column the')
+    print('  order is H200, then MI300X, then H100 - which is the whole argument for')
+    print('  the refresh parts: the arithmetic did not move, the memory did.')
+    print('\n  The last two rows of each are the previous days: the host-memory row is')
+    print('  why HiCache has tiers, and the RDMA row is why DeepEP ships two different')
+    print('  sets of kernels.  Everything below uses the MI300X numbers unless it says')
+    print('  otherwise.')
+    print('\n  Where these came from:\n')
+    for src in SOURCES:
+        print(f'    - {src}')
 
     header('2. The same hierarchy, measured here')
     print('  No GPU in this VM, but the effect is not exotic - this machine has the')
@@ -380,9 +492,12 @@ def main():
 
     header('3. The roofline: which side of the machine is the limit')
     rows, m = roofline_table()
-    print(f'  A machine is two numbers: {m.flops / 1e12:.0f} TFLOP/s and '
+    print(f'  A machine is two numbers.  The {m.name}: {m.flops / 1e12:.0f} TFLOP/s and '
           f'{m.bw / 1e9:.0f} GB/s.')
     print(f'  Their ratio is the machine balance - {m.balance:.0f} FLOPs per byte.')
+    print('  (' + ', '.join(f'{n} {Machine(n).balance:.0f}' for n in MACHINES) +
+          ' - the same shape on all three,')
+    print('  and close enough that nothing below changes qualitatively.)')
     print('  A kernel that does fewer FLOPs per byte than that cannot be')
     print('  compute-bound no matter how it is written.\n')
     print('  kernel                              FLOPs/byte   bound     time')
@@ -435,42 +550,58 @@ def main():
     header('6. FlashAttention is this argument, applied to attention')
     print('  Day 52 showed the online-softmax identity: the same answer in one pass')
     print('  over the keys, agreeing to the last bit.  What it did not say is why')
-    print('  that is worth doing, and the answer is the table above.\n')
+    print('  that is worth doing, and the answer is the table above.')
     f = flash_io()
-    print(f'  seq {f["seq"]}, 32 heads of 128, {f["standard_passes"]} passes over the')
-    print('  score matrix in the untiled version:\n')
+    print(f'\n  seq {f["seq"]}, 32 heads of 128, {f["standard_passes"]} passes over the '
+          f'score matrix in the')
+    print(f'  untiled version, {f["sram_kb"]:.0f} KB of LDS:\n')
     print(f'    the score matrix itself         {f["score_matrix_gb"]:7.2f} GB   '
           f'allocated in HBM')
     print(f'    standard attention moves        {f["standard_gb"]:7.2f} GB   '
           f'{f["standard_ai"]:7.1f} FLOPs/byte')
-    print(f'    tiled (FlashAttention) moves    {f["tiled_gb"]:7.2f} GB   '
-          f'{f["tiled_ai"]:7.1f} FLOPs/byte')
-    print(f'    traffic ratio                   {f["ratio"]:7.1f}x')
-    print('\n  Two honest observations about that number.\n')
-    print('  First, it is not a factor of ten.  At d_head 128 and 160 KB of shared')
-    print(f'  memory the block is {f["block"]} rows, so K and V get re-read '
-          f'{f["passes"]} times, and')
-    print('  the tiled traffic is within a small factor of the untiled one.  The')
-    print('  traffic win depends on d_head^2 / SRAM, which is why it was larger in')
-    print('  the original paper (d_head 64) than it is on a model with 128.\n')
-    print('  Second, the traffic was never the main prize.  What tiling actually buys')
-    print(f'  is that the {f["score_matrix_gb"]:.2f} GB in the first row is never')
-    print(f'  allocated at all - {f["memory_ratio"]:,.0f} times the shared memory it')
-    print('  runs in.  That is a capacity argument, not a bandwidth one, and it is')
-    print('  the reason long contexts are servable: standard attention needs memory')
-    print('  that grows with seq squared, and tiled attention does not.\n')
-    print('  The backward pass is the same trick again.  It does not store the score')
-    print('  matrix either: it keeps the log-sum-exp per row - one number instead of')
-    print('  seq numbers - and recomputes the scores from Q and K.  Recomputation is')
-    print('  cheaper than the round trip, and the roofline table is why.\n')
+    print(f'    tiled, counting every level     {f["tiled_gb"]:7.2f} GB   '
+          f'{f["ratio"]:7.1f}x less')
+    print(f'    tiled, what reaches HBM         {f["tiled_hbm_gb"]:7.2f} GB   '
+          f'{f["ratio_hbm"]:7.1f}x less')
+    print('\n  Three honest observations about those numbers.\n')
+    print('  First, the traffic win is not a factor of ten - counted naively it is')
+    print(f'  barely anything.  With {f["sram_kb"]:.0f} KB of LDS and d_head 128 the '
+          f'block is {f["block"]} rows,')
+    print(f'  so K and V are re-read {f["passes"]} times and the tiled traffic lands on '
+          f'top of the')
+    print('  untiled one.  The saving scales with SRAM over d_head squared, which is')
+    print('  why it looked larger in the original paper (d_head 64) than it does on a')
+    print('  model with 128.\n')
+    print('  Second, those re-reads mostly never reach HBM.  K and V for one head are')
+    print(f'  {f["kv_per_head_mb"]:.1f} MB against a {f["cache_mb"]:.0f} MB Infinity '
+          f'Cache, so the repeated passes are')
+    print(f'  cache hits, and the traffic that actually crosses to HBM is '
+          f'{f["tiled_hbm_gb"]:.2f} GB -')
+    print(f'  {f["ratio_hbm"]:.1f}x less than untiled.  A model that counts only one '
+          f'level will')
+    print('  mispredict, which is the lesson of this whole day applied to the day.\n')
+    print('  Third, and most important: the traffic was never the main prize.  What')
+    print(f'  tiling buys is that the {f["score_matrix_gb"]:.2f} GB in the first row is '
+          f'never allocated at')
+    print(f'  all - {f["memory_ratio"]:,.0f} times the LDS the kernel runs in.  That is '
+          f'a capacity')
+    print('  argument, and it is why long contexts are servable: untiled attention')
+    print('  needs memory that grows with seq squared, and tiled attention does not.\n')
+    print('  The backward pass is the same trick again: it stores the log-sum-exp per')
+    print('  row - one number instead of seq numbers - and recomputes the scores from')
+    print('  Q and K, because recomputation is cheaper than the round trip.\n')
     print('  How it scales with the context:\n')
-    print('  seq      score matrix   standard GB   tiled GB   ratio')
+    print('  seq      score matrix   standard GB   tiled to HBM   ratio   KV in cache')
     for r in flash_scaling():
         print(f'  {r["seq"]:6d}   {r["score_matrix_gb"]:10.2f} GB   '
-              f'{r["standard_gb"]:10.2f}   {r["tiled_gb"]:8.2f}   {r["ratio"]:5.1f}x')
-    print('\n  Both columns grow with seq squared - the arithmetic does, so the')
-    print('  traffic must.  What changes is that one of them has to be *resident* and')
-    print('  the other does not.')
+              f'{r["standard_gb"]:10.2f}   {r["tiled_hbm_gb"]:12.2f}   '
+              f'{r["ratio_hbm"]:5.1f}x   {"yes" if r["kv_fits_cache"] else "no":>11}')
+    print('\n  Watch the last column.  While K and V for a head fit in the Infinity')
+    print('  Cache the re-reads are absorbed and tiling looks excellent; once they')
+    print('  stop fitting, the re-reads reach HBM and the block size stops being a')
+    print('  detail.  That is the whole day in one table: the same code, a different')
+    print('  level of the hierarchy, a different answer.')
+
 
     header('7. Latency: bandwidth is not enough on its own')
     L = little()

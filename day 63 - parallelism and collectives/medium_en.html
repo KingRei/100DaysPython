@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Collective communication: splitting a model across GPUs without changing its answers</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Collective communication: splitting a model across GPUs without changing its answers</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2063%20-%20parallelism%20and%20collectives">day 63 on GitHub</a></p>
+<p><em>100 Days of Python - day 63</em></p>
+<p>A 70B model with Adam needs <strong>1,043 GB per GPU</strong> if every GPU keeps a replica - an order of magnitude more memory than any single GPU has. Serving the same model 8-way tensor parallel moves <strong>35 GB across the links per forward pass</strong> of 8,192 tokens, in 160 separate all-reduces. Memory you save, bytes you pay: every form of parallelism is a point on that trade, and today I compute both columns for all of them.</p>
+<p>TP, EP, DP, DCP, DDP, FSDP, PP - seven acronyms that turn out to be the same decision made in seven places: which collective runs, how often, and on how many bytes.</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2063%20-%20parallelism%20and%20collectives/imgs/day63_0.png?raw=true">
+<h2>The primitives</h2>
+<pre><code>collective      what it is for                                          bytes each rank ships  steps
+--------------  ------------------------------------------------------  ---------------------  -------
+broadcast       one rank has it, everybody needs it                     N                      log2(p)
+all-reduce      everybody has a partial sum, everybody needs the total  2(p-1)/p · N           2(p-1)
+reduce-scatter  everybody has a partial sum, each keeps 1/p             (p-1)/p · N            p-1
+all-gather      each rank has 1/p, everybody needs all of it            (p-1)/p · N            p-1
+all-to-all      rank r holds a shard addressed to every rank            (p-1)/p · N            p-1
+point-to-point  hand a tensor to the next rank                          N                      1</code></pre>
+<p>The row that matters most is that all-reduce is <strong>not</strong> a primitive. It is a reduce-scatter followed by an all-gather, which is both why its bill is twice theirs and why a surprising amount of this article is just that observation applied twice.</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2063%20-%20parallelism%20and%20collectives/imgs/day63_1.png?raw=true">
+<p>I ran the ring version on 8 simulated ranks and a 64 KB vector: 14 steps, 114,688 bytes shipped per rank, every rank ending with the same sum. The naive alternative - everyone sends the whole vector to rank 0, rank 0 sends the total back - pushes 917,504 bytes through one link. The ring never lets a rank hold more than one chunk of the sum at a time, so the volume per rank stops growing with the number of GPUs and only the step count does.</p>
+<p>Which immediately gives the implementation rule. Small messages are decided by hops, and a tree needs only 2log2(p) of them against the ring&#x27;s 2(p-1). Large messages are decided by bytes, and there the ring wins. On the link model in the module the crossover is around <strong>2 MB</strong> - that is why NCCL and RCCL switch algorithm by message size, and why the tiny all-reduce inside a decode step is not free. It costs hops even when it costs no bytes.</p>
+<h2>Data parallelism is one line of maths</h2>
+<p>Four ranks, a quarter of the batch each, 60 steps. One device on the full batch reaches loss 0.014105; the four ranks reach 0.014105; the largest weight difference is 1.19e-07. They agree because <strong>the loss is a mean</strong>, so the average of the per-rank gradients is exactly the full-batch gradient. The all-reduce is what enforces that average, and that is the entire content of data parallelism.</p>
+<p>Note what it does <em>not</em> do: nothing about the model is split, so memory per GPU is unchanged. That single sentence is why everything after this section exists.</p>
+<p>The one engineering detail worth keeping is bucketing. Gradients are produced back to front, so an all-reduce can fly while the backward pass is still running:</p>
+<pre><code>buckets  size each  all-reduce each  total comm  exposed at the end
+-------  ---------  ---------------  ----------  ------------------
+1        1024 MB    4.73 ms          4.73 ms     4.73 ms
+4        256 MB     1.20 ms          4.81 ms     1.20 ms
+25       41 MB      0.22 ms          5.40 ms     0.22 ms</code></pre>
+<p>More buckets, slightly more total traffic (each pays the latency again), far less of it exposed.</p>
+<h2>ZeRO and FSDP: stop replicating what you can shard</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2063%20-%20parallelism%20and%20collectives/imgs/day63_4.png?raw=true">
+<p>Adam in mixed precision keeps 16 bytes per parameter: 2 for the bf16 weight, 2 for the bf16 gradient, 4 for the fp32 master copy, 4 and 4 for the two moments. <strong>Eight times the weights themselves</strong> - the optimizer, not the model, is what stops a training run fitting.</p>
+<pre><code>stage                         GB per rank  wire GB  vs DDP  collectives
+----------------------------  -----------  -------  ------  -------------------------------------------
+DDP (no sharding)             1043         228.2    1.00x   all-reduce(grad)
+ZeRO-1 (optimizer)            359          228.2    1.00x   reduce-scatter(grad) + all-gather(param)
+ZeRO-2 (+ gradients)          244          228.2    1.00x   reduce-scatter(grad) + all-gather(param)
+ZeRO-3 / FSDP (+ parameters)  130          342.3    1.50x   all-gather(param) x2 + reduce-scatter(grad)</code></pre>
+<p>Stages 1 and 2 are free, and the reason is the row from the first table: an all-reduce is already a reduce-scatter plus an all-gather. Split it in two, keep only your own slice of the gradient in between, and you have saved most of the memory without sending one extra byte. Stage 3 is the one with a price - the parameters themselves are sharded, so each layer is all-gathered just before it runs and dropped immediately after - 1.5x the bytes for an eighth of the memory. Day 62.5 called this trade recompute versus store. Here it is refetch versus store, and the curve is the same.</p>
+<h2>Tensor parallelism: the bill scales with tokens</h2>
+<p>Split the first matrix by columns and the second by rows. The column split is chosen, not arbitrary: it gives each rank whole hidden units, so the non-linearity between the two matrices needs no communication. After the second matrix each rank holds a <em>partial</em> sum of the full-width output, and one all-reduce closes the block. Against a single device: 4.77e-07.</p>
+<p>At 8,192 tokens, 8-way, the activation is 128 MB, each all-reduce moves 224 MB per rank, and a forward pass contains 160 of them - one after attention and one after the MLP in each of 80 layers - for 35 GB. <strong>That scales with tokens, not with parameters</strong>, the exact opposite of data parallelism, which is why tensor parallelism is cheap for one decode token and brutal for a long prefill.</p>
+<p>Sequence parallelism is the first table applied once more. The all-reduce was already a reduce-scatter plus an all-gather; keep the sharded form in between and the norms and residuals there run on 1/p of the sequence. Identical bytes - 224 MB either way - and the activation per rank drops from 128 MB to 16 MB.</p>
+<h2>Expert parallelism: the tokens move, the weights stay</h2>
+<p>The Day 62 router picks experts per token; expert parallelism hands the experts out to ranks, so the tokens have to travel to whichever GPU owns theirs. Two all-to-alls per layer, dispatch and combine, bit-identical to the single-device MoE.</p>
+<p>At 8,192 tokens, top-8 routing, 8-way: 896 MB out, 896 MB back, per layer - <strong>140 GB per forward pass, four times what tensor parallelism pays for the same tokens</strong>, because every token is sent to k experts instead of one. Dispatching in fp8 halves it to 70 GB, which is precisely why DeepEP ships a quantized dispatch path, and why MoE serving is decided by the interconnect rather than by the GPUs.</p>
+<h2>Context parallelism: split the keys, merge with the log-sum-exp</h2>
+<p>Each rank owns a slice of the keys and values, computes a partial attention output plus the log-sum-exp of its own slice, and the ranks merge by rescaling to a common maximum. Against full attention at 2, 4 and 8 ranks: 1.0e-16, 8.0e-17, 1.7e-16.</p>
+<p>This is the identity Day 52 proved for FlashAttention - two partial softmaxes combine if you carry their running maximum and sum - with the halves on different GPUs instead of in different registers. Same algebra, one level up the memory hierarchy.</p>
+<p>The reason to bother is capacity: the KV cache for 64 requests of 128K tokens is 2,560 GB.</p>
+<pre><code>layout                                KV GB per rank  why
+------------------------------------  --------------  -------------------------------
+TP, MHA/GQA (split by head)           320             the heads divide by p
+TP, MLA (one latent per token)        2,560           no head dimension left to split
+DP attention (split by request)       320             each rank owns whole requests
+context parallel (split by position)  320             each rank owns a key range</code></pre>
+<p>The MLA row is the surprise. Compressing the KV into one latent per token removes exactly the dimension tensor parallelism was splitting along, so every rank keeps a full copy. What is left is splitting by request - which is what &quot;DP attention&quot; means in a serving stack - or splitting by position, which is context parallelism.</p>
+<h2>Pipeline parallelism: the cheapest wire, paid for in idle time</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2063%20-%20parallelism%20and%20collectives/imgs/day63_3.png?raw=true">
+<p>Only the boundary activation crosses, point to point, no collective: 128 MB per boundary, 7 boundaries, 896 MB for a whole forward pass. Three orders of magnitude below tensor parallelism, which is why pipeline stages can live on different nodes.</p>
+<p>The cost is the bubble - the last stage has nothing to do until the first micro-batch has walked through all the earlier ones:</p>
+<pre><code>micro-batches  bubble  utilisation
+-------------  ------  -----------
+1              87.5%   12.5%
+4              63.6%   36.4%
+16             30.4%   69.6%
+64             9.9%    90.1%</code></pre>
+<p>bubble = (stages - 1) / (micro-batches + stages - 1). The fix is always more micro-batches, until they are small enough that the matmuls stop filling the GPU - the Day 62.5 roofline putting a floor under the whole scheme.</p>
+<h2>Which axis goes where</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2063%20-%20parallelism%20and%20collectives/imgs/day63_2.png?raw=true">
+<p>One rank, one step, 8,192 tokens, 8-way on each axis:</p>
+<pre><code>axis                       GB per step  in-node   cross-node  penalty
+-------------------------  -----------  --------  ----------  -------
+tensor parallel            35.00        98.4 ms   774.0 ms    7.9x
+expert parallel            140.00       378.1 ms  3017.7 ms   8.0x
+context parallel           17.64        48.5 ms   384.3 ms    7.9x
+pipeline parallel          0.12         0.3 ms    2.7 ms      8.0x
+data parallel (gradients)  228.17       612.5 ms  4900.1 ms   8.0x</code></pre>
+<p>Read the first column and the deployment writes itself. Tensor and expert parallelism pay tens of gigabytes <strong>in every layer</strong>, so they stay on the short links inside a node. Pipeline ships almost nothing and happily crosses a network. Data parallelism moves the most of all, but <strong>once per step instead of per layer</strong>, and it hides under the backward pass - so it crosses the network too. Clusters stack all of them at once, one mesh axis per kind, and the mesh shape comes from exactly this table.</p>
+<h2>Five ways this breaks without an error message</h2>
+<p><strong>Summing the gradients instead of averaging them.</strong> The learning rate is silently multiplied by the world size. After 1, 3 and 5 steps the correct run sits at 0.6129, 0.3251, 0.2362 and the summed run at 6.82, 70,331 and 1.76e+10. It cannot be caught on one GPU: with a world size of 1 the sum and the mean are the same number.</p>
+<p><strong>Ranks that take different branches.</strong> Collectives are matched by call order, not by name. &quot;This rank has no tokens for any expert this step, so skip the all-reduce&quot; leaves rank 0 waiting at one collective and rank 1 at another, forever. NCCL does not raise; the job hangs with the GPUs at 100% utilisation. This is why MoE implementations send empty buffers rather than skip a call.</p>
+<p><strong>The reduction order is part of the answer.</strong> The same data all-reduced by a ring and by a tree differs in 32,459 of 65,536 values, by up to 9.77e-04 (1.2e-04 relative). Re-running the ring is bit-identical, so this is not randomness: float addition is not associative and the two schedules added in different orders. Same seed, different world size, different loss curve.</p>
+<p><strong>One slow rank is the step time</strong>, because a collective is a barrier. Give each rank a 1% chance of a hiccup on any step: at 8 ranks some rank is affected on 7.7% of steps and the job is 5.2% slower; at 512 ranks it is 99.4% of steps and 49.3% slower. Scaling out multiplies the number of chances to be unlucky, not the size of each one.</p>
+<p><strong>A dropped all-reduce.</strong> Remove it from a row-parallel layer: every shape is still correct, nothing is NaN, and the output is off by 2.30 - about 77% of its own scale. The model keeps generating text, just worse text. Which is why the first test for any parallelism change is to set the world size to 1 and check the answer did not move.</p>
+<h2>In PyTorch, briefly</h2>
+<pre><code>mesh = init_device_mesh(&quot;cuda&quot;, (2, 4), mesh_dim_names=(&quot;dp&quot;, &quot;tp&quot;))
+
+DistributedDataParallel(model)              # all-reduce(grad), bucketed
+fully_shard(model, mesh=mesh[&quot;dp&quot;])         # FSDP2 = ZeRO-3
+parallelize_module(block, mesh[&quot;tp&quot;], {
+    &quot;w1&quot;: ColwiseParallel(), &quot;w2&quot;: RowwiseParallel()})</code></pre>
+<p><code>ColwiseParallel</code> and <code>RowwiseParallel</code> are the tensor-parallel section: the first marks its output sharded, the second marks it partial, and DTensor inserts the all-reduce when a partial tensor is asked to become replicated. You annotate placements and the framework derives the collectives - so an unexpected all-reduce in a profile is usually a placement that forced one.</p>
+<h2>In JAX, briefly</h2>
+<pre><code>mesh = jax.make_mesh((2, 4), (&quot;dp&quot;, &quot;tp&quot;))
+x = jax.device_put(x, NamedSharding(mesh, P(&quot;dp&quot;, None)))
+w = jax.device_put(w, NamedSharding(mesh, P(None, &quot;tp&quot;)))</code></pre>
+<p>You never call a collective. You say where the arrays live and XLA inserts whatever all-reduce, all-gather or all-to-all the program needs to stay consistent. Data parallelism is a sharded batch axis, tensor parallelism a sharded feature axis, FSDP a sharded parameter axis plus <code>jax.remat</code>. When the automatic choice is wrong, <code>shard_map</code> lets you write <code>jax.lax.psum</code> and <code>jax.lax.all_to_all</code> yourself - and <code>jax.jit(f).lower(x).compile().as_text()</code> prints every collective XLA inserted, which makes a parallelism review in JAX an exercise in reading HLO rather than reading a trace.</p>
+<h2>In the serving stacks, briefly</h2>
+<pre><code>--tensor-parallel-size 8      --expert-parallel-size 8
+--data-parallel-size 2        --pipeline-parallel-size 2
+--context-parallel-size 2</code></pre>
+<p>Inference changes the arithmetic twice. There is no gradient, so the data-parallel all-reduce - the largest row in the placement table - disappears entirely and data parallelism costs only memory. And decode activations are one token per request, so the tensor-parallel all-reduce that looked expensive above becomes latency-dominated instead: the same 2(p-1) hops, almost no bytes. That is why decode is limited by how fast a link can turn a small message around, and why the stacks fuse the all-reduce into the next norm when they can.</p>
+<h2>What I take away</h2>
+<p>Every acronym in the title is the same table read in a different direction. Data parallelism pays in parameters, tensor and context parallelism pay in tokens, expert parallelism pays in tokens times k, pipeline pays in idle time rather than bytes. The collectives underneath never change, the numbers do - and the bugs are all silent, so the only real test is whether one rank still agrees with no ranks at all.</p>
+<p>Tomorrow: continuous batching and the scheduler that decides which requests run together.</p>
+</body>
+</html>

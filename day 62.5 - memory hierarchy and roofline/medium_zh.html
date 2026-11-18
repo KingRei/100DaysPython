@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
-<title>Day 63 — 記憶體階層與 roofline：為什麼有些 kernel 再怎麼優化都不會變快</title>
+<title>Day 62.5 — 記憶體階層與 roofline：為什麼有些 kernel 再怎麼優化都不會變快</title>
 <style>
 body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
          font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
@@ -26,30 +26,44 @@ li     { margin: .3em 0; }
 </style>
 </head>
 <body>
-<h1>Day 63 — 記憶體階層與 roofline：為什麼有些 kernel 再怎麼優化都不會變快</h1>
-<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2063%20-%20memory%20hierarchy%20and%20roofline">day 63 on GitHub</a></p>
-<p><em>100 Days of Python - day 63</em></p>
+<h1>Day 62.5 — 記憶體階層與 roofline：為什麼有些 kernel 再怎麼優化都不會變快</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2062.5%20-%20memory%20hierarchy%20and%20roofline">day 62.5 on GitHub</a></p>
+<p><em>100 Days of Python - day 62.5</em></p>
 <p>這個系列裡每一個效能數字，最後都變成了記憶體數字——而這不是我安排的。decode 慢是因為每個 token 都要把權重讀一遍；KV cache 是容量上限；MoE 是通訊問題；量化有用是因為位元變少所以位元組變少。這裡面沒有一句話是在講算術。</p>
 <p>所以這一天就是把底下那個模型寫出來：階層長什麼樣、哪一個不等式決定一個 kernel 是被算力還是被搬運卡住，以及為什麼 tiling（包含 FlashAttention）是唯一能換邊站的手段。</p>
-<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2063%20-%20memory%20hierarchy%20and%20roofline/imgs/day63_0.png?raw=true">
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2062.5%20-%20memory%20hierarchy%20and%20roofline/imgs/day62_5_0.png?raw=true">
 <h2>階層</h2>
-<pre><code>層級                 容量    頻寬          延遲
--------------------  ------  ------------  ---------
-暫存器               256 KB  100,000 GB/s  1 ns
-shared memory / LDS  160 KB  20,000 GB/s   20 ns
-L2 快取              50 MB   7,000 GB/s    200 ns
-HBM                  192 GB  5,300 GB/s    600 ns
-主機記憶體（PCIe）   1 TB    64 GB/s       2,000 ns
-別的節點（RDMA）     -       50 GB/s       10,000 ns</code></pre>
-<p>這是規格表的數字，不是實測。每一層大約比上一層慢一個數量級、大兩個數量級。而最後兩列就是前面幾天：<strong>主機記憶體那一列是 HiCache 要分層的理由，RDMA 那一列是 DeepEP 要有兩套 kernel 的理由。</strong></p>
+<p>這裡每個數字都來自公開資料。<strong>spec</strong> 是廠商公布的——產品頁、data sheet、CDNA 3 與 Hopper 的架構白皮書、PCIe 與乙太網路標準。<strong>est.</strong> 是我自己估的數量級：晶片內部的頻寬與存取延遲幾乎不會寫在規格書上，所以那些全部都是估計值，要當成「大約」而不是量測結果。</p>
+<p>容量，全部都是廠商公布的：</p>
+<pre><code>層級                    MI300X               H200 SXM      H100 SXM
+----------------------  -------------------  ------------  -----------
+暫存器                  512 KB / CU          256 KB / SM   256 KB / SM
+shared memory（LDS）    64 KB / CU           228 KB / SM   228 KB / SM
+L2                      4 MB / XCD，共 8 個  50 MB         50 MB
+Infinity Cache（MALL）  256 MB               -             -
+HBM                     192 GB HBM3          141 GB HBM3e  80 GB HBM3</code></pre>
+<p>頻寬，晶片內是估的、晶片外是公布的：</p>
+<pre><code>層級                      MI300X                     H200 SXM              H100 SXM
+------------------------  -------------------------  --------------------  --------------------
+暫存器                    ~100,000 GB/s (est.)       ~100,000 GB/s (est.)  ~100,000 GB/s (est.)
+shared memory（LDS）      ~20,000 GB/s (est.)        ~20,000 GB/s (est.)   ~20,000 GB/s (est.)
+L2                        ~10,000 GB/s (est.)        ~7,000 GB/s (est.)    ~7,000 GB/s (est.)
+Infinity Cache（MALL）    17,000 GB/s (spec)         -                     -
+HBM                       5,300 GB/s (spec)          4,800 GB/s (spec)     3,350 GB/s (spec)
+主機記憶體（PCIe 5 x16）  64 GB/s (spec)             64 GB/s (spec)        64 GB/s (spec)
+別的節點（RDMA）          ~50 GB/s（400 Gb/s 網卡）  ~50 GB/s              ~50 GB/s</code></pre>
+<p>後面 Little 法則那一節用到的延遲也全都是估計值：暫存器 1 ns、shared memory 20 ns、快取 200–300 ns、HBM 600 ns、PCIe 2 µs、跨節點 10 µs。</p>
+<p>bf16 峰值是 MI300X 1307 TFLOP/s，兩張 Hopper 都是 990 TFLOP/s——H200 跟 H100 是同一顆晶片，只是記憶體更大更快，算力完全沒動。峰值除以 HBM 頻寬，machine balance 分別是 <strong>247</strong>、<strong>206</strong>、<strong>296</strong> FLOPs/byte。對所有被記憶體卡住的工作來說這個數字愈小愈好，所以這一欄的順序是 H200、MI300X、H100——這也正是改款卡的賣點：算力沒變，變的是記憶體。三張卡的形狀一樣，所以底下的結論都成立。除非特別說明，後面都用 MI300X 的數字。</p>
+<p>差別後面會用到：MI300X 的 HBM 最大最快，而且 L2 與 HBM 之間多一層 256 MB 的 Infinity Cache，兩張 Hopper 都沒有；兩張 NVIDIA 卡的 L2 大很多、每個 SM 的 shared memory 也多（228 KB vs 64 KB）——<strong>而 shared memory 的大小正是 tiling 那幾節裡 block 大小的決定因素</strong>。</p>
+<p>表的最後兩列都是前面幾天：主機記憶體那一列是 HiCache 要分層的理由，RDMA 那一列是 DeepEP 要有兩套 kernel 的理由。</p>
 <h2>在這台機器上實測：順序決定一切</h2>
-<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2063%20-%20memory%20hierarchy%20and%20roofline/imgs/day63_1.png?raw=true">
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2062.5%20-%20memory%20hierarchy%20and%20roofline/imgs/day62_5_1.png?raw=true">
 <p>把陣列加總是純頻寬的工作，照理說一離開快取就該掉下去。在這台機器上它只動了大約 1.3 倍——因為<strong>硬體 prefetcher 看得到循序讀，提早把資料抓進來</strong>，大部分延遲根本沒發生。</p>
 <p>把<strong>同樣的位元組</strong>換成隨機順序讀，整個階層立刻現形：<strong>在快取裡一次存取 1.1 ns，掉出快取 11.7 ns，差 11 倍。</strong></p>
 <p>規格表賣你的是頻寬，決定你拿不拿得到的是局部性。這個系列裡所有看起來像指標追逐的結構——radix tree、block table、expert 權重的 gather——付的都是第二種價錢。</p>
 <h2>Roofline</h2>
-<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2063%20-%20memory%20hierarchy%20and%20roofline/imgs/day63_2.png?raw=true">
-<p>一台機器只有兩個數字：1300 TFLOP/s 和 5300 GB/s。兩者的比值就是 <strong>machine balance</strong>，245 FLOPs/byte；而<strong>一個 kernel 如果每讀一個 byte 做的運算比這個少，它無論怎麼寫都不可能被算力卡住</strong>。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2062.5%20-%20memory%20hierarchy%20and%20roofline/imgs/day62_5_2.png?raw=true">
+<p>MI300X 只有兩個數字：1307 TFLOP/s 和 5300 GB/s。兩者的比值就是 <strong>machine balance</strong>，247 FLOPs/byte；而<strong>一個 kernel 如果每讀一個 byte 做的運算比這個少，它無論怎麼寫都不可能被算力卡住</strong>。</p>
 <pre><code>kernel                           FLOPs/byte  被誰卡住  時間
 -------------------------------  ----------  --------  --------
 decode：一層 linear（GEMV）      1.00        記憶體    0.02 ms
@@ -73,10 +87,11 @@ decode：整個 70B 模型            1.00        記憶體    26.42 ms</code></
 <p>kernel 不能選自己的 FLOPs，演算法已經決定了；它能選的是<strong>同樣的位元組要重讀幾次</strong>。一個 4096×4096 的 matmul 不做 tiling 要搬 <strong>549.8 GB</strong>，切成 104×104 的 tile 只要搬 <strong>5.4 GB</strong>——少 103 倍，而<strong>倍數剛好等於 tile 的大小</strong>。</p>
 <p>tile 大小不是自由參數：三塊 tile（A、B、C 各一塊）必須同時待在快取裡，所以 <code>T = √(cache / 3)</code>。每一個函式庫裡的 blocked kernel，核心就是這一個算式加上細節。</p>
 <h2>FlashAttention 就是同一個論證，用在 attention 上</h2>
-<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2063%20-%20memory%20hierarchy%20and%20roofline/imgs/day63_3.png?raw=true">
-<p>Day 52 已經證過 online softmax 的恆等式——一趟掃過 K、答案一位不差。這一天講的是「為什麼值得」，而誠實的版本有兩段。</p>
-<p>seq 4096、32 個 head、每個 128 維、shared memory 160 KB 的情況下，block 只有 160 列，K 和 V 要重讀 26 次，流量只少 <strong>2.4 倍</strong>（4.43 GB → 1.81 GB）。流量的好處大致隨 <code>d_head² / SRAM</code> 變化，所以原論文（d_head 64）看起來比現在的模型大。</p>
-<p>真正的獎品在另一欄：那 <strong>1.07 GB 的分數矩陣從來沒有被配置過</strong>——它是 kernel 所在的 shared memory 的 6,554 倍。<strong>這是容量的論證，不是頻寬的論證</strong>，也是長 context 能被服務的理由。backward 也是同一招：只存每列的 log-sum-exp（一個數字，不是 seq 個數字），再從 Q 和 K 把分數重算出來——因為重算比來回搬便宜，而為什麼便宜，roofline 那張表的第一欄已經回答了。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2062.5%20-%20memory%20hierarchy%20and%20roofline/imgs/day62_5_3.png?raw=true">
+<p>Day 52 已經證過 online softmax 的恆等式——一趟掃過 K、答案一位不差。這一天講的是「為什麼值得」，而誠實的版本有三段。</p>
+<p>seq 4096、32 個 head、每個 128 維，<strong>LDS 只有 64 KB</strong> 的情況下 block 是 64 列，K 和 V 要重讀 64 次。所以<strong>把每一層都算進去的話</strong>，tiled 搬 4.36 GB、untiled 搬 4.43 GB——<strong>只差 1.0 倍</strong>，也就是幾乎沒差。流量的好處大致隨 SRAM/d_head² 變化，所以原論文（d_head 64）看起來比現在的模型大很多。</p>
+<p>但那些重讀<strong>大多根本沒有到 HBM</strong>。一個 head 的 K+V 只有 <strong>2.1 MB</strong>，而 Infinity Cache 有 <strong>268 MB</strong>，所以重複的那幾趟都是快取命中，真正跨到 HBM 的只有 <strong>0.13 GB，少 33.0 倍</strong>。<strong>只算一層的模型就會算錯</strong>——這正是今天這一天的教訓，套用在今天這一天身上。</p>
+<p>而且流量從來不是主要的獎品。tiling 真正買到的是那 <strong>1.07 GB 的分數矩陣從來沒有被配置過</strong>——它是 kernel 所在 LDS 的 16,384 倍。這是容量的論證不是頻寬的論證，也是長 context 能被服務的理由。backward 也是同一招：只存每列的 log-sum-exp（一個數字，不是 seq 個），再從 Q 和 K 重算分數，因為重算比來回搬便宜。</p>
 <h2>延遲，以及為什麼光有頻寬不夠</h2>
 <p>Little 法則：要填滿管線，任何時刻都必須有「頻寬 × 延遲」這麼多位元組在路上——這裡是 3.2 MB，大約 <strong>24,800 個同時在飛的請求</strong>。所以一個「發一次 load 然後等」的 kernel，就算完全沒有多餘工作也會慢。</p>
 <p>另一半是 cache line 整條抓。本機實測：用 stride 16 去讀，實際抓進來的位元組裡只有 <strong>6.2%</strong> 是有用的，而迴圈的時間不但沒變少、還<strong>變多</strong>了，因為同樣的 16 MB 被抓進來只為了十六分之一的資料。這在 GPU 上叫 coalescing，在 CPU 上是 array-of-structs 輸給 struct-of-arrays 的原因——同一個硬體事實，兩個名字。</p>
@@ -101,6 +116,6 @@ jax.jit(f, donate_argnums=(0,))   # 重用輸入的 buffer</code></pre>
 <p>跟 PyTorch 真正的差別在於 tiling 住在哪裡：PyTorch 是你呼叫別人 tiling 好的 kernel、或自己用 Triton 寫；JAX 是編譯器自己 tiling 融合後的區塊，而當那還不夠好時你降到 Pallas——那就是 Triton 的模型：<strong>你自己選 block 大小，而你在對抗的約束就是 <code>T = √(cache/3)</code> 那一條。</strong></p>
 <h2>這一天之後會在哪裡再出現</h2>
 <p>後面每一天其實都是同一個不等式的應用。一個 kernel 要嘛被記憶體卡住、要嘛沒有；而 batching、融合、tiling、量化，是改變那個比值的四種不同手段。至於 profile——只有當你知道每個 kernel 站在 ridge 的哪一邊時，它才讀得懂。</p>
-<p>程式碼、notebook 與互動版走查：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2063%20-%20memory%20hierarchy%20and%20roofline">day 63 on GitHub</a>。</p>
+<p>程式碼、notebook 與互動版走查：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2062.5%20-%20memory%20hierarchy%20and%20roofline">day 62.5 on GitHub</a>。</p>
 </body>
 </html>
