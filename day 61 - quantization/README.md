@@ -111,6 +111,37 @@ which is why mixed FP8 training uses both. MXFP4 goes further: an E2M1 element w
 eight magnitudes `{0, .5, 1, 1.5, 2, 3, 4, 6}` and one shared power-of-two exponent per
 32 values.
 
+## Every method on one page
+
+The formats above were the units. These are the methods, and three questions separate all of them: **what gets quantized**, **how the scale is chosen**, and **whether the rounding itself is improved**.
+
+| method | quantizes | typical bits | what it costs | the idea |
+|---|---|---|---|---|
+| **round to nearest (RTN)** | W | 8 / 4 | nothing | absmax scale per tensor, row or group; the baseline everything is compared to |
+| **MSE / percentile clipping** | W, A | 8 / 4 | a few calibration batches | search the clipping threshold that minimises squared error instead of using max |
+| **LLM.int8()** | W + A | 8 (+16) | nothing | split the matmul: outlier columns stay in 16-bit, the rest go to int8 |
+| **ZeroQuant / per-token dynamic** | W + A | 8 | nothing | per-token activation scales computed at run time, per-column weight scales |
+| **SmoothQuant** | W + A | 8 | a few calibration batches | migrate range from activations into weights: X W = (X/s)(W s) |
+| **AWQ** | W | 4 | a few calibration batches | scale up the channels the activations actually use before rounding |
+| **GPTQ (from OBQ / OBS)** | W | 4 / 3 | a few calibration batches | round column by column and push the error into the rest using H = X^T X |
+| **SqueezeLLM** | W | 4 / 3 | a few calibration batches | sensitivity-weighted k-means codebook plus a sparse outlier set |
+| **SpQR** | W | ~4 | a few calibration batches | keep the few most sensitive weights in high precision, quantize the rest hard |
+| **HQQ** | W | 4 / 3 / 2 | nothing | optimise the scale and zero-point with a robust loss; no calibration data |
+| **QuIP#** | W | 2 | a few calibration batches | rotate the weights to make them incoherent, then lattice-quantize |
+| **AQLM** | W | 2 | a training run | additive codebooks over groups, fine-tuned end to end |
+| **NF4 / QLoRA** | W | 4 | nothing | levels at the quantiles of a normal distribution, plus a second quantization of the scales |
+| **GGUF k-quants** | W | 2-8 | nothing | blocks of 16-32 with a super-block scale; the llama.cpp family (Q4_K_M, ...) |
+| **FP8 (e4m3 / e5m2)** | W + A + grad | 8 | nothing | a float grid plus a per-tensor or per-row scale; the hardware path |
+| **MX / NVFP4** | W + A | 4-8 | nothing | block floating point: one shared exponent per 16-32 values |
+| **KV cache quantization** | KV | 8 / 4 | nothing | the cache is the memory, so quantize K and V per head or per token |
+| **QAT (STE, LSQ, PACT)** | W + A | 4 / 3 / 2 | a training run | train through the rounding; LSQ learns the step size, PACT the clipping |
+
+Read the "what it costs" column as a ladder. Everything that costs nothing can be applied to a checkpoint you downloaded five minutes ago. Everything that wants calibration needs a few hundred real sequences - still cheap, still offline, but the result now depends on what you fed it. Only the last rows want a training run, which is why they stay rare outside the labs that trained the model in the first place.
+
+And the notation. **W4A16** means 4-bit weights and 16-bit activations - weight-only, which is the default for serving, because decode reads the weights once per token while the activations are tiny. **W8A8** and FP8 quantize the activations too, which buys tensor-core throughput that weight-only cannot, and matters in prefill where the work is compute-bound rather than bandwidth-bound. With a scale per 128 weights, "W4" really costs 4.12 bits.
+
+The rest of this article measures the ones that fit on a single layer: round-to-nearest at every grouping, MSE clipping, LLM.int8(), SmoothQuant, AWQ, GPTQ and QAT.
+
 ## The outliers are in the activations
 
 | what is quantized | output error |

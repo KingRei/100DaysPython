@@ -1,6 +1,6 @@
 // DAY: 62
-// TITLE_ZH: Mixture of Experts：一個 FFN 變成很多個，而每個 token 只跑其中兩個
-// TITLE_EN: Mixture of Experts: one FFN becomes many, and each token runs only two of them
+// TITLE_ZH: Mixture of Experts：讓模型的參數變多，但每個 token 的成本不變
+// TITLE_EN: Mixture of Experts: growing a model's parameters without growing the cost per token
 // SUB_ZH: Day 53 量過：transformer 三分之二的參數在 FFN，而每個 token 都要付全部。把那一個 FFN 換成 E 份、每個 token 只送去最好的 k 份，參數乘上 E 而每個 token 的算術只乘 k。代價是：router 要自己學會把 token 分散開，而當 experts 住在不同 GPU 上時，每個 token 都得被送過去再送回來。
 // SUB_EN: Day 53 measured it: two thirds of a transformer's parameters sit in the feed-forward block and every token pays for all of them. Replace that one FFN with E copies and send each token to the best k, and the parameters multiply by E while the arithmetic per token multiplies by k. The price: the router has to learn to spread the tokens, and when the experts live on different GPUs every token has to be shipped there and back.
 // FOLDER: day%2062%20-%20moe%20and%20routing
@@ -423,7 +423,7 @@ function deepFrames(){
   return F.list;
 }
 
-/* ================================================================ tabs 7-8: the servers */
+/* ================================================================ tabs 7-9: writing it */
 function mapStage(o){
   const sh = [], rows = o.rows;
   rows.forEach((r, i) => {
@@ -438,72 +438,129 @@ function mapStage(o){
   sh.push(fitT(7.05, 5.08, o.title, {c:COL.tealL, fs:.28}));
   return caps(sh, o);
 }
-const CODE_SGL = [
-  'python -m sglang.launch_server --model deepseek-ai/DeepSeek-V3 \\',
-  '    --tp 8 --ep-size 8 \\             # experts split across the 8 GPUs',
-  '    --enable-deepep-moe \\            # the DeepEP kernels',
-  '    --deepep-mode auto \\             # normal for prefill, low_latency for decode',
-  '    --enable-eplb \\                  # rebalance experts across ranks',
-  '    --ep-num-redundant-experts 32    # replicate the hot ones'
-];
-const SGL_ROWS = [
-  [{zh:'experts 分到幾張卡', en:'experts split across GPUs'}, {zh:'--ep-size', en:'--ep-size'}],
-  [{zh:'兩次 all-to-all', en:'the two all-to-alls'}, {zh:'--enable-deepep-moe', en:'--enable-deepep-moe'}],
-  [{zh:'高吞吐 vs 低延遲 kernel', en:'throughput vs latency kernels'}, {zh:'--deepep-mode normal / low_latency / auto', en:'--deepep-mode normal / low_latency / auto'}],
-  [{zh:'負載不平衡', en:'the load imbalance'}, {zh:'--enable-eplb（搬動 expert）', en:'--enable-eplb: move experts between ranks'}],
-  [{zh:'最忙的那幾個 expert', en:'the hottest experts'}, {zh:'--ep-num-redundant-experts（複製）', en:'--ep-num-redundant-experts: replicate them'}]
-];
-function sglFrames(){
-  const F = new Frames();
-  const p = (o) => F.push({shapes:mapStage(Object.assign({rows:SGL_ROWS, title:'SGLang'}, o)),
-                           panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
-  p({upto:2, line:3,
-    cap:{zh:'SGLang：EP 是伺服器旗標，跟 TP 併用', en:'SGLang: expert parallelism is a server flag, alongside TP'},
-    panels:[{lbl:'--ep-size', chips:[chip('8', 'hot')]},
-            {lbl:'--deepep-mode', chips:[chip('auto', 'act')]}],
-    msg:{zh:'`--ep-size` 決定 experts 切給幾張卡，`--enable-deepep-moe` 把那兩次 all-to-all 換成 DeepEP 的 kernel，而 `--deepep-mode` 就是上一個分頁的兩種 kernel：prefill 用 normal（高吞吐）、decode 用 low_latency，`auto` 則依 batch 自動切。',
-         en:'`--ep-size` decides how many GPUs the experts are split across, `--enable-deepep-moe` swaps the two all-to-alls for DeepEP\'s kernels, and `--deepep-mode` is the previous tab: `normal` (throughput) for prefill, `low_latency` for decode, `auto` to switch per batch.'}});
-  p({upto:4, line:5,
-    cap:{zh:'而平衡在上線之後還要再做一次', en:'and the balancing has to happen again at serving time'},
-    panels:[{lbl:'--enable-eplb', chips:[chip('move experts', 'ok')]},
-            {lbl:'redundant experts', chips:[chip('32', 'act')]}],
-    msg:{zh:'訓練時的平衡 loss 壓平的是**平均**，但真實流量不是平均：某一分鐘的請求可能全都愛同一批 expert。所以 SGLang 會量每個 expert 的實際負載、週期性地**把 expert 在 rank 之間搬動**（EPLB），並且把最熱的那幾個**複製**到多張卡，讓它們的 token 有地方可去。這是第 3、5 個分頁的問題在線上重新出現一次。',
-         en:'A balancing loss flattens the **average**, and real traffic is not the average: one minute of requests can all want the same experts. So SGLang measures the per-expert load and periodically **moves experts between ranks** (EPLB), and replicates the hottest ones so their tokens have more than one place to go. It is the problem from tabs three and five reappearing in production.'}});
-  return F.list;
-}
-const CODE_VLLM = [
-  'vllm serve deepseek-ai/DeepSeek-V3 \\',
-  '    --tensor-parallel-size 8 \\',
-  '    --enable-expert-parallel \\        # EP for the experts instead of TP',
-  '    --data-parallel-size 2            # DP attention, EP experts',
+const CODE_TORCH = [
+  'class MoE(nn.Module):',
+  '    def __init__(self, d_model, d_ff, E, k):',
+  '        self.gate = nn.Linear(d_model, E, bias=False)',
+  '        self.w1 = nn.Parameter(torch.empty(E, d_model, d_ff))   # ONE tensor',
+  '        self.w2 = nn.Parameter(torch.empty(E, d_ff, d_model))',
   '',
-  '# DeepEP or pplx-kernels underneath for the all-to-all when available'
+  '    def forward(self, x):',
+  '        w, idx = self.gate(x).softmax(-1).topk(self.k, -1)',
+  '        order  = idx.reshape(-1).argsort()          # group by expert',
+  '        counts = torch.bincount(idx.reshape(-1), minlength=E)',
+  '        xs = x.repeat_interleave(self.k, 0)[order]',
+  '        ys = grouped_mm(silu(grouped_mm(xs, w1, counts)), w2, counts)',
+  '        out.index_add_(0, token_of[order], ys[order.argsort()] * w)'
 ];
-const VLLM_ROWS = [
-  [{zh:'experts 用 EP 切', en:'shard the experts with EP'}, {zh:'--enable-expert-parallel', en:'--enable-expert-parallel'}],
-  [{zh:'attention 複製', en:'replicate the attention'}, {zh:'--data-parallel-size（DP attention）', en:'--data-parallel-size: DP attention'}],
-  [{zh:'all-to-all kernel', en:'the all-to-all kernels'}, {zh:'DeepEP／pplx-kernels', en:'DeepEP or pplx-kernels'}]
+const TORCH_ROWS = [
+  [{zh:'E 個 expert 的權重', en:'the weights of E experts'},
+   {zh:'一個 (E, d_model, d_ff) 的 Parameter，不是 ModuleList', en:'one (E, d_model, d_ff) Parameter, not a ModuleList'}],
+  [{zh:'把 token 分給 expert', en:'sending tokens to experts'},
+   {zh:'argsort ＋ bincount ＋ grouped matmul', en:'argsort, bincount, grouped matmul'}],
+  [{zh:'把 k 份結果加回去', en:'summing the k results'}, {zh:'index_add_（必須是加不是寫）', en:'index_add_, an add and not a write'}],
+  [{zh:'平衡用的輔助 loss', en:'the balancing loss'}, {zh:'從 forward 回傳，訓練迴圈再加總', en:'returned from forward, summed in the training loop'}],
+  [{zh:'跨 GPU 的 dispatch', en:'the cross-GPU dispatch'}, {zh:'all_to_all_single(…, out_splits, in_splits)', en:'all_to_all_single(..., out_splits, in_splits)'}]
 ];
-function vllmFrames(){
+function torchFrames(){
   const F = new Frames();
-  const p = (o) => F.push({shapes:mapStage(Object.assign({rows:VLLM_ROWS, title:'vLLM'}, o)),
+  const p = (o) => F.push({shapes:mapStage(Object.assign({rows:TORCH_ROWS, title:'PyTorch'}, o)),
                            panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
   p({upto:1, line:3,
-    cap:{zh:'vLLM：同一個地方，不同的旗標', en:'vLLM: the same place, different flags'},
-    panels:[{lbl:'--enable-expert-parallel', chips:[chip('EP', 'hot')]},
-            {lbl:'--data-parallel-size', chips:[chip('2', 'act')]}],
-    msg:{zh:'最後一行是值得記住的組合：**attention 用 data parallel 複製、experts 用 expert parallel 切開**。理由很直接——attention 沒有 expert 可以分，而 MoE 的權重不切根本放不下。兩個伺服器最後都走到這個配置。',
-         en:'The last line is the combination worth knowing: **attention replicated with data parallelism, experts sharded with expert parallelism**. The reason is blunt - attention has no experts to spread, and the MoE weights do not fit otherwise. Both servers end up here.'}});
-  p({upto:2, line:5,
-    cap:{zh:'要盯的數字是平衡，不是平均', en:'what to watch is the balance, not the average'},
-    panels:[{lbl:'watch', chips:[chip('per-rank load', 'bad')]}],
-    msg:{zh:'在哪個伺服器上都一樣：要看的是**每個 rank 的負載分佈**，不是平均吞吐。如果有一張卡長期拿到最熱的 experts，其他卡每層都要等它兩次，而這個洞是任何 kernel 調校都補不回來的。',
-         en:'On either server the thing to watch is the **per-rank load distribution**, not the average throughput. If one rank consistently holds the hottest experts, every other rank waits for it twice per layer, and no amount of kernel tuning recovers that.'}});
+    cap:{zh:'第一個決定：experts 是一個 tensor，不是一個 list',
+         en:'decision one: the experts are one tensor, not a list'},
+    panels:[{lbl:'shape', chips:[chip('(E, d_model, d_ff)', 'hot')]}],
+    msg:{zh:'把 E 個 expert 寫成 `nn.ModuleList` 很自然，但那代表 E 次 kernel launch、E 次權重載入，而且 expert 的編號沒辦法當成索引用。寫成**一個** (E, d_model, d_ff) 的 Parameter 之後，「選 expert」就只是「選一個索引」，後面所有的加速才有可能。',
+         en:'Writing the E experts as an `nn.ModuleList` is the natural thing to do, and it means E kernel launches, E weight loads, and an expert id that cannot be used as an index. Make it **one** (E, d_model, d_ff) Parameter and choosing an expert becomes choosing an index, which is what every later optimisation needs.'}});
+  p({upto:2, line:12,
+    cap:{zh:'第二個決定：用排序，不要用遮罩', en:'decision two: sort, do not mask'},
+    panels:[{lbl:'mask version', chips:[chip('E x the FLOPs', 'bad')]},
+            {lbl:'sort version', chips:[chip('grouped matmul', 'ok')]}],
+    msg:{zh:'最直覺的寫法是乘上一個 one-hot 遮罩，讓每個 expert 都算過每個 token——結果正確，但**算術量變成 E 倍**，MoE 的意義整個消失。實務上是：依 expert id 排序 token、對分組後的不等長區塊做一次 grouped matmul（`torch._grouped_mm`，或 Megatron-LM／vLLM 裡的 Triton kernel），最後再排回去。而「把 k 份結果加回原 token」必須用 `index_add_`——一個 token 出現 k 次，要相加，而且 gate 權重的梯度就從這裡來。',
+         en:'The obvious implementation multiplies by a one-hot mask so every expert runs on every token: correct, and it does **E times the arithmetic**, which throws the whole idea away. Real layers sort the tokens by expert id, run one grouped matmul over the variable-sized groups (`torch._grouped_mm`, or the Triton kernels in Megatron-LM and vLLM), and unsort at the end. Scattering back uses `index_add_`, because a token appears k times and its outputs must be summed - and that add is where the gate weights get their gradient.'}});
+  p({upto:4, line:12,
+    cap:{zh:'而分散式的 dispatch 就是那一行 collective',
+         en:'and the distributed dispatch is that one collective'},
+    panels:[{lbl:'aux loss', chips:[chip('returned from forward', 'act')]},
+            {lbl:'dispatch', chips:[chip('all_to_all_single', 'hot')]}],
+    msg:{zh:'兩個實作上的細節：平衡用的 aux loss 必須從 `forward` 回傳（它需要 `probs` 和路由計數，只有 layer 裡面才有），所以每個 MoE 程式庫都有一個「各層把 aux loss 丟進去、訓練迴圈再加總」的清單。而跨 GPU 的 dispatch 就是 `all_to_all_single(recv, send, out_splits, in_splits)`——**splits 就是排序後每個 rank 的 token 數**，不平衡的 router 會讓這些 splits 歪掉，而所有人都要等。',
+         en:'Two implementation details. The balancing loss has to be returned from `forward`, because it needs `probs` and the routing counts which only exist inside the layer - every MoE codebase has a module-level list that layers append to and the training loop sums. And the cross-GPU dispatch is one line, `all_to_all_single(recv, send, out_splits, in_splits)`, where **the splits are the per-rank token counts from the sort**: an imbalanced router makes them uneven, and everyone waits.'}});
+  return F.list;
+}
+const CODE_JAX = [
+  'def moe(x, wg, w1, w2, k, capacity):',
+  '    probs  = jax.nn.softmax(x @ wg)',
+  '    w, idx = jax.lax.top_k(probs, k)',
+  '    mask = jax.nn.one_hot(idx, E).sum(1)          # (T, E)',
+  '    pos  = jnp.cumsum(mask, 0) * mask - 1         # slot in the buffer',
+  '    disp = mask[..., None] * jax.nn.one_hot(pos, capacity)',
+  '    xe = jnp.einsum("tec,td->ecd", disp, x)       # FIXED (E, cap, d)',
+  '    ye = jnp.einsum("ecf,efd->ecd", silu(jnp.einsum("ecd,edf->ecf", xe, w1)), w2)',
+  '    return jnp.einsum("ecd,tec,te->td", ye, disp, w)',
+  '',
+  'w1 = device_put(w1, NamedSharding(mesh, P("expert", None, None)))  # = EP'
+];
+const JAX_ROWS = [
+  [{zh:'dispatch 與 combine', en:'dispatch and combine'}, {zh:'一串 einsum（沒有排序）', en:'a chain of einsums, no sorting'}],
+  [{zh:'capacity factor', en:'the capacity factor'}, {zh:'buffer 的一個維度，寫在型別裡', en:'a dimension of the buffer, in the type'}],
+  [{zh:'expert parallelism', en:'expert parallelism'}, {zh:'把 w1 的 expert 軸 shard 掉', en:'shard the expert axis of w1'}],
+  [{zh:'all-to-all', en:'the all-to-all'}, {zh:'XLA 自己插進去', en:'inserted by XLA'}]
+];
+function jaxFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:mapStage(Object.assign({rows:JAX_ROWS, title:'JAX'}, o)),
+                           panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({upto:1, line:5,
+    cap:{zh:'JAX 要固定形狀，所以 dispatch 寫成 einsum',
+         en:'JAX wants fixed shapes, so the dispatch is an einsum'},
+    panels:[{lbl:'buffers', chips:[chip('(E, capacity, d)', 'hot')]},
+            {lbl:'sorting', chips:[chip('none', 'dim')]}],
+    msg:{zh:'同一個演算法，程式碼長得完全不一樣。JAX 不喜歡不等長的分組，所以 dispatch 被寫成「one-hot 乘上一個 (T, E, capacity) 的指派矩陣」，整條路上沒有任何排序、沒有任何變動長度——而 **capacity 直接出現成陣列的一個維度**。第 4 個分頁那個 capacity factor 就是這樣來的：buffer 是固定的，滿出來的 token 沒有地方可以去。',
+         en:'Same algorithm, completely different code. JAX does not want variable-sized groups, so the dispatch becomes a one-hot assignment matrix of shape (T, E, capacity): nothing is sorted, nothing is variable length, and **the capacity appears as an array dimension**. That is where the capacity factor of tab four comes from - with fixed buffers, the overflow has nowhere to go.'}});
+  p({upto:3, line:10,
+    cap:{zh:'而平行化是一個標註，不是一次呼叫', en:'and the parallelism is an annotation, not a call'},
+    panels:[{lbl:'sharding', chips:[chip('P("expert", None, None)', 'ok')]},
+            {lbl:'collective', chips:[chip('emitted by XLA', 'act')]}],
+    msg:{zh:'把 `w1` 的 expert 軸 shard 到 mesh 的 "expert" 維度上——**這就是 expert parallelism 的全部**。einsum 需要住在別的裝置上的資料，所以 XLA 自己插入 all-to-all，沒有人手寫那個 collective。這也是兩邊真正的差別：PyTorch 是你呼叫 `all_to_all_single` 並且自己管 splits，JAX 是你標註軸、編譯器產生通訊。代價也很對稱：排序版本只算真正被路由到的 token，但需要自訂 kernel 才會快；one-hot 版本是純 dense einsum、任何編譯器都能融合，但 buffer 裡每個空位都要算。',
+         en:'Shard the expert axis of `w1` onto the mesh\'s "expert" dimension and **that is expert parallelism, in full**. The einsum needs data living on another device, so XLA inserts the all-to-all; nobody writes the collective. That is the real difference between the ecosystems: in PyTorch you call `all_to_all_single` and own the splits, in JAX you annotate the axis and the compiler emits the communication. The trade is symmetric too: the sort version only does arithmetic for tokens actually routed but needs custom kernels to be fast, while the one-hot version is pure dense einsum that any compiler fuses and pays for every empty slot.'}});
+  return F.list;
+}
+const CODE_SERVE = [
+  '# SGLang',
+  'python -m sglang.launch_server --model deepseek-ai/DeepSeek-V3 \\',
+  '    --tp 8 --ep-size 8 --enable-deepep-moe --deepep-mode auto \\',
+  '    --enable-eplb --ep-num-redundant-experts 32',
+  '',
+  '# vLLM',
+  'vllm serve deepseek-ai/DeepSeek-V3 --tensor-parallel-size 8 \\',
+  '    --enable-expert-parallel --data-parallel-size 2'
+];
+const SERVE_ROWS = [
+  [{zh:'experts 住在哪幾張卡', en:'where the experts live'}, {zh:'--ep-size ／ --enable-expert-parallel', en:'--ep-size / --enable-expert-parallel'}],
+  [{zh:'誰來搬那兩次 all-to-all', en:'what carries the two all-to-alls'}, {zh:'--enable-deepep-moe ／ DeepEP・pplx', en:'--enable-deepep-moe / DeepEP, pplx'}],
+  [{zh:'線上的負載不平衡', en:'imbalance in production'}, {zh:'--enable-eplb ＋ 冗餘 expert', en:'--enable-eplb and redundant experts'}]
+];
+function serveFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:mapStage(Object.assign({rows:SERVE_ROWS, title:'SGLang / vLLM'}, o)),
+                           panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({upto:1, line:2,
+    cap:{zh:'上線之後只剩兩個決定', en:'in production there are only two decisions'},
+    panels:[{lbl:'SGLang', chips:[chip('--ep-size 8', 'hot')]},
+            {lbl:'vLLM', chips:[chip('--enable-expert-parallel', 'act')]}],
+    msg:{zh:'兩個伺服器開出來的是同樣兩個旋鈕：experts 切給誰（`--ep-size` / `--enable-expert-parallel`），以及那兩次 all-to-all 由誰來搬（DeepEP 的 normal／low_latency，或 pplx-kernels）。而且兩邊最後都跑成「attention 用 data parallel、experts 用 expert parallel」。',
+         en:'Both servers expose the same two decisions: where the experts live (`--ep-size`, `--enable-expert-parallel`) and what carries the two all-to-alls (DeepEP in normal or low_latency mode, or pplx-kernels). And both end up running data-parallel attention next to expert-parallel experts.'}});
+  p({upto:2, line:4,
+    cap:{zh:'再加上一個訓練時做不到的東西', en:'plus one thing training cannot do'},
+    panels:[{lbl:'--enable-eplb', chips:[chip('move experts', 'ok')]},
+            {lbl:'redundant', chips:[chip('32', 'dim')]}],
+    msg:{zh:'訓練時的平衡 loss 壓平的是**平均**；真實流量某一分鐘就是會全部擠向同一批 expert。所以伺服器會量每個 expert 的線上負載、把 expert 在 rank 之間搬動（EPLB），並把最熱的幾個複製出去。第 3 個分頁的問題，在線上用維運的方式再解一次。',
+         en:'A balancing loss flattens the **average**; real traffic in any given minute piles onto the same few experts. So the server measures the live per-expert load, moves experts between ranks (EPLB) and replicates the hottest ones. The problem from tab three, solved a second time by operations.'}});
   return F.list;
 }
 
 const DAY_META = {
-  title: {zh:'Mixture of Experts 與路由', en:'Mixture of Experts and routing'},
+  title: {zh:'Mixture of Experts：參數變多，每個 token 的成本不變', en:'Mixture of Experts: more parameters, the same cost per token'},
   sub: {zh:'一個 FFN 變成很多個、每個 token 只跑兩個，以及這件事在 GPU 之間造成的全部後果',
         en:'one FFN becomes many, each token runs two of them, and everything that follows once they live on different GPUs'},
   tabs: [
@@ -550,21 +607,29 @@ const DAY_META = {
            en:'One dispatch of ' + DP.tokens + ' tokens at top-' + DP.k + ' is ' + DP.mb_bf16.toFixed(0) + ' MB; an FP8 dispatch halves it to ' + DP.mb_fp8.toFixed(0) + ' MB while the combine stays bf16, because it sums k expert outputs. The high-throughput kernels forward over NVLink and send once per destination node (prefill and training); the low-latency kernels use pure RDMA with no hop and expose a hook so the receive is not a barrier, letting **attention run while the tokens are still in flight**.'},
      legend:[['#ff5c5c', {zh:'bf16 dispatch', en:'bf16 dispatch'}],
              ['#12b3b8', {zh:'fp8 dispatch', en:'fp8 dispatch'}]]},
-    {id:'sglang', label:{zh:'在 SGLang 裡', en:'in SGLang'},
-     stage:{zh:'EP、DeepEP 模式、EPLB', en:'EP, the DeepEP modes, and EPLB'},
-     view:VIEW, code:CODE_SGL, build:sglFrames,
-     idea:{zh:'`--ep-size` 切 experts、`--enable-deepep-moe` 換 kernel、`--deepep-mode` 選高吞吐或低延遲。而 `--enable-eplb` 與 `--ep-num-redundant-experts` 是在處理訓練時的平衡 loss 處理不了的事：真實流量某一分鐘就是會偏心，所以要能**把 expert 在 rank 之間搬動、並複製最熱的那幾個**。',
-           en:'`--ep-size` splits the experts, `--enable-deepep-moe` swaps in the kernels, `--deepep-mode` picks throughput or latency. `--enable-eplb` and `--ep-num-redundant-experts` handle what a training-time balancing loss cannot: real traffic is skewed minute to minute, so experts have to be **moved between ranks and the hottest ones replicated**.'},
+    {id:'torch', label:{zh:'在 PyTorch 裡怎麼寫', en:'writing it in PyTorch'},
+     stage:{zh:'一個 tensor、一次排序、一個 index_add_', en:'one tensor, one sort, one index_add_'},
+     view:VIEW, code:CODE_TORCH, build:torchFrames,
+     idea:{zh:'四個設計決定：(1) E 個 expert 是**一個** (E, d_model, d_ff) 的 Parameter 不是 ModuleList；(2) **用排序＋grouped matmul，不要用 one-hot 遮罩**（遮罩版本會做 E 倍的算術）；(3) 回填用 `index_add_`，因為一個 token 有 k 份輸出要相加、gate 的梯度也從這裡來；(4) aux loss 從 forward 回傳。跨 GPU 就是 `all_to_all_single`，而 splits 就是排序後每個 rank 的 token 數。',
+           en:'Four design decisions: (1) the E experts are **one** (E, d_model, d_ff) Parameter, not a ModuleList; (2) **sort and use a grouped matmul rather than a one-hot mask**, which would do E times the arithmetic; (3) scatter back with `index_add_`, because a token has k outputs to sum and the gate\'s gradient comes from that add; (4) the aux loss is returned from forward. Across GPUs it is `all_to_all_single`, and the splits are the per-rank token counts from the sort.'},
      legend:[['#ff9736', {zh:'目前這一列', en:'the row being shown'}],
-             ['#12b3b8', {zh:'SGLang 裡的名字', en:'what SGLang calls it'}],
-             ['#8fa3ac', {zh:'這個檔案裡的名字', en:'what this file calls it'}]]},
-    {id:'vllm', label:{zh:'在 vLLM 裡', en:'in vLLM'},
-     stage:{zh:'DP attention ＋ EP experts', en:'DP attention with EP experts'},
-     view:VIEW, code:CODE_VLLM, build:vllmFrames,
-     idea:{zh:'`--enable-expert-parallel` 把 experts 改成 EP，底下有 DeepEP／pplx-kernels。值得記的組合是 **attention 用 data parallel 複製、experts 用 expert parallel 切**：attention 沒有 expert 可分，而 MoE 權重不切放不下。要盯的數字是每個 rank 的負載分佈，不是平均吞吐。',
-           en:'`--enable-expert-parallel` switches the experts to EP, with DeepEP or pplx-kernels underneath. The combination to remember is **attention replicated with data parallelism while the experts are sharded with expert parallelism**: attention has no experts to spread and the MoE weights do not fit otherwise. The number to watch is the per-rank load, not average throughput.'},
+             ['#12b3b8', {zh:'PyTorch 的寫法', en:'how PyTorch writes it'}],
+             ['#8fa3ac', {zh:'這個檔案裡的東西', en:'what this file calls it'}]]},
+    {id:'jax', label:{zh:'在 JAX 裡怎麼寫', en:'writing it in JAX'},
+     stage:{zh:'einsum 取代排序，標註取代 collective', en:'einsum instead of sorting, annotation instead of a collective'},
+     view:VIEW, code:CODE_JAX, build:jaxFrames,
+     idea:{zh:'JAX 版本沒有排序也沒有變動長度：dispatch 是 one-hot 乘上 (T, E, capacity) 的指派矩陣，**capacity 直接是陣列的一個維度**（capacity factor 就是這樣來的）。而 expert parallelism 只是把 w1 的 expert 軸 shard 掉，all-to-all 由 XLA 自己插入。代價：排序版只算真正路由到的 token 但需要自訂 kernel，one-hot 版是純 dense einsum 但要為每個空位付錢。',
+           en:'The JAX version has no sorting and no variable lengths: the dispatch is a one-hot assignment matrix of shape (T, E, capacity), so **the capacity is literally an array dimension** - which is where the capacity factor came from. Expert parallelism is just sharding the expert axis of w1, and XLA inserts the all-to-all itself. The trade: the sort version only computes routed tokens but needs custom kernels, the one-hot version is dense einsum that any compiler fuses but pays for every empty slot.'},
      legend:[['#ff9736', {zh:'目前這一列', en:'the row being shown'}],
-             ['#12b3b8', {zh:'vLLM 裡的名字', en:'what vLLM calls it'}],
-             ['#8fa3ac', {zh:'這個檔案裡的名字', en:'what this file calls it'}]]}
+             ['#12b3b8', {zh:'JAX 的寫法', en:'how JAX writes it'}],
+             ['#8fa3ac', {zh:'這個檔案裡的東西', en:'what this file calls it'}]]},
+    {id:'serve', label:{zh:'上線時', en:'in the serving stacks'},
+     stage:{zh:'兩個旗標，加一個 EPLB', en:'two flags, plus EPLB'},
+     view:VIEW, code:CODE_SERVE, build:serveFrames,
+     idea:{zh:'SGLang `--ep-size`／`--enable-deepep-moe`／`--deepep-mode`，vLLM `--enable-expert-parallel`＋`--data-parallel-size`：兩邊最後都是「DP attention ＋ EP experts」。另外 `--enable-eplb` 與冗餘 expert 處理的是訓練時平衡 loss 碰不到的事——真實流量不是平均。',
+           en:'SGLang offers `--ep-size`, `--enable-deepep-moe` and `--deepep-mode`; vLLM `--enable-expert-parallel` with `--data-parallel-size`. Both end up at data-parallel attention beside expert-parallel experts. And `--enable-eplb` with redundant experts handles what a training-time balancing loss cannot: real traffic is not the average.'},
+     legend:[['#ff9736', {zh:'目前這一列', en:'the row being shown'}],
+             ['#12b3b8', {zh:'伺服器的旗標', en:'the server flag'}],
+             ['#8fa3ac', {zh:'這個檔案裡的東西', en:'what this file calls it'}]]}
   ]
 };

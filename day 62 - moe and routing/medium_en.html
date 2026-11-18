@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Mixture of Experts: one feed-forward block becomes many, and each token runs two of them</title>
+<title>Mixture of Experts: growing a model&#x27;s parameters without growing the cost per token</title>
 <style>
 body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
          font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
@@ -26,7 +26,7 @@ li     { margin: .3em 0; }
 </style>
 </head>
 <body>
-<h1>Mixture of Experts: one feed-forward block becomes many, and each token runs two of them</h1>
+<h1>Mixture of Experts: growing a model&#x27;s parameters without growing the cost per token</h1>
 <p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2062%20-%20moe%20and%20routing">day 62 on GitHub</a></p>
 <p><em>100 Days of Python - day 62</em></p>
 <p>Day 53 measured something that turns out to be the whole starting point: two thirds of a transformer&#x27;s parameters sit in the feed-forward block, and every token pays for all of them. Every token, every weight, whether or not that weight has anything to say about this particular token.</p>
@@ -89,22 +89,64 @@ balanced router:            1022 / 1001 / 1032 / 1041
 <p><strong>Two kernel sets, for the two phases.</strong> The high-throughput kernels forward a token over NVLink to the destination node and then send it <strong>once per destination node</strong> over RDMA, which minimises bytes on the slow link - the right trade for prefill and training. The low-latency kernels do the opposite: pure RDMA, no forwarding hop, because in decode that hop costs more than the bandwidth it saves.</p>
 <p><strong>FP8 dispatch.</strong> The previous day applied to a network cable: send the tokens in FP8 and 470 MB becomes 235 MB, 8.59 ms becomes 4.29 ms in this model. The combine stays in bf16, because it sums k expert outputs and FP8 loses too much there. The asymmetry between the two directions is deliberate.</p>
 <p><strong>Overlap.</strong> The low-latency kernels expose a hook so the receive is not a barrier: attention can run while the MoE tokens are still in flight, and no SM cycles are burned spinning on the network. Without that, two all-to-alls per layer would not be survivable.</p>
-<h2>In SGLang</h2>
-<pre><code>python -m sglang.launch_server --model deepseek-ai/DeepSeek-V3 \
-    --tp 8 --ep-size 8 \             # experts split across the 8 GPUs
-    --enable-deepep-moe \            # the DeepEP kernels
-    --deepep-mode auto \             # normal for prefill, low_latency for decode
-    --enable-eplb \                  # rebalance experts across ranks
-    --ep-num-redundant-experts 32    # replicate the hot ones</code></pre>
-<p>The first three lines are the article so far. The last two are the part that surprised me most when I first saw it.</p>
-<p>A training-time balancing loss flattens the <strong>average</strong>. Real traffic is not the average: one minute of requests can all want the same few experts, because they are all about the same topic. So the server measures the per-expert load and periodically <strong>moves experts between ranks</strong> (that is EPLB, expert-parallel load balancing), and <strong>replicates the hottest ones</strong> across several ranks so their tokens have more than one place to go. The collapse problem from training comes back as an operational problem, and gets an operational answer.</p>
-<h2>In vLLM</h2>
-<pre><code>vllm serve deepseek-ai/DeepSeek-V3 \
-    --tensor-parallel-size 8 \
-    --enable-expert-parallel \        # EP for the experts instead of TP
-    --data-parallel-size 2            # DP attention, EP experts</code></pre>
-<p>vLLM reaches the same place with <code>--enable-expert-parallel</code>, using DeepEP or pplx-kernels underneath for the all-to-all. The combination worth remembering is the last line: <strong>attention replicated with data parallelism while the experts are sharded with expert parallelism</strong>. The reason is blunt - attention has no experts to spread, and the MoE weights do not fit otherwise. Both servers end up at that configuration.</p>
-<p>On either one, the number to watch is not average throughput. It is the per-rank load distribution: if one rank consistently holds the busiest experts, every other rank waits for it twice per layer, and no amount of kernel tuning recovers that.</p>
+<h2>Writing the layer in PyTorch</h2>
+<p>The whole thing is about fifty lines, and the interesting part is that the loop over experts is what you are trying to avoid.</p>
+<pre><code>class MoE(nn.Module):
+    def __init__(self, d_model, d_ff, n_experts, k):
+        self.gate = nn.Linear(d_model, n_experts, bias=False)
+        # all the experts as ONE parameter, not a ModuleList:
+        self.w1 = nn.Parameter(torch.empty(n_experts, d_model, d_ff))
+        self.w2 = nn.Parameter(torch.empty(n_experts, d_ff, d_model))
+        self.k = k
+
+    def forward(self, x):                       # x: (tokens, d_model)
+        probs  = self.gate(x).softmax(-1)
+        w, idx = probs.topk(self.k, dim=-1)     # (tokens, k)
+        w = w / w.sum(-1, keepdim=True)
+
+        flat   = idx.reshape(-1)                # k entries per token
+        order  = flat.argsort()                 # group by expert
+        counts = torch.bincount(flat, minlength=self.w1.shape[0])
+        xs = x.repeat_interleave(self.k, 0)[order]
+
+        h  = F.silu(torch._grouped_mm(xs, self.w1, counts))
+        ys = torch._grouped_mm(h, self.w2, counts)
+
+        out = torch.zeros_like(x)
+        token_of = torch.arange(len(x)).repeat_interleave(self.k)
+        out.index_add_(0, token_of[order], ys * w.reshape(-1, 1)[order])
+        return out</code></pre>
+<p>Four design decisions are hiding in there, and they are the same four in every real implementation.</p>
+<p><strong>The experts are one tensor, not a list.</strong> <code>nn.ModuleList([nn.Linear(...) for _ in range(E)])</code> is the obvious way to write it, and it means E separate kernel launches, E separate weight loads, and an expert id that cannot be used as an index. One <code>(E, d_model, d_ff)</code> parameter makes &quot;choose an expert&quot; into &quot;choose an index&quot;, which is what the next three decisions need.</p>
+<p><strong>Sort, do not mask.</strong> The straightforward implementation multiplies by a one-hot mask and runs every expert on every token. It is correct and it throws away the entire point, because it does E times the arithmetic. Real layers sort the tokens by expert id, run one grouped matmul over the resulting variable-sized groups (<code>torch._grouped_mm</code>, or the Triton kernels in Megatron-LM and vLLM), and unsort at the end.</p>
+<p><strong>Scatter back with <code>index_add_</code>.</strong> A token appears k times and its k expert outputs have to be summed, so this has to be an add and not a write - and that add is also where the gradient for the gate weights comes from.</p>
+<p><strong>The balancing loss is returned from <code>forward</code>.</strong> It needs <code>probs</code> and the routing counts, which only exist inside the layer. Every MoE codebase ends up with a module-level list that layers append their auxiliary losses to and the training loop sums.</p>
+<p>For the distributed version, the dispatch is one collective:</p>
+<pre><code>torch.distributed.all_to_all_single(recv, send, out_splits, in_splits)</code></pre>
+<p>where the splits are the per-rank token counts from the sort. That line is where an imbalanced router turns into wall-clock time, because the splits are uneven and everyone waits for the largest.</p>
+<h2>Writing the layer in JAX</h2>
+<p>Same algorithm, and the code looks nothing like it, because JAX wants a fixed shape and a sharding rule rather than a gather.</p>
+<pre><code>def moe(x, wg, w1, w2, k, capacity):
+    probs  = jax.nn.softmax(x @ wg)                   # (T, E)
+    w, idx = jax.lax.top_k(probs, k)
+    mask = jax.nn.one_hot(idx, n_experts).sum(1)      # (T, E)
+    pos  = jnp.cumsum(mask, axis=0) * mask - 1        # slot inside the buffer
+    disp = mask[..., None] * jax.nn.one_hot(pos, capacity)   # (T, E, cap)
+
+    xe = jnp.einsum(&quot;tec,td-&gt;ecd&quot;, disp, x)           # FIXED (E, cap, d)
+    he = jax.nn.silu(jnp.einsum(&quot;ecd,edf-&gt;ecf&quot;, xe, w1))
+    ye = jnp.einsum(&quot;ecf,efd-&gt;ecd&quot;, he, w2)
+    return jnp.einsum(&quot;ecd,tec,te-&gt;td&quot;, ye, disp, w)</code></pre>
+<p>The einsum chain <em>is</em> the dispatch and the combine. Nothing is sorted, nothing is variable length, and <strong>the capacity appears explicitly as an array dimension</strong> - which is exactly why the capacity factor exists at all: with fixed buffers, the overflow has nowhere to go.</p>
+<p>And the parallelism is an annotation rather than a call:</p>
+<pre><code>mesh = Mesh(devices, (&quot;data&quot;, &quot;expert&quot;))
+w1   = jax.device_put(w1, NamedSharding(mesh, P(&quot;expert&quot;, None, None)))
+moe  = shard_map(moe, mesh, in_specs=..., out_specs=...)</code></pre>
+<p>Sharding the expert axis of <code>w1</code> <strong>is</strong> expert parallelism. The einsum needs data that lives on another device, so XLA inserts the all-to-all; nobody writes the collective. That is the real difference between the two ecosystems: in PyTorch you call <code>all_to_all_single</code> and own the splits, in JAX you annotate the axis and the compiler emits the communication.</p>
+<p>The trade is the one you would expect. The gather-and-sort version does arithmetic proportional to the tokens actually routed and needs custom kernels to be fast; the one-hot version is pure dense einsum that any compiler can fuse, and pays for every empty slot in the buffers.</p>
+<h2>In the serving stacks, briefly</h2>
+<p>Both servers expose the same two decisions. Where the experts live - SGLang <code>--ep-size 8</code>, vLLM <code>--enable-expert-parallel</code> - and what carries the all-to-all: SGLang <code>--enable-deepep-moe</code> with <code>--deepep-mode normal|low_latency|auto</code>, vLLM picking DeepEP or pplx-kernels underneath. Both end up running data-parallel attention next to expert-parallel experts, because attention has no experts to spread and the MoE weights do not fit otherwise.</p>
+<p>The flag worth knowing beyond that is SGLang&#x27;s <code>--enable-eplb</code> with <code>--ep-num-redundant-experts</code>. A balancing loss flattens the <strong>average</strong>, and real traffic is not the average: one minute of requests can all want the same few experts. So the server measures the live per-expert load, <strong>moves experts between ranks</strong>, and <strong>replicates the hottest ones</strong>. The collapse problem from training, reappearing as an operations problem with an operations answer.</p>
 <h2>Where this comes back</h2>
 <p>The routing decision is a discrete choice trained by gradient descent, which is the same difficulty that shows up in reinforcement learning and in every attempt to learn an architecture rather than a weight. And the load-balancing story - flatten the average at training time, then rebalance for real traffic at serving time - is a pattern worth recognising, because the same split between what you can bake in and what you must measure online turns up in caching, in scheduling, and in anything else where the workload is not stationary.</p>
 <p>Code, notebook and an interactive walkthrough: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2062%20-%20moe%20and%20routing">day 62 on GitHub</a>.</p>

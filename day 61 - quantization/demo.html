@@ -241,6 +241,8 @@ const OUT = {"nOut": 6, "d": 512, "ratio": 102};
 const SPEC = [{"name": "fp32", "bits": 32, "e": 8, "m": 23, "bias": 127, "max": 3.4028234663852886e+38, "minNormal": 1.1754943508222875e-38, "eps": 1.1920928955078125e-07, "digits": 6.9, "range": 2.4283359705420498e+83, "use": "the default everywhere", "kind": "float"}, {"name": "tf32", "bits": 19, "e": 8, "m": 10, "bias": 127, "max": 3.4011621342146535e+38, "minNormal": 1.1754943508222875e-38, "eps": 0.0009765625, "digits": 3.0, "range": 2.962830083359828e+79, "use": "NVIDIA tensor cores: fp32 range, fp16 precision", "kind": "float"}, {"name": "bf16", "bits": 16, "e": 8, "m": 7, "bias": 127, "max": 3.3895313892515355e+38, "minNormal": 1.1754943508222875e-38, "eps": 0.0078125, "digits": 2.1, "range": 3.6908728444394537e+78, "use": "training: fp32 range, half the bytes", "kind": "float"}, {"name": "fp16", "bits": 16, "e": 5, "m": 10, "bias": 15, "max": 65504.0, "minNormal": 6.103515625e-05, "eps": 0.0009765625, "digits": 3.0, "range": 1098974756864.0, "use": "older training, needs loss scaling", "kind": "float"}, {"name": "fp8 e4m3fn", "bits": 8, "e": 4, "m": 3, "bias": 7, "max": 448.0, "minNormal": 0.015625, "eps": 0.125, "digits": 0.9, "range": 229376.0, "use": "FP8 forward pass: weights and activations", "kind": "float"}, {"name": "fp8 e5m2", "bits": 8, "e": 5, "m": 2, "bias": 15, "max": 57344.0, "minNormal": 6.103515625e-05, "eps": 0.25, "digits": 0.6, "range": 3758096384.0, "use": "FP8 gradients: more range, less precision", "kind": "float"}, {"name": "fp6 e3m2", "bits": 6, "e": 3, "m": 2, "bias": 3, "max": 28.0, "minNormal": 0.25, "eps": 0.25, "digits": 0.6, "range": 448.0, "use": "MX block element, more range", "kind": "float"}, {"name": "fp6 e2m3", "bits": 6, "e": 2, "m": 3, "bias": 1, "max": 7.5, "minNormal": 1.0, "eps": 0.125, "digits": 0.9, "range": 60.0, "use": "MX block element, more precision", "kind": "float"}, {"name": "fp4 e2m1", "bits": 4, "e": 2, "m": 1, "bias": 1, "max": 6.0, "minNormal": 1.0, "eps": 0.5, "digits": 0.3, "range": 12.0, "use": "MXFP4 / NVFP4 element", "kind": "float"}, {"name": "int8", "bits": 8, "e": 0, "m": 7, "bias": null, "max": 127.0, "minNormal": 1.0, "eps": 0.007874015748031496, "digits": 2.1, "range": 127.0, "use": "a uniform grid: the scale carries the magnitude", "kind": "int"}, {"name": "int4", "bits": 4, "e": 0, "m": 3, "bias": null, "max": 7.0, "minNormal": 1.0, "eps": 0.14285714285714285, "digits": 0.8, "range": 7.0, "use": "a uniform grid: the scale carries the magnitude", "kind": "int"}];
 const BITS = {"x": 0.15625, "sign": "0", "exp": "01111100", "man": "01000000000000000000000", "stored": 124, "bias": 127, "unbiased": -3, "mantissa": 1.25};
 const MX = [{"name": "MXFP8 e4m3", "el": 8, "block": 32, "bpv": 8.25, "maxEl": 448.0}, {"name": "MXFP6 e3m2", "el": 6, "block": 32, "bpv": 6.25, "maxEl": 28.0}, {"name": "MXFP4 e2m1", "el": 4, "block": 32, "bpv": 4.25, "maxEl": 6.0}];
+const METH = [{"name": "round to nearest (RTN)", "what": "W", "bits": "8 / 4", "cost": "free", "idea": "absmax scale per tensor, row or group; the baseline everything is compared to"}, {"name": "MSE / percentile clipping", "what": "W, A", "bits": "8 / 4", "cost": "calibration", "idea": "search the clipping threshold that minimises squared error instead of using max"}, {"name": "LLM.int8()", "what": "W + A", "bits": "8 (+16)", "cost": "free", "idea": "split the matmul: outlier columns stay in 16-bit, the rest go to int8"}, {"name": "ZeroQuant / per-token dynamic", "what": "W + A", "bits": "8", "cost": "free", "idea": "per-token activation scales computed at run time, per-column weight scales"}, {"name": "SmoothQuant", "what": "W + A", "bits": "8", "cost": "calibration", "idea": "migrate range from activations into weights: X W = (X/s)(W s)"}, {"name": "AWQ", "what": "W", "bits": "4", "cost": "calibration", "idea": "scale up the channels the activations actually use before rounding"}, {"name": "GPTQ (from OBQ / OBS)", "what": "W", "bits": "4 / 3", "cost": "calibration", "idea": "round column by column and push the error into the rest using H = X^T X"}, {"name": "SqueezeLLM", "what": "W", "bits": "4 / 3", "cost": "calibration", "idea": "sensitivity-weighted k-means codebook plus a sparse outlier set"}, {"name": "SpQR", "what": "W", "bits": "~4", "cost": "calibration", "idea": "keep the few most sensitive weights in high precision, quantize the rest hard"}, {"name": "HQQ", "what": "W", "bits": "4 / 3 / 2", "cost": "free", "idea": "optimise the scale and zero-point with a robust loss; no calibration data"}, {"name": "QuIP#", "what": "W", "bits": "2", "cost": "calibration", "idea": "rotate the weights to make them incoherent, then lattice-quantize"}, {"name": "AQLM", "what": "W", "bits": "2", "cost": "training", "idea": "additive codebooks over groups, fine-tuned end to end"}, {"name": "NF4 / QLoRA", "what": "W", "bits": "4", "cost": "free", "idea": "levels at the quantiles of a normal distribution, plus a second quantization of the scales"}, {"name": "GGUF k-quants", "what": "W", "bits": "2-8", "cost": "free", "idea": "blocks of 16-32 with a super-block scale; the llama.cpp family (Q4_K_M, ...)"}, {"name": "FP8 (e4m3 / e5m2)", "what": "W + A + grad", "bits": "8", "cost": "free", "idea": "a float grid plus a per-tensor or per-row scale; the hardware path"}, {"name": "MX / NVFP4", "what": "W + A", "bits": "4-8", "cost": "free", "idea": "block floating point: one shared exponent per 16-32 values"}, {"name": "KV cache quantization", "what": "KV", "bits": "8 / 4", "cost": "free", "idea": "the cache is the memory, so quantize K and V per head or per token"}, {"name": "QAT (STE, LSQ, PACT)", "what": "W + A", "bits": "4 / 3 / 2", "cost": "training", "idea": "train through the rounding; LSQ learns the step size, PACT the clipping"}];
+const NOTE = {"name": "W4A16", "bpw": 4.125, "group": 128};
 
 function barRows(sh, rows, y0, dy, x0, wmax, val, lab, right, sty){
   rows.forEach((r, i) => {
@@ -799,6 +801,60 @@ function specFrames(){
   return F.list;
 }
 
+/* ================================================================ tab: the methods */
+const CODE_METH = [
+  '# three questions separate every method:',
+  '#   1. what gets quantized      - weights, activations, gradients, the KV cache',
+  '#   2. how the scale is set     - absmax, MSE search, migrated, learned',
+  '#   3. is the rounding improved - round-to-nearest, error feedback, trained',
+  '',
+  '# and what it costs to apply:',
+  '#   free        : run it on the checkpoint',
+  '#   calibration : a few hundred real sequences, offline',
+  '#   training    : a training run'
+];
+function methStage(o){
+  const sh = [];
+  const groups = ['free', 'calibration', 'training'];
+  const rows = METH.filter(function(r){ return groups.indexOf(r.cost) <= o.upto; });
+  const show = rows.slice(0, 11);
+  show.forEach(function(r, i){
+    const y = 4.80 - i * .42;
+    const st = r.cost === 'free' ? 'ok' : (r.cost === 'calibration' ? 'act' : 'hot');
+    sh.push(box(.70, y, 3.30, .34, st, r.name, .22));
+    sh.push(fitT(4.20, y + .17, r.what, {anchor:'start', c:COL.grey, fs:.22}));
+    sh.push(fitT(6.00, y + .17, r.bits, {anchor:'start', c:COL.pale, fs:.22}));
+    sh.push(fitT(9.30, y + .17, r.cost,
+                 {anchor:'end', c:st === 'ok' ? COL.tealL : (st === 'act' ? '#c7a6ff' : COL.red), fs:.22}));
+  });
+  if (rows.length > show.length)
+    sh.push(fitT(4.9, .62, {zh:'…還有 ' + (rows.length - show.length) + ' 個，完整表在 README 與文章裡',
+                            en:'... and ' + (rows.length - show.length) + ' more; the full table is in the README'},
+                 {c:COL.grey, fs:.24}));
+  return caps(sh, o);
+}
+function methFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:methStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({upto:0, line:6,
+    cap:{zh:'不用任何資料就能套的', en:'the ones that need no data at all'},
+    panels:[{lbl:'cost', chips:[chip('free', 'ok')]}],
+    msg:{zh:'第一層階梯：這些方法對著 checkpoint 直接跑就好。RTN、LLM.int8()、HQQ、NF4／QLoRA、GGUF 的 k-quants、FP8、MX／NVFP4、KV cache 量化都在這一層——它們之間的差別是「scale 怎麼挑」和「格點長什麼樣」，不是需不需要資料。',
+         en:'The first rung: these run on the checkpoint and nothing else. RTN, LLM.int8(), HQQ, NF4/QLoRA, the GGUF k-quants, FP8, MX/NVFP4 and KV-cache quantization all live here. What separates them is how the scale is chosen and what the grid looks like, not whether they need data.'}});
+  p({upto:1, line:7,
+    cap:{zh:'需要幾個校準 batch 的', en:'the ones that want a few calibration batches'},
+    panels:[{lbl:'cost', chips:[chip('calibration', 'act')]}],
+    msg:{zh:'第二層：SmoothQuant、AWQ、GPTQ、SqueezeLLM、SpQR、QuIP# 都需要看過「這個模型實際會吃到什麼」。幾百條真實序列、離線跑一次，很便宜——但從此結果取決於你餵了什麼進去，這是實務上最大的差別。',
+         en:'The second rung: SmoothQuant, AWQ, GPTQ, SqueezeLLM, SpQR and QuIP# all need to see what the model is actually used on. A few hundred real sequences, run once, offline - cheap, but from here the result depends on what you fed it, which is the real practical difference.'}});
+  p({upto:2, line:8,
+    cap:{zh:'需要一次訓練的', en:'the ones that want a training run'},
+    panels:[{lbl:'cost', chips:[chip('training', 'bad')]},
+            {lbl:'W4', chips:[chip(NOTE.bpw.toFixed(2) + ' bits', 'dim')]}],
+    msg:{zh:'第三層只有 QAT 與 AQLM 這類：它們能到最低的位元數，但需要一次訓練，所以在「不是自己訓練這個模型」的團隊裡很少見。順帶記號：**' + NOTE.name + ' ＝ 4-bit 權重、16-bit 活化**（weight-only，部署預設），而每 ' + NOTE.group + ' 個權重一個 scale 時 W4 實際是 ' + NOTE.bpw.toFixed(2) + ' bit。W8A8／FP8 連活化一起量化，換到的是 weight-only 拿不到的 tensor core 吞吐量，在 prefill 才有意義。',
+         en:'The third rung is QAT and codebook methods like AQLM: they reach the lowest bit widths and they need a training run, which is why they stay rare outside the labs that trained the model. The notation while we are here: **' + NOTE.name + ' is 4-bit weights with 16-bit activations** - weight-only, the serving default - and with a scale per ' + NOTE.group + ' weights W4 really costs ' + NOTE.bpw.toFixed(2) + ' bits. W8A8 and FP8 quantize activations too, buying tensor-core throughput that weight-only cannot, which matters in compute-bound prefill.'}});
+  return F.list;
+}
+
 const DAY_META = {
   title: {zh:'量化：更少的位元，和四捨五入的代價', en:'Quantization: fewer bits, and what the rounding costs'},
   sub: {zh:'哪些數字共用一個 scale、離群值放哪裡、以及要讓權重誤差最小還是輸出誤差最小',
@@ -841,6 +897,14 @@ const DAY_META = {
      legend:[['#12b3b8', {zh:'int8', en:'int8'}],
              ['#9d6bff', {zh:'fp8 e4m3', en:'fp8 e4m3'}],
              ['#ff9736', {zh:'fp8 e5m2', en:'fp8 e5m2'}]]},
+    {id:'methods', label:{zh:'所有方法一覽', en:'every method on one page'},
+     stage:{zh:'量化什麼、scale 怎麼挑、四捨五入有沒有改良', en:'what is quantized, how the scale is set, whether the rounding is improved'},
+     view:VIEW, code:CODE_METH, build:methFrames,
+     idea:{zh:'三個問題分開所有方法：量化什麼（權重／活化／梯度／KV）、scale 怎麼挑（absmax／MSE 搜尋／搬移／學出來）、四捨五入有沒有被改良（RTN／誤差回饋／訓練）。實務上最有用的分類是代價：不用資料（RTN、LLM.int8()、HQQ、NF4、GGUF k-quants、FP8、MX、KV 量化）、需要校準（SmoothQuant、AWQ、GPTQ、SqueezeLLM、SpQR、QuIP#）、需要訓練（QAT、AQLM）。',
+           en:'Three questions separate every method: what is quantized (weights, activations, gradients, KV cache), how the scale is chosen (absmax, MSE search, migrated, learned) and whether the rounding itself is improved (round-to-nearest, error feedback, trained). The most useful axis in practice is what it costs: nothing (RTN, LLM.int8(), HQQ, NF4, GGUF k-quants, FP8, MX, KV quantization), calibration (SmoothQuant, AWQ, GPTQ, SqueezeLLM, SpQR, QuIP#), or a training run (QAT, AQLM).'},
+     legend:[['#12b3b8', {zh:'不用資料', en:'no data needed'}],
+             ['#9d6bff', {zh:'需要校準', en:'needs calibration'}],
+             ['#ff9736', {zh:'需要訓練', en:'needs training'}]]},
     {id:'outliers', label:{zh:'離群值', en:'the outliers'},
      stage:{zh:'難的是活化不是權重', en:'the activations, not the weights'},
      view:VIEW, code:CODE_OUT, build:outFrames,

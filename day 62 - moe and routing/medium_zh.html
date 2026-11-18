@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
-<title>Day 62 — Mixture of Experts：一個 FFN 變成很多個，而每個 token 只跑其中兩個</title>
+<title>Day 62 — Mixture of Experts：讓模型的參數變多，但每個 token 的成本不變</title>
 <style>
 body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
          font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
@@ -26,7 +26,7 @@ li     { margin: .3em 0; }
 </style>
 </head>
 <body>
-<h1>Day 62 — Mixture of Experts：一個 FFN 變成很多個，而每個 token 只跑其中兩個</h1>
+<h1>Day 62 — Mixture of Experts：讓模型的參數變多，但每個 token 的成本不變</h1>
 <p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2062%20-%20moe%20and%20routing">day 62 on GitHub</a></p>
 <p><em>100 Days of Python - day 62</em></p>
 <p>Day 53 量過一件事，而它其實就是整件事的起點：transformer 三分之二的參數在 feed-forward 那一塊，而<strong>每個 token 都要把它們全部跑過一遍</strong>。每個 token、每個權重，不管那個權重對這個特定的 token 有沒有話要說。</p>
@@ -89,22 +89,64 @@ y     = sum_j w[:, j] * expert[idx[:, j]](x)</code></pre>
 <p><strong>兩套 kernel，對應兩種階段。</strong> 高吞吐那套會先用 NVLink 把 token 轉送到目的節點上，然後<strong>每個目的節點只走一次 RDMA</strong>，把慢速鏈路上的位元組壓到最低——這是 prefill 與訓練要的取捨。低延遲那套相反：純 RDMA、不轉送，因為在 decode 階段那一跳比它省下來的頻寬更貴。</p>
 <p><strong>FP8 dispatch。</strong> 把前一天那套東西用在網路線上：token 用 FP8 送出去，470 MB 變 235 MB，在這個模型裡 8.59 ms 變 4.29 ms。而 combine 仍然用 bf16，因為它要把 k 個 expert 的輸出相加，FP8 在那裡掉太多。兩個方向用不同精度，這個不對稱是刻意的。</p>
 <p><strong>重疊。</strong> 低延遲 kernel 提供一個 hook，讓「收資料」不是一道屏障：attention 可以在 MoE 的 token 還在路上時就先算，而且不會有 SM 在那裡空轉等網路。沒有這個重疊，每層兩次 all-to-all 根本撐不住。</p>
-<h2>在 SGLang 裡</h2>
-<pre><code>python -m sglang.launch_server --model deepseek-ai/DeepSeek-V3 \
-    --tp 8 --ep-size 8 \             # experts 切給這 8 張卡
-    --enable-deepep-moe \            # 換成 DeepEP 的 kernel
-    --deepep-mode auto \             # prefill 用 normal、decode 用 low_latency
-    --enable-eplb \                  # 在 rank 之間重新平衡 expert
-    --ep-num-redundant-experts 32    # 把最熱的那幾個複製出去</code></pre>
-<p>前三行就是本文到目前為止的內容。後面兩行是我第一次看到時覺得最有意思的部分。</p>
-<p>訓練時的平衡 loss 壓平的是<strong>平均</strong>。而真實流量不是平均：某一分鐘的請求可能全都想要同一批 expert，因為它們講的是同一個主題。所以伺服器會量每個 expert 的實際負載，週期性地<strong>把 expert 在 rank 之間搬動</strong>（這就是 EPLB，expert-parallel load balancing），並且把最熱的那幾個<strong>複製</strong>到好幾張卡上，讓它們的 token 有不只一個地方可以去。訓練時的塌縮問題，在線上以一個維運問題的形式回來了，然後拿到一個維運上的答案。</p>
-<h2>在 vLLM 裡</h2>
-<pre><code>vllm serve deepseek-ai/DeepSeek-V3 \
-    --tensor-parallel-size 8 \
-    --enable-expert-parallel \        # experts 改用 EP 而不是 TP
-    --data-parallel-size 2            # attention 用 DP、experts 用 EP</code></pre>
-<p>vLLM 用 <code>--enable-expert-parallel</code> 走到同一個地方，底下的 all-to-all 用 DeepEP 或 pplx-kernels。值得記住的組合是最後那一行：<strong>attention 用 data parallel 複製，experts 用 expert parallel 切開</strong>。理由很直接——attention 沒有 expert 可以分，而 MoE 的權重不切根本放不下。兩個伺服器最後都停在這個配置上。</p>
-<p>不管在哪一個上面，要看的數字都不是平均吞吐，而是<strong>每個 rank 的負載分佈</strong>：如果有一張卡長期拿到最忙的 experts，其他每張卡每層都要等它兩次，而這個洞是任何 kernel 調校都補不回來的。</p>
+<h2>在 PyTorch 裡怎麼寫這一層</h2>
+<p>整層大概五十行，而有意思的地方是：<strong>那個「對 expert 迴圈」正是你要想辦法避開的東西</strong>。</p>
+<pre><code>class MoE(nn.Module):
+    def __init__(self, d_model, d_ff, n_experts, k):
+        self.gate = nn.Linear(d_model, n_experts, bias=False)
+        # 所有 expert 放成「一個」參數，不是 ModuleList：
+        self.w1 = nn.Parameter(torch.empty(n_experts, d_model, d_ff))
+        self.w2 = nn.Parameter(torch.empty(n_experts, d_ff, d_model))
+        self.k = k
+
+    def forward(self, x):                       # x: (tokens, d_model)
+        probs  = self.gate(x).softmax(-1)
+        w, idx = probs.topk(self.k, dim=-1)     # (tokens, k)
+        w = w / w.sum(-1, keepdim=True)
+
+        flat   = idx.reshape(-1)                # 每個 token 有 k 筆
+        order  = flat.argsort()                 # 依 expert 分組
+        counts = torch.bincount(flat, minlength=self.w1.shape[0])
+        xs = x.repeat_interleave(self.k, 0)[order]
+
+        h  = F.silu(torch._grouped_mm(xs, self.w1, counts))
+        ys = torch._grouped_mm(h, self.w2, counts)
+
+        out = torch.zeros_like(x)
+        token_of = torch.arange(len(x)).repeat_interleave(self.k)
+        out.index_add_(0, token_of[order], ys * w.reshape(-1, 1)[order])
+        return out</code></pre>
+<p>這裡藏了四個設計決定，而且每個真實實作裡都是同樣這四個。</p>
+<p><strong>experts 是一個 tensor，不是一個 list。</strong> 用 <code>nn.ModuleList([nn.Linear(...) for _ in range(E)])</code> 是最自然的寫法，但那代表 E 次 kernel launch、E 次權重載入，而且 expert 的編號沒辦法當索引用。寫成<strong>一個</strong> <code>(E, d_model, d_ff)</code> 的 Parameter 之後，「選一個 expert」就變成「選一個索引」——後面三個決定才有可能。</p>
+<p><strong>用排序，不要用遮罩。</strong> 直覺的寫法是乘上 one-hot 遮罩、讓每個 expert 都算過每個 token；結果是對的，而且<strong>算術量變成 E 倍</strong>，MoE 的意義整個消失。實務上是：依 expert id 排序 token、對不等長的分組做一次 grouped matmul（<code>torch._grouped_mm</code>，或 Megatron-LM／vLLM 裡的 Triton kernel），最後再排回去。</p>
+<p><strong>回填要用 <code>index_add_</code>。</strong> 一個 token 出現 k 次、k 份 expert 輸出要相加，所以必須是「加」不是「寫」——而 gate 權重的梯度也正是從這個加法來的。</p>
+<p><strong>平衡用的 aux loss 要從 <code>forward</code> 回傳。</strong> 它需要 <code>probs</code> 和路由計數，而那兩個只有 layer 裡面才有。每個 MoE 程式庫最後都會有一個「各層把 aux loss 丟進去、訓練迴圈再加總」的清單。</p>
+<p>分散式版本的 dispatch 就是一行 collective：</p>
+<pre><code>torch.distributed.all_to_all_single(recv, send, out_splits, in_splits)</code></pre>
+<p>而那些 splits 就是排序後每個 rank 的 token 數。不平衡的 router 會讓 splits 歪掉，所有人都要等最大的那一個——這就是前面那些負載數字真正變成時間的地方。</p>
+<h2>在 JAX 裡怎麼寫這一層</h2>
+<p>同一個演算法，程式碼長得完全不一樣，因為 JAX 要的是<strong>固定形狀加上一條 sharding 規則</strong>，而不是 gather。</p>
+<pre><code>def moe(x, wg, w1, w2, k, capacity):
+    probs  = jax.nn.softmax(x @ wg)                   # (T, E)
+    w, idx = jax.lax.top_k(probs, k)
+    mask = jax.nn.one_hot(idx, n_experts).sum(1)      # (T, E)
+    pos  = jnp.cumsum(mask, axis=0) * mask - 1        # buffer 裡的位置
+    disp = mask[..., None] * jax.nn.one_hot(pos, capacity)   # (T, E, cap)
+
+    xe = jnp.einsum(&quot;tec,td-&gt;ecd&quot;, disp, x)           # 固定大小 (E, cap, d)
+    he = jax.nn.silu(jnp.einsum(&quot;ecd,edf-&gt;ecf&quot;, xe, w1))
+    ye = jnp.einsum(&quot;ecf,efd-&gt;ecd&quot;, he, w2)
+    return jnp.einsum(&quot;ecd,tec,te-&gt;td&quot;, ye, disp, w)</code></pre>
+<p>那串 einsum <strong>就是</strong> dispatch 和 combine 本身。沒有排序、沒有變動長度，而且 <strong>capacity 直接出現成陣列的一個維度</strong>——這正是 capacity factor 存在的理由：buffer 是固定的，滿出來的 token 沒有地方可以去。</p>
+<p>而平行化是一個標註，不是一次呼叫：</p>
+<pre><code>mesh = Mesh(devices, (&quot;data&quot;, &quot;expert&quot;))
+w1   = jax.device_put(w1, NamedSharding(mesh, P(&quot;expert&quot;, None, None)))
+moe  = shard_map(moe, mesh, in_specs=..., out_specs=...)</code></pre>
+<p>把 <code>w1</code> 的 expert 軸 shard 掉，<strong>這就是 expert parallelism 的全部</strong>。einsum 需要住在別的裝置上的資料，所以 XLA 自己插入 all-to-all，沒有人手寫那個 collective。這也是兩個生態系真正的差別：PyTorch 是你呼叫 <code>all_to_all_single</code> 並自己管 splits；JAX 是你標註軸、編譯器產生通訊。</p>
+<p>代價也很對稱：排序版本只對真正被路由到的 token 做算術，但要快就需要自訂 kernel；one-hot 版本是純 dense einsum、任何編譯器都能融合，但 buffer 裡每一個空位都要付錢。</p>
+<h2>上線的時候，簡短版</h2>
+<p>兩個伺服器開出來的是同樣兩個決定。experts 住在哪幾張卡——SGLang 的 <code>--ep-size 8</code>、vLLM 的 <code>--enable-expert-parallel</code>；以及那兩次 all-to-all 由誰來搬——SGLang 的 <code>--enable-deepep-moe</code> 配 <code>--deepep-mode normal|low_latency|auto</code>，vLLM 底下接 DeepEP 或 pplx-kernels。而兩邊最後都跑成「attention 用 data parallel、experts 用 expert parallel」，因為 attention 沒有 expert 可以分，而 MoE 的權重不切放不下。</p>
+<p>除此之外值得知道的是 SGLang 的 <code>--enable-eplb</code> 搭 <code>--ep-num-redundant-experts</code>。訓練時的平衡 loss 壓平的是<strong>平均</strong>，而真實流量不是平均：某一分鐘的請求可能全都想要同一批 expert。所以伺服器會量線上每個 expert 的負載、<strong>把 expert 在 rank 之間搬動</strong>、並<strong>把最熱的那幾個複製出去</strong>。訓練時的塌縮問題，在線上以維運問題的形式回來，然後拿到一個維運上的答案。</p>
 <h2>這一天之後會在哪裡再出現</h2>
 <p>「路由」是一個用梯度下降去訓練的離散選擇，而這個困難在強化學習、以及所有「學架構而不是學權重」的嘗試裡都會再出現。另外，load balancing 的那個故事——<strong>訓練時壓平平均，上線後再針對真實流量重新平衡</strong>——是一個值得認出來的模式：你能事先烤進去的東西，和你必須線上量測的東西之間的分界，在快取、在排程、在任何「工作負載不是穩態」的地方都一樣會出現。</p>
 <p>程式碼、notebook 與互動版走查：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2062%20-%20moe%20and%20routing">day 62 on GitHub</a>。</p>

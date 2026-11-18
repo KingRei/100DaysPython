@@ -93,6 +93,31 @@ MXFP4，每 32 個一個 block     4.25       0.12301</code></pre>
 <p>int8 是 254 個等距格點，最大與最小的比值是 127。間距固定，所以<strong>絕對</strong>誤差到處一樣：對接近最大值的數很好，對小一百倍的數是災難。</p>
 <p>FP8 把位元花在指數上。e4m3 有 3 bit 尾數、動態範圍 2.3e5；e5m2 有 2 bit 尾數、範圍 3.8e9。間距隨數值大小變化，所以<strong>相對</strong>誤差到處差不多。這個差別決定了兩種格式的分工：e4m3 是前向傳遞用的——範圍不必很大但要精度；e5m2 是給梯度用的——梯度的數量級跨度大得多，但對精度要求低。混合 FP8 訓練兩種都用，而這就是為什麼會有兩種的真正原因。</p>
 <p>MXFP4 再往前一步：每個元素 4 bit（1 位符號、2 位指數、1 位尾數，也就是 <code>{0, .5, 1, 1.5, 2, 3, 4, 6}</code> 這八種大小），每 32 個共用一個 8 bit 的 2 的冪次指數。平均 4.25 bit，而在這組權重上它比「整個 tensor 一個 scale 的 int8」還準。block floating point 不是新東西，新的是硬體開始原生支援它。</p>
+<h2>所有方法一次看完</h2>
+<p>上面那張表是<strong>單位</strong>，這張表是<strong>方法</strong>。而所有方法其實只被三個問題分開：<strong>量化什麼</strong>、<strong>scale 怎麼挑</strong>、以及<strong>四捨五入本身有沒有被改良</strong>。</p>
+<pre><code>方法                           量化什麼          常見位元   代價                              核心想法
+-----------------------------  ----------------  ---------  --------------------------------  --------------------------------------------------------------------
+round to nearest (RTN)         權重              8 / 4      不用資料，直接套在 checkpoint 上  absmax scale（per tensor／row／group），所有方法的比較基準
+MSE / percentile clipping      權重／活化        8 / 4      需要幾個校準 batch                搜一個讓平方誤差最小的裁切門檻，而不是直接用最大值
+LLM.int8()                     權重＋活化        8 (+16)    不用資料，直接套在 checkpoint 上  把矩陣乘法拆開：含離群值的 column 留 16-bit，其餘走 int8
+ZeroQuant / per-token dynamic  權重＋活化        8          不用資料，直接套在 checkpoint 上  活化用 per-token、執行時算的 scale；權重用 per-column
+SmoothQuant                    權重＋活化        8          需要幾個校準 batch                把動態範圍從活化搬到權重：X W = (X/s)(W s)
+AWQ                            權重              4          需要幾個校準 batch                先把「活化真的會用到」的 channel 乘大再量化
+GPTQ (from OBQ / OBS)          權重              4 / 3      需要幾個校準 batch                逐 column 四捨五入，用 H = XᵀX 把誤差推給還沒處理的 column
+SqueezeLLM                     權重              4 / 3      需要幾個校準 batch                用敏感度加權的 k-means 碼本，另外留一組稀疏離群值
+SpQR                           權重              ~4         需要幾個校準 batch                最敏感的少數權重留高精度，其餘壓得更兇
+HQQ                            權重              4 / 3 / 2  不用資料，直接套在 checkpoint 上  用穩健的損失去最佳化 scale 與 zero-point；不需要校準資料
+QuIP#                          權重              2          需要幾個校準 batch                先把權重旋轉成「不相干」再用格子量化
+AQLM                           權重              2          需要一次訓練                      對每組權重用可加的碼本，並端到端微調
+NF4 / QLoRA                    權重              4          不用資料，直接套在 checkpoint 上  格點放在常態分佈的分位數上，再把 scale 本身也量化一次
+GGUF k-quants                  權重              2-8        不用資料，直接套在 checkpoint 上  16～32 個一塊、再加一層 super-block scale；llama.cpp 那一家（Q4KM…）
+FP8 (e4m3 / e5m2)              權重＋活化＋梯度  8          不用資料，直接套在 checkpoint 上  浮點格點＋per-tensor 或 per-row scale；硬體原生那條路
+MX / NVFP4                     權重＋活化        4-8        不用資料，直接套在 checkpoint 上  block floating point：每 16～32 個值共用一個指數
+KV cache quantization          KV cache          8 / 4      不用資料，直接套在 checkpoint 上  記憶體吃在 cache 上，所以把 K/V 以 head 或 token 為單位量化
+QAT (STE, LSQ, PACT)           權重＋活化        4 / 3 / 2  需要一次訓練                      訓練時就帶著四捨五入；LSQ 連步長一起學、PACT 學裁切點</code></pre>
+<p>「代價」那一欄可以當成一道階梯。不用資料的那些，你五分鐘前下載的 checkpoint 就能直接套。需要校準的那些，要幾百條真實序列——仍然便宜、仍然離線，但結果從此取決於你餵了什麼進去。只有最後幾列需要一次訓練，這也是為什麼它們在「不是自己訓練這個模型的團隊」裡很少見。</p>
+<p>還有記號。<strong>W4A16</strong> 是 4-bit 權重、16-bit 活化，也就是 weight-only——這是部署時的預設值，因為 decode 每個 token 都要把權重讀一遍，而活化很小。<strong>W8A8</strong> 與 FP8 連活化一起量化，換到的是 weight-only 拿不到的 tensor core 吞吐量，這在 prefill（被算力卡住，而不是被頻寬卡住）才有意義。另外，每 128 個權重一個 scale 的話，「W4」實際上是 4.12 bit。</p>
+<p>本文其餘的部分會把「能在單一層上量出來」的那些實際量一遍：各種分組的 round-to-nearest、MSE 裁切、LLM.int8()、SmoothQuant、AWQ、GPTQ 與 QAT。</p>
 <h2>難的是活化，不是權重</h2>
 <p>一次只量化一邊，就知道傷害從哪來：</p>
 <pre><code>量化哪一邊                        輸出誤差

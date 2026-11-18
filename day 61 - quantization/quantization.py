@@ -260,6 +260,75 @@ def bits_of_float32(x):
             'check': (-1) ** int(s) * (1 + frac) * 2.0 ** (exp - 127)}
 
 
+# ================================================================ 3c. the methods
+# (name, what it quantizes, typical bits, needs calibration, needs training, idea)
+METHODS = [
+    ('round to nearest (RTN)', 'W', '8 / 4', False, False,
+     'absmax scale per tensor, row or group; the baseline everything is compared to'),
+    ('MSE / percentile clipping', 'W, A', '8 / 4', True, False,
+     'search the clipping threshold that minimises squared error instead of using max'),
+    ('LLM.int8()', 'W + A', '8 (+16)', False, False,
+     'split the matmul: outlier columns stay in 16-bit, the rest go to int8'),
+    ('ZeroQuant / per-token dynamic', 'W + A', '8', False, False,
+     'per-token activation scales computed at run time, per-column weight scales'),
+    ('SmoothQuant', 'W + A', '8', True, False,
+     'migrate range from activations into weights: X W = (X/s)(W s)'),
+    ('AWQ', 'W', '4', True, False,
+     'scale up the channels the activations actually use before rounding'),
+    ('GPTQ (from OBQ / OBS)', 'W', '4 / 3', True, False,
+     'round column by column and push the error into the rest using H = X^T X'),
+    ('SqueezeLLM', 'W', '4 / 3', True, False,
+     'sensitivity-weighted k-means codebook plus a sparse outlier set'),
+    ('SpQR', 'W', '~4', True, False,
+     'keep the few most sensitive weights in high precision, quantize the rest hard'),
+    ('HQQ', 'W', '4 / 3 / 2', False, False,
+     'optimise the scale and zero-point with a robust loss; no calibration data'),
+    ('QuIP#', 'W', '2', True, False,
+     'rotate the weights to make them incoherent, then lattice-quantize'),
+    ('AQLM', 'W', '2', True, True,
+     'additive codebooks over groups, fine-tuned end to end'),
+    ('NF4 / QLoRA', 'W', '4', False, False,
+     'levels at the quantiles of a normal distribution, plus a second quantization '
+     'of the scales'),
+    ('GGUF k-quants', 'W', '2-8', False, False,
+     'blocks of 16-32 with a super-block scale; the llama.cpp family (Q4_K_M, ...)'),
+    ('FP8 (e4m3 / e5m2)', 'W + A + grad', '8', False, False,
+     'a float grid plus a per-tensor or per-row scale; the hardware path'),
+    ('MX / NVFP4', 'W + A', '4-8', False, False,
+     'block floating point: one shared exponent per 16-32 values'),
+    ('KV cache quantization', 'KV', '8 / 4', False, False,
+     'the cache is the memory, so quantize K and V per head or per token'),
+    ('QAT (STE, LSQ, PACT)', 'W + A', '4 / 3 / 2', False, True,
+     'train through the rounding; LSQ learns the step size, PACT the clipping'),
+]
+
+
+def method_table():
+    """What is quantized, what it costs to apply, and what the idea is."""
+    rows = []
+    for name, what, bits, calib, train, idea in METHODS:
+        rows.append({'name': name, 'what': what, 'bits': bits,
+                     'calibration': calib, 'training': train, 'idea': idea,
+                     'cost': ('a training run' if train else
+                              'a few calibration batches' if calib else
+                              'nothing - run it on the checkpoint')})
+    return rows
+
+
+def notation(w_bits=4, a_bits=16, group=128):
+    """The WxAy notation, decoded, with the memory each choice actually saves."""
+    return {'name': f'W{w_bits}A{a_bits}',
+            'weights': f'{w_bits}-bit weights',
+            'activations': ('16-bit activations: weight-only, the default for serving'
+                            if a_bits == 16 else f'{a_bits}-bit activations too'),
+            'bits_per_weight': w_bits + 16 / group,
+            'group': group,
+            'why_weight_only': 'decode reads weights once per token and activations '
+                               'are tiny, so W4A16 already removes most of the traffic',
+            'why_w8a8': 'prefill is compute-bound, so int8 or fp8 activations buy '
+                        'tensor-core throughput that weight-only cannot'}
+
+
 # ================================================================ 4. the outliers
 def where_the_error_is(layer, bits=8):
     """Quantize weights and activations separately and see which one hurts."""
@@ -454,6 +523,16 @@ def check():
     # clipping below the maximum can beat absmax
     bc = best_clip(X, 8)
     assert bc['fraction'] < 1.0 and bc['mse'] <= bc['absmax_mse']
+    # the method table is complete and self-consistent
+    mt = method_table()
+    names = {r['name'] for r in mt}
+    for needed in ('GPTQ (from OBQ / OBS)', 'AWQ', 'SmoothQuant', 'LLM.int8()',
+                   'QAT (STE, LSQ, PACT)', 'MX / NVFP4', 'NF4 / QLoRA'):
+        assert needed in names, needed
+    assert all(r['cost'] for r in mt)
+    assert {r['cost'] for r in mt} == {'nothing - run it on the checkpoint',
+                                       'a few calibration batches', 'a training run'}
+    assert abs(notation()['bits_per_weight'] - 4.125) < 1e-9
     # the format table reproduces the published constants
     t = {r['name']: r for r in format_spec_table()}
     assert t['fp16']['max'] == 65504.0 and t['fp32']['max'] == np.finfo(np.float32).max
@@ -586,7 +665,35 @@ def main():
     print('  a power of two and applying it is an exponent add rather than a multiply.')
     print('  NVFP4 is the same idea with a block of 16 and an e4m3 scale instead.')
 
-    header('4. Who shares a scale')
+    header('4. Every method on one page')
+    print('  The formats were the units; these are the methods.  Three questions')
+    print('  separate all of them: what gets quantized, how the scale is chosen, and')
+    print('  whether the rounding itself is improved.\n')
+    print('  method                          quantizes     bits      what it costs you')
+    print('  ' + '-' * 86)
+    for r in method_table():
+        print(f'  {r["name"]:31} {r["what"]:12}  {r["bits"]:9} {r["cost"]}')
+    print('\n  Read the last column as the practical ladder.  Everything that costs')
+    print('  nothing can be applied to a checkpoint you downloaded five minutes ago.')
+    print('  Everything that wants calibration needs a few hundred real sequences -')
+    print('  still cheap, still offline, but now the result depends on what you fed')
+    print('  it.  Only the last rows want a training run, and that is why they are')
+    print('  rare outside the labs that trained the model in the first place.\n')
+    print('  The ideas, in one line each:\n')
+    for r in method_table():
+        print(f'    {r["name"]:31} {r["idea"]}')
+    n = notation()
+    print(f'\n  And the notation.  "{n["name"]}" means {n["weights"]} and '
+          f'{n["activations"]}.')
+    print(f'  With a scale per {n["group"]} weights, W4 really costs '
+          f'{n["bits_per_weight"]:.2f} bits.')
+    print(f'\n    weight-only (W4A16, W8A16): {n["why_weight_only"]}')
+    print(f'    weights and activations (W8A8, FP8): {n["why_w8a8"]}')
+    print('\n  The rest of this file measures the ones that can be measured on a')
+    print('  single layer: RTN with every grouping, MSE clipping, LLM.int8(),')
+    print('  SmoothQuant, AWQ, GPTQ and QAT.')
+
+    header('5. Who shares a scale')
     print('  Same weights, same bit widths, different grouping:\n')
     print('  scheme                bits   rel. error   worst single error')
     for r in format_table(W):
@@ -597,7 +704,7 @@ def main():
     print('  That is the trade everyone actually makes: fewer bits per value, more')
     print('  scales.')
 
-    header('5. Integers against floats at the same width')
+    header('6. Integers against floats at the same width')
     dr = dynamic_range()
     print(f'  int8 has {dr["int8_steps"]} evenly spaced levels and a largest-to-smallest')
     print(f'  ratio of {dr["int8_ratio"]:.0f}.  The FP8 formats spend bits on an exponent')
@@ -610,7 +717,7 @@ def main():
     print('  more exponent) exists for gradients, which span a far wider range and')
     print('  care less about precision.  That is why mixed FP8 training uses both.')
 
-    header('6. The outliers are in the activations, not the weights')
+    header('7. The outliers are in the activations, not the weights')
     print(f'  {len(L["outliers"])} of {X.shape[1]} input channels carry values '
           f'{np.abs(X[:, L["outliers"]]).max() / np.median(np.abs(X)):.0f}x the median.')
     print('  Quantizing one side at a time shows where the damage comes from:\n')
@@ -622,7 +729,7 @@ def main():
     print('  levels.  This is the entire reason weight-only quantization is the')
     print('  default and activation quantization needs a trick.')
 
-    header('7. Three ways to deal with the outliers')
+    header('8. Three ways to deal with the outliers')
     mp = mixed_precision(L, keep=6)
     print(f'  (a) Keep them.  LLM.int8() splits the matrix: {mp["share"]:.1%} of the')
     print(f'      columns stay in 16-bit, the rest go to int8.  Output error')
@@ -642,7 +749,7 @@ def main():
     print('      scales in section 3 already do, and it is why fine-grained formats')
     print('      like MXFP4 are the direction hardware is going.')
 
-    header('8. Rounding to nearest is not the best rounding')
+    header('9. Rounding to nearest is not the best rounding')
     rt = rounding_table(L, bits=4, group=128)
     print(f'  At {rt["bits"]} bits with a scale per {rt["group"]} weights:\n')
     print(f'    round to nearest   weight error {rt["rtn_weight_err"]:.5f}   '
@@ -662,7 +769,7 @@ def main():
     print('\n  Both need calibration data.  That is the practical difference from')
     print('  everything above: a handful of real sequences, run once, offline.')
 
-    header('9. Quantization-aware training')
+    header('10. Quantization-aware training')
     q = qat_demo()
     print(f'  Same layer at {q["bits"]} bits, two ways to get there:\n')
     print(f'    train in float, then round    loss {q["ptq"]:7.3f}')
@@ -694,7 +801,7 @@ def main():
           f'so QAT runs')
     print('  keep a checkpoint by validation loss rather than the last step.')
 
-    header('10. In PyTorch')
+    header('11. In PyTorch')
     print('  Three layers of the stack, which are easy to confuse:\n')
     print('  1. dtypes.  torch.float8_e4m3fn and torch.float8_e5m2 are real tensor')
     print('     dtypes; torch._scaled_mm(a, b, scale_a, scale_b) is the matmul that')
@@ -718,7 +825,7 @@ def main():
     print('     and backward passes with per-tensor or per-row scales, which is how')
     print('     FP8 pretraining runs are done.')
 
-    header('11. In JAX')
+    header('12. In JAX')
     print('  Same ideas, different shape, because JAX puts the numerics in the')
     print('  function rather than in the module:\n')
     print('  1. dtypes.  jnp.float8_e4m3fn and jnp.float8_e5m2 exist, and')
@@ -739,7 +846,7 @@ def main():
     print('  and JAX quantizes *operations*.  Everything else - the scales, the')
     print('  grouping, the straight-through estimator - is the same arithmetic.')
 
-    header('12. Assertions')
+    header('13. Assertions')
     check()
     print('all assertions passed')
 

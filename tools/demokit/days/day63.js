@@ -1,0 +1,627 @@
+// DAY: 63
+// TITLE_ZH: GPU 記憶體階層與 roofline：為什麼有些 kernel 再怎麼優化都不會變快
+// TITLE_EN: The memory hierarchy and the roofline: why some kernels never get faster
+// SUB_ZH: 這個系列裡每一個效能數字最後都是記憶體數字——decode 慢是因為每個 token 都要讀一遍權重、KV cache 是容量上限、MoE 是通訊問題、量化有用是因為位元變少。這一天把底下那個模型寫出來：階層長什麼樣、roofline 怎麼決定一個 kernel 是被算力還是被記憶體卡住，以及 tiling（包含 FlashAttention）為什麼是唯一能提高運算密度的辦法。
+// SUB_EN: Every performance number in this series turned out to be a memory number: decode is slow because it reads the weights once per token, the KV cache is the capacity limit, MoE is a communication problem, quantization helps because fewer bits means fewer bytes. This day writes down the model underneath: the hierarchy, the roofline that decides whether a kernel is limited by arithmetic or by memory, and why tiling - FlashAttention included - is the only way to raise arithmetic intensity.
+// FOLDER: day%2063%20-%20memory%20hierarchy%20and%20roofline
+// MEDIUM: https://medium.com/100-days-of-python
+const VIEW = [9.8, 6.4];
+function chip(t, cls){ return {t:t, cls:cls || ''}; }
+const curV = () => (typeof varIx !== 'undefined' ? varIx : 0);
+
+const isCJK = ch => { const c = ch.codePointAt(0);
+  return (c >= 0x2e80 && c <= 0x9fff) || (c >= 0xff00 && c <= 0xff60) || (c >= 0x3000 && c <= 0x303f); };
+function tw(str, fs){ let w = 0;
+  for (const ch of String(str)) w += isCJK(ch) ? 1.0 : .55;
+  return w * fs; }
+function fitT(x, y, s, opt){
+  opt = Object.assign({}, opt || {});
+  const fs = opt.fs || .32, a = opt.anchor || 'middle', pad = .20;
+  const room = a === 'start' ? VIEW[0] - pad - x
+             : a === 'end'   ? x - pad
+             : 2 * Math.min(x - pad, VIEW[0] - pad - x);
+  const strs = (typeof s === 'string') ? [s] : [s.zh, s.en].filter(t => t != null);
+  const w = Math.max.apply(null, strs.map(t => tw(t, fs)));
+  if (w > room) opt.fs = fs * room / w;
+  return S.t(x, y, s, opt);
+}
+function fitFs(lab, w, fs){
+  const strs = (typeof lab === 'string') ? [lab] : [lab.zh, lab.en];
+  const need = Math.max.apply(null, strs.map(t => tw(t, fs)));
+  return need > w - .08 ? fs * (w - .08) / need : fs;
+}
+const box = (x, y, w, h, s, lab, fs) => S.r(x, y, w, h, s, lab, {fs:fitFs(lab, w, fs || h * .5)});
+function caps(sh, o){
+  if (o.cap) sh.push(fitT(4.9, 5.62, o.cap, {c:o.capc || COL.pale, fs:.30}));
+  if (o.cap2) sh.push(fitT(4.9, 6.06, o.cap2, {c:COL.grey, fs:.26}));
+  return sh;
+}
+const side = (sh, x, y0, lines, dy) => (lines || []).forEach((l, k) =>
+  sh.push(fitT(x, y0 + k * (dy || .5), l[0], {anchor:'start', c:l[1] || COL.pale, fs:l[2] || .30})));
+const fmtN = x => x == null ? 'nan' : String(Math.round(x * 1e4) / 1e4);
+const PURPLE = '#b45cff';
+
+function barRow(sh, x0, base, bw, gap, vals, sts, labs, maxh, top){
+  const hi = top || Math.max.apply(null, vals.map(Math.abs));
+  vals.forEach((v, i) => {
+    const hgt = Math.max(.05, maxh * Math.abs(v) / hi), x = x0 + i * (bw + gap);
+    sh.push(S.r(x, base - hgt, bw, hgt, sts[i] || 'ok', null));
+    if (labs && labs[i] != null) sh.push(fitT(x + bw / 2, base - hgt - .20, labs[i], {c:COL.pale, fs:.24}));
+  });
+  return sh;
+}
+// a 0..1 x 0..1 plot box; data y grows upward, SVG y grows downward
+function Panel(x0, y0, w, h){ this.x0 = x0; this.y0 = y0; this.w = w; this.h = h; }
+Panel.prototype.px = function(p){
+  return [this.x0 + this.w * p[0], this.y0 + this.h * (1 - p[1])];
+};
+Panel.prototype.frame = function(sh){
+  sh.push(S.r(this.x0, this.y0, this.w, this.h, 'ghost', null));
+  return sh;
+};
+function polyline(sh, panel, pts, st, w){
+  for (let i = 1; i < pts.length; i++){
+    const a = panel.px(pts[i - 1]), b = panel.px(pts[i]);
+    sh.push(S.e(a[0], a[1], b[0], b[1], {s:st, arrow:false, w:w || .055}));
+  }
+  return sh;
+}
+const FRAG = {"reqs": 240, "rejC": 12, "rejFrag": 12, "rejP": 5, "utilC": 65.7, "utilP": 68.5, "capacity": 16384};
+const HIER = [{"name": "registers", "gbs": 100000.0, "ns": 1, "cap": 262144}, {"name": "shared memory / LDS", "gbs": 20000.0, "ns": 20, "cap": 163840}, {"name": "L2 cache", "gbs": 7000.0, "ns": 200, "cap": 52428800}, {"name": "HBM", "gbs": 5300.0, "ns": 600, "cap": 206158430208}, {"name": "host memory over PCIe", "gbs": 64.0, "ns": 2000, "cap": 1099511627776}, {"name": "another node over RDMA", "gbs": 50.0, "ns": 10000, "cap": 0}];
+const SEQ = [{"kb": 64, "gbs": 9.7}, {"kb": 256, "gbs": 11.5}, {"kb": 1024, "gbs": 11.2}, {"kb": 4096, "gbs": 12.9}, {"kb": 16384, "gbs": 12.8}, {"kb": 65536, "gbs": 13.3}, {"kb": 262144, "gbs": 13.0}];
+const RND = [{"kb": 16, "ns": 1.98}, {"kb": 64, "ns": 2.17}, {"kb": 256, "ns": 2.51}, {"kb": 1024, "ns": 3.59}, {"kb": 4096, "ns": 8.86}, {"kb": 16384, "ns": 11.42}, {"kb": 65536, "ns": 13.4}];
+const RF = [{"name": "decode: one linear (GEMV)", "ai": 1.0, "bound": "memory", "ms": 0.022}, {"name": "prefill: one linear (GEMM)", "ai": 3185.78, "bound": "compute", "ms": 0.37}, {"name": "decode: attention over KV", "ai": 1.0, "bound": "memory", "ms": 0.013}, {"name": "prefill: attention (no tiling)", "ai": 128.0, "bound": "memory", "ms": 0.405}, {"name": "RMSNorm", "ai": 1.0, "bound": "memory", "ms": 0.013}, {"name": "residual add", "ai": 0.17, "bound": "memory", "ms": 0.019}, {"name": "softmax over the vocabulary", "ai": 1.25, "bound": "memory", "ms": 0.0}, {"name": "decode: the whole model", "ai": 1.0, "bound": "memory", "ms": 26.415}];
+const MACH = {"tflops": 1300.0, "gbs": 5300.0, "balance": 245.3};
+const BATCH = [{"b": 1, "ai": 1.0, "bound": "memory", "ms": 0.022, "us": 22.16}, {"b": 4, "ai": 4.0, "bound": "memory", "ms": 0.022, "us": 5.54}, {"b": 16, "ai": 15.96, "bound": "memory", "ms": 0.022, "us": 1.39}, {"b": 64, "ai": 63.43, "bound": "memory", "ms": 0.022, "us": 0.35}, {"b": 256, "ai": 247.17, "bound": "compute", "ms": 0.023, "us": 0.09}, {"b": 1024, "ai": 896.0, "bound": "compute", "ms": 0.093, "us": 0.09}];
+const TILE = {"n": 4096, "tile": 104, "naiveGB": 549.8, "tiledGB": 5.35, "ratio": 102.7, "naiveAI": 0.25, "tiledAI": 25.67, "sweep": [{"t": 8, "fits": true, "gb": 68.79, "ai": 2.0}, {"t": 16, "fits": true, "gb": 34.43, "ai": 3.99}, {"t": 32, "fits": true, "gb": 17.25, "ai": 7.97}, {"t": 64, "fits": true, "gb": 8.66, "ai": 15.88}, {"t": 128, "fits": false, "gb": 4.36, "ai": 31.51}, {"t": 256, "fits": false, "gb": 2.21, "ai": 62.06}, {"t": 512, "fits": false, "gb": 1.14, "ai": 120.47}]};
+const FL = {"seq": 4096, "block": 160, "passes": 26, "standard_gb": 4.429, "tiled_gb": 1.812, "ratio": 2.444, "standard_ai": 62.061, "tiled_ai": 151.704, "score_matrix_gb": 1.074, "resident_kb": 160.0, "memory_ratio": 6553.6, "standard_passes": 4, "scaling": [{"seq": 512, "std": 0.08, "tiled": 0.04, "ratio": 2.0, "mat": 0.02}, {"seq": 2048, "std": 1.14, "tiled": 0.47, "ratio": 2.4, "mat": 0.27}, {"seq": 8192, "std": 17.45, "tiled": 7.11, "ratio": 2.5, "mat": 4.29}, {"seq": 32768, "std": 275.95, "tiled": 110.6, "ratio": 2.5, "mat": 68.72}]};
+const LIT = {"bandwidth_gbs": 5300.0, "latency_ns": 600.0, "bytes_in_flight": 3180000.0, "requests_in_flight": 24843.8, "bytes_per_request": 128};
+const ST = [{"s": 1, "useful": 16.78, "fetched": 16.78, "eff": 1.0, "ms": 1.1}, {"s": 2, "useful": 8.39, "fetched": 16.78, "eff": 0.5, "ms": 0.97}, {"s": 4, "useful": 4.19, "fetched": 16.78, "eff": 0.25, "ms": 0.91}, {"s": 8, "useful": 2.1, "fetched": 16.78, "eff": 0.125, "ms": 1.09}, {"s": 16, "useful": 1.05, "fetched": 16.78, "eff": 0.062, "ms": 0.89}, {"s": 32, "useful": 0.52, "fetched": 8.39, "eff": 0.062, "ms": 0.47}];
+
+const LOG = (v, lo, hi) => (Math.log(Math.max(v, lo)) / Math.LN10 - Math.log(lo) / Math.LN10)
+                           / (Math.log(hi) / Math.LN10 - Math.log(lo) / Math.LN10);
+
+/* ================================================================ tab 1: the hierarchy */
+const CODE_HIER = [
+  '# a level of the hierarchy is three numbers:',
+  '#   capacity   - how much fits',
+  '#   bandwidth  - how fast it streams',
+  '#   latency    - how long one access takes',
+  '',
+  '# and the ratio that matters is between neighbours:',
+  'shared_memory_bandwidth / hbm_bandwidth   # ~4x',
+  'hbm_bandwidth / pcie_bandwidth            # ~80x'
+];
+function hierStage(o){
+  const sh = [];
+  const w = [1.3, 2.1, 3.0, 4.1, 5.3, 6.6];
+  HIER.forEach((r, i) => {
+    if (i > o.upto) return;
+    const y = 4.55 - i * .72;
+    sh.push(box(.70, y, w[i], .54, i === o.upto ? 'hot' : 'ok', r.name, .25));
+    sh.push(fitT(7.60, y + .27, r.gbs.toLocaleString() + ' GB/s',
+                 {anchor:'start', c:COL.pale, fs:.24}));
+    sh.push(fitT(9.30, y + .27, r.ns.toLocaleString() + ' ns',
+                 {anchor:'end', c:COL.grey, fs:.24}));
+  });
+  sh.push(fitT(.70, 5.05, {zh:'越寬＝容量越大；每往下一層都更慢、更遠',
+                           en:'wider is bigger; every step down is slower and further away'},
+               {anchor:'start', c:COL.grey, fs:.26}));
+  return caps(sh, o);
+}
+function hierFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:hierStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({upto:2, line:1,
+    cap:{zh:'晶片裡面：暫存器、shared memory、L2', en:'on the chip: registers, shared memory, L2'},
+    panels:[{lbl:'registers', chips:[chip('100,000 GB/s', 'ok')]},
+            {lbl:'shared', chips:[chip('20,000 GB/s', 'act')]},
+            {lbl:'L2', chips:[chip('7,000 GB/s', 'dim')]}],
+    msg:{zh:'每一層大約比上一層慢一個數量級、大兩個數量級。晶片內的三層加起來只有幾十 MB——所有「把資料留在這裡」的優化，爭的都是這幾十 MB。',
+         en:'Each level is roughly an order of magnitude slower and two orders larger than the one above. The three on-chip levels add up to a few tens of megabytes, and every optimisation that tries to keep data close is competing for exactly those.'}});
+  p({upto:HIER.length - 1, line:7,
+    cap:{zh:'晶片外面：HBM、主機記憶體、網路', en:'off the chip: HBM, host memory, the network'},
+    panels:[{lbl:'HBM', chips:[chip('5,300 GB/s', 'dim')]},
+            {lbl:'PCIe', chips:[chip('64 GB/s', 'bad')]},
+            {lbl:'RDMA', chips:[chip('50 GB/s', 'bad')]}],
+    msg:{zh:'shared memory 到 HBM 是每個 kernel 都在對抗的那一步。而最後兩列就是前面幾天：**主機記憶體那一列是 HiCache 分層存在的理由**，**RDMA 那一列是 DeepEP 要有兩套 kernel 的理由**。同一張表，三個不同的日子。',
+         en:'The step from shared memory to HBM is the one every kernel in this series has been fighting. And the last two rows are earlier days: **the host-memory row is why HiCache has tiers**, and **the RDMA row is why DeepEP ships two different sets of kernels**. One table, three different days.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 2: measured */
+const CODE_MEAS = [
+  '# (a) in order: the prefetcher sees it coming',
+  'a = np.ones(n, dtype=np.float32)',
+  'a.sum()                       # 4n bytes read, n adds',
+  '',
+  '# (b) at random: it cannot',
+  'idx = rng.permutation(n)',
+  'a[idx].sum()                  # same bytes, unpredictable order'
+];
+function measStage(o){
+  const sh = [];
+  if (o.upto === 0){
+    const top = Math.max.apply(null, SEQ.map(r => r.gbs));
+    SEQ.forEach((r, i) => {
+      const y = 4.40 - i * .52;
+      sh.push(fitT(2.20, y + .16, r.kb < 1024 ? r.kb + ' KB' : (r.kb / 1024) + ' MB',
+                   {anchor:'end', c:COL.grey, fs:.25}));
+      sh.push(S.r(2.40, y, Math.max(.06, 5.4 * r.gbs / top), .34, 'ok', null));
+      sh.push(fitT(9.30, y + .16, r.gbs.toFixed(1) + ' GB/s', {anchor:'end', c:COL.pale, fs:.24}));
+    });
+    sh.push(fitT(.70, 5.00, {zh:'(a) 依序讀：幾乎看不到階層', en:'(a) reading in order: the hierarchy barely shows'},
+                 {anchor:'start', c:COL.tealL, fs:.27}));
+  } else {
+    const top = Math.max.apply(null, RND.map(r => r.ns));
+    RND.forEach((r, i) => {
+      const y = 4.40 - i * .52;
+      sh.push(fitT(2.20, y + .16, r.kb < 1024 ? r.kb + ' KB' : (r.kb / 1024) + ' MB',
+                   {anchor:'end', c:COL.grey, fs:.25}));
+      sh.push(S.r(2.40, y, Math.max(.06, 5.4 * r.ns / top), .34, 'bad', null));
+      sh.push(fitT(9.30, y + .16, r.ns.toFixed(2) + ' ns', {anchor:'end', c:COL.pale, fs:.24}));
+    });
+    sh.push(fitT(.70, 5.00, {zh:'(b) 隨機讀：整個階層跑出來了',
+                             en:'(b) reading at random: the whole hierarchy appears'},
+                 {anchor:'start', c:COL.tealL, fs:.27}));
+  }
+  return caps(sh, o);
+}
+function measFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:measStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  const sMax = Math.max.apply(null, SEQ.map(r => r.gbs)), sMin = Math.min.apply(null, SEQ.map(r => r.gbs));
+  const rMax = Math.max.apply(null, RND.map(r => r.ns)), rMin = Math.min.apply(null, RND.map(r => r.ns));
+  p({upto:0, line:3,
+    cap:{zh:'這台機器上實測（沒有 GPU，但階層是一樣的）',
+         en:'measured on this machine - no GPU here, but the same shape'},
+    panels:[{lbl:'best', chips:[chip(sMax.toFixed(1) + ' GB/s', 'ok')]},
+            {lbl:'worst', chips:[chip(sMin.toFixed(1) + ' GB/s', 'dim')]},
+            {lbl:'spread', chips:[chip((sMax / sMin).toFixed(1) + 'x', 'dim')]}],
+    msg:{zh:'把陣列加總是純頻寬的工作，照理說一離開快取就該掉下去。實際上只差 ' + (sMax / sMin).toFixed(1) + ' 倍——因為**硬體 prefetcher 看得到循序讀，提早把資料抓進來**，大部分的延遲根本沒有發生。',
+         en:'Summing an array is pure bandwidth, so it ought to fall off a cliff once the array leaves cache. It moves by only ' + (sMax / sMin).toFixed(1) + 'x, because **the prefetcher sees a sequential read coming and starts it early** - most of the latency never happens.'}});
+  p({upto:1, line:6,
+    cap:{zh:'同樣的位元組，換成猜不到的順序', en:'the same bytes, in an order nothing can predict'},
+    panels:[{lbl:'in cache', chips:[chip(rMin.toFixed(2) + ' ns', 'ok')]},
+            {lbl:'out of cache', chips:[chip(rMax.toFixed(2) + ' ns', 'bad')]},
+            {lbl:'spread', chips:[chip((rMax / rMin).toFixed(0) + 'x', 'bad')]}],
+    msg:{zh:'一換成隨機順序，階層立刻現形：在快取裡一次存取 ' + rMin.toFixed(2) + ' ns，掉出快取 ' + rMax.toFixed(2) + ' ns，差 ' + (rMax / rMin).toFixed(0) + ' 倍。**規格表賣你的是頻寬，決定你拿不拿得到的是局部性。** 這個系列裡所有看起來像指標追逐的結構——radix tree、block table、expert 權重的 gather——付的都是這一欄的價錢。',
+         en:'Switch to a random order and the hierarchy appears immediately: ' + rMin.toFixed(2) + ' ns per access while it fits in cache, ' + rMax.toFixed(2) + ' ns when it does not, a factor of ' + (rMax / rMin).toFixed(0) + '. **Bandwidth is what the specification sells; locality decides whether you get it.** Every structure in this series that looks like a pointer chase - a radix tree, a block table, a gather of expert weights - pays the second column.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 3: the roofline */
+const CODE_RF = [
+  'intensity = flops / bytes_moved       # a property of the kernel',
+  'balance   = peak_flops / bandwidth    # a property of the machine',
+  '',
+  'time  = max(flops / peak_flops, bytes / bandwidth)',
+  'bound = "compute" if intensity > balance else "memory"'
+];
+function rfStage(o){
+  const sh = [];
+  const X0 = 1.40, Y0 = 4.55, W = 7.4, H = 3.1;
+  const lo = 0.1, hi = 10000;
+  const px = (ai) => X0 + W * LOG(ai, lo, hi);
+  const py = (tf) => Y0 - H * LOG(tf, 1, 2000);
+  sh.push(S.e(X0, Y0, X0 + W, Y0, {s:'ghost', arrow:false, w:.04}));
+  sh.push(S.e(X0, Y0, X0, Y0 - H, {s:'ghost', arrow:false, w:.04}));
+  const ridge = MACH.balance, peak = MACH.tflops;
+  let prev = null;
+  [0.1, 1, 10, 100, ridge, 1000, 10000].forEach(function(ai){
+    const tf = Math.min(peak, ai * MACH.gbs / 1000);
+    const pt = [px(ai), py(tf)];
+    if (prev) sh.push(S.e(prev[0], prev[1], pt[0], pt[1], {s:'bad', arrow:false, w:.055}));
+    prev = pt;
+  });
+  sh.push(S.e(px(ridge), Y0, px(ridge), py(peak), {s:'ghost', arrow:false, w:.03}));
+  sh.push(fitT(px(ridge), py(peak) - .28, {zh:'ridge ' + ridge.toFixed(0) + ' FLOPs/byte',
+                                           en:'ridge ' + ridge.toFixed(0) + ' FLOPs/byte'},
+               {c:'#ffbe6b', fs:.25}));
+  [[0.1, '0.1'], [1, '1'], [100, '100'], [10000, '10k']].forEach(function(t){
+    sh.push(fitT(px(t[0]), Y0 + .30, t[1], {c:COL.grey, fs:.23}));
+  });
+  sh.push(fitT(X0 + W / 2, Y0 + .68, {zh:'運算密度（FLOPs / byte）', en:'arithmetic intensity, FLOPs per byte'},
+               {c:COL.grey, fs:.26}));
+  const picks = ['residual add', 'decode: the whole model', 'prefill: attention (no tiling)',
+                 'prefill: one linear (GEMM)'];
+  picks.forEach(function(name, i){
+    if (i > o.upto) return;
+    const r = RF.filter(function(x){ return x.name === name; })[0];
+    const tf = Math.min(peak, r.ai * MACH.gbs / 1000);
+    sh.push(S.c(px(r.ai), py(tf), .10, 'hot', null));
+    sh.push(fitT(px(r.ai), py(tf) + (i % 2 ? .34 : -.30),
+                 name.replace('prefill: ', '').replace('decode: ', ''),
+                 {c:COL.tealL, fs:.23}));
+  });
+  return caps(sh, o);
+}
+function rfFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:rfStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  const by = {}; RF.forEach(function(r){ by[r.name] = r; });
+  p({upto:1, line:4,
+    cap:{zh:'一台機器只有兩個數字', en:'a machine is two numbers'},
+    panels:[{lbl:'peak', chips:[chip(MACH.tflops + ' TFLOP/s', 'dim')]},
+            {lbl:'bandwidth', chips:[chip(MACH.gbs + ' GB/s', 'dim')]},
+            {lbl:'balance', chips:[chip(MACH.balance + ' FLOPs/byte', 'hot')]}],
+    msg:{zh:'兩個數字的比值就是 machine balance：' + MACH.balance + ' FLOPs/byte。**一個 kernel 如果每讀一個 byte 做的運算比這個少，那它無論怎麼寫都不可能被算力卡住**——時間就是位元組除以頻寬。整個模型跑一次 decode 的運算密度是 ' + by['decode: the whole model'].ai + '，離 ridge 差兩個數量級。',
+         en:'The ratio of the two is the machine balance: ' + MACH.balance + ' FLOPs per byte. **A kernel that does less arithmetic per byte than that cannot be compute-bound however it is written** - its time is bytes divided by bandwidth. A whole decode step sits at ' + by['decode: the whole model'].ai + ' FLOPs per byte, two orders of magnitude below the ridge.'}});
+  p({upto:3, line:4,
+    cap:{zh:'同一層 linear，兩邊都站得到', en:'the same linear layer sits on both sides'},
+    panels:[{lbl:'decode GEMV', chips:[chip(by['decode: one linear (GEMV)'].ai.toFixed(2), 'bad')]},
+            {lbl:'prefill GEMM', chips:[chip(by['prefill: one linear (GEMM)'].ai.toFixed(0), 'ok')]},
+            {lbl:'residual add', chips:[chip(by['residual add'].ai.toFixed(2), 'bad')]}],
+    msg:{zh:'同一組權重、同一個 kernel：decode 時是矩陣×向量，運算密度 ' + by['decode: one linear (GEMV)'].ai.toFixed(2) + '，被記憶體卡死；prefill 時是矩陣×矩陣，密度 ' + by['prefill: one linear (GEMM)'].ai.toFixed(0) + '，被算力卡住。**變的不是 kernel，是列數。** 而 RMSNorm 和 residual add 這種逐元素運算密度不到 1，時間完全是搬運——所以把它們融合進鄰居（省掉一讀一寫，不是省掉乘法）才會那麼值錢。',
+         en:'Same weights, same kernel: in decode it is a matrix-vector product at ' + by['decode: one linear (GEMV)'].ai.toFixed(2) + ' FLOPs per byte and memory-bound; in prefill it is a matrix-matrix product at ' + by['prefill: one linear (GEMM)'].ai.toFixed(0) + ' and compute-bound. **The kernel did not change; the number of rows did.** And the pointwise rows - RMSNorm, a residual add - are below 1 FLOP per byte, so their time is entirely traffic, which is why fusing them into their neighbours (removing a read and a write, not a multiply) is worth so much.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 4: batching */
+const CODE_BATCH = [
+  '# the weights are read once whatever the batch size',
+  'flops = 2 * batch * d_model * d_ff',
+  'bytes = d_model * d_ff * 2     +  2 * batch * d_model * 2',
+  '#       ^ the weights, once       ^ the activations, per row',
+  '',
+  'intensity = flops / bytes      # grows linearly with the batch'
+];
+function batchStage(o){
+  const sh = [];
+  const top = Math.max.apply(null, BATCH.map(r => r.us));
+  BATCH.forEach((r, i) => {
+    if (i > o.upto) return;
+    const y = 4.40 - i * .70;
+    sh.push(fitT(1.60, y + .20, 'batch ' + r.b, {anchor:'end', c:COL.pale, fs:.26}));
+    sh.push(S.r(1.80, y, Math.max(.06, 4.6 * r.us / top), .40,
+                r.bound === 'memory' ? 'bad' : 'ok', null));
+    sh.push(fitT(9.30, y + .20, {zh:r.ai.toFixed(1) + ' FLOPs/byte　每 token ' + r.us.toFixed(1) + ' µs',
+                                 en:r.ai.toFixed(1) + ' FLOPs/byte,  ' + r.us.toFixed(1) + ' us per token'},
+                 {anchor:'end', c:COL.grey, fs:.24}));
+  });
+  sh.push(fitT(.70, 4.95, {zh:'一層 linear 的每 token 成本（越短越好）',
+                           en:'cost per token of one linear layer - shorter is better'},
+               {anchor:'start', c:COL.grey, fs:.26}));
+  return caps(sh, o);
+}
+function batchFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:batchStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({upto:2, line:3,
+    cap:{zh:'小 batch：權重讀一遍，只服務幾列', en:'small batch: read all the weights, serve a few rows'},
+    panels:[{lbl:'batch 1', chips:[chip(BATCH[0].us.toFixed(1) + ' us/token', 'bad')]},
+            {lbl:'intensity', chips:[chip(BATCH[0].ai.toFixed(2), 'bad')]}],
+    msg:{zh:'batch 1 的時候，整層權重被讀一遍只為了算一列——運算密度 ' + BATCH[0].ai.toFixed(2) + '，機器的算力完全在空轉。',
+         en:'At batch 1 the whole weight matrix is read to compute a single row: ' + BATCH[0].ai.toFixed(2) + ' FLOPs per byte, and the arithmetic units idle.'}});
+  p({upto:BATCH.length - 1, line:5,
+    cap:{zh:'加大 batch 就是沿著 roofline 往右走', en:'batching is how you move along the roofline'},
+    panels:[{lbl:'batch 256', chips:[chip(BATCH[4].bound, 'ok')]},
+            {lbl:'per token', chips:[chip(BATCH[0].us.toFixed(1) + ' us', 'bad'),
+                                     chip(BATCH[BATCH.length - 1].us.toFixed(2) + ' us', 'ok')]}],
+    msg:{zh:'權重不管 batch 多大都只讀一遍，所以運算密度隨 batch 線性成長，直到越過 ridge。每個 token 的成本從 ' + BATCH[0].us.toFixed(1) + ' µs 掉到 ' + BATCH[BATCH.length - 1].us.toFixed(2) + ' µs——**兩個數量級**，而這就是 serving 的全部經濟學。前面講 speculative decoding 在大 batch 停止划算，量的是同一條曲線的另一端。',
+         en:'The weights are read once whatever the batch, so intensity grows linearly until it crosses the ridge. The cost per token falls from ' + BATCH[0].us.toFixed(1) + ' us to ' + BATCH[BATCH.length - 1].us.toFixed(2) + ' us - **two orders of magnitude**, and that is the entire economics of serving. The day on decoding measured the same curve from the other end, when speculation stopped paying at large batch.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 5: tiling */
+const CODE_TILE = [
+  '# without tiling, B is re-read for every row of A',
+  'bytes = 2 * n**3 * 4',
+  '',
+  '# with square tiles of size T that stay in cache:',
+  'bytes = 2 * n**3 / T * 4          # T times less traffic',
+  '',
+  '# and T is not free: three tiles must fit at once',
+  'T = int(sqrt(cache_floats / 3))'
+];
+function tileStage(o){
+  const sh = [];
+  const top = TILE.sweep[0].gb;
+  TILE.sweep.forEach((r, i) => {
+    if (i > o.upto + 2) return;
+    const y = 4.50 - i * .55;
+    sh.push(fitT(1.70, y + .17, 'T = ' + r.t, {anchor:'end', c:COL.pale, fs:.25}));
+    sh.push(S.r(1.90, y, Math.max(.06, 4.6 * r.gb / top), .36, r.fits ? 'ok' : 'ghost', null));
+    sh.push(fitT(9.30, y + .17, {zh:r.gb.toFixed(1) + ' GB　' + (r.fits ? '裝得下' : '裝不下'),
+                                 en:r.gb.toFixed(1) + ' GB   ' + (r.fits ? 'fits in cache' : 'does not fit')},
+                 {anchor:'end', c:r.fits ? COL.grey : COL.red, fs:.24}));
+  });
+  sh.push(fitT(.70, 5.05, {zh:TILE.n + 'x' + TILE.n + ' 的 matmul：搬多少位元組（不做 tiling 是 ' + TILE.naiveGB.toFixed(0) + ' GB）',
+                           en:'a ' + TILE.n + 'x' + TILE.n + ' matmul: bytes moved (untiled: ' + TILE.naiveGB.toFixed(0) + ' GB)'},
+               {anchor:'start', c:COL.grey, fs:.26}));
+  return caps(sh, o);
+}
+function tileFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:tileStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({upto:0, line:5,
+    cap:{zh:'kernel 不能選 FLOPs，只能選重讀幾次', en:'a kernel cannot choose its FLOPs, only how often it re-reads'},
+    panels:[{lbl:'untiled', chips:[chip(TILE.naiveGB.toFixed(0) + ' GB', 'bad'),
+                                   chip(TILE.naiveAI.toFixed(2) + ' F/B', 'bad')]},
+            {lbl:'tiles of ' + TILE.tile, chips:[chip(TILE.tiledGB.toFixed(1) + ' GB', 'ok'),
+                                                 chip(TILE.tiledAI.toFixed(1) + ' F/B', 'ok')]}],
+    msg:{zh:'同樣的 matmul、同樣的 FLOPs：不做 tiling 要搬 ' + TILE.naiveGB.toFixed(0) + ' GB，切成 ' + TILE.tile + '×' + TILE.tile + ' 的 tile 只要 ' + TILE.tiledGB.toFixed(1) + ' GB，少 ' + TILE.ratio.toFixed(0) + ' 倍。**倍數剛好等於 tile 大小**，因為 B 的每一塊從「每列讀一次」變成「每個 tile-row 讀一次」。',
+         en:'Same matmul, same FLOPs: untiled it moves ' + TILE.naiveGB.toFixed(0) + ' GB, in ' + TILE.tile + 'x' + TILE.tile + ' tiles it moves ' + TILE.tiledGB.toFixed(1) + ' GB, ' + TILE.ratio.toFixed(0) + 'x less. **The factor is exactly the tile size**, because each block of B goes from being read once per row to once per tile-row.'}});
+  p({upto:TILE.sweep.length, line:7,
+    cap:{zh:'而 tile 多大不是自由參數', en:'and the tile size is not a free parameter'},
+    panels:[{lbl:'rule', chips:[chip('T = sqrt(cache / 3)', 'hot')]},
+            {lbl:'here', chips:[chip(String(TILE.tile), 'ok')]}],
+    msg:{zh:'三塊 tile（A、B、C 各一塊）必須同時待在快取裡，所以 T = √(cache/3)，這裡是 ' + TILE.tile + '。表裡「裝不下」的那幾列是模型在騙你：tile 一旦留不住就會被逐出再抓回來，預測的流量根本拿不到。**每一個函式庫裡的 blocked kernel，核心就是這一個算式加上細節。**',
+         en:'Three tiles - one of A, one of B, one of C - must sit in cache at once, so T = sqrt(cache / 3), which is ' + TILE.tile + ' here. The rows marked "does not fit" are the model lying: a tile that cannot stay resident is evicted and re-fetched, so the predicted traffic never materialises. **Every blocked kernel in every library is this one calculation plus the details.**'}});
+  return F.list;
+}
+
+/* ================================================================ tab 6: flash */
+const CODE_FLASH = [
+  '# standard: the seq x seq matrix lives in HBM and is walked several times',
+  'S = Q @ K.T                 # written',
+  'P = softmax(S)              # read, written',
+  'O = P @ V                   # read',
+  '',
+  '# tiled: blocks of Q, K, V, O in SRAM; the matrix is never allocated',
+  'for q_block in Q:           # Br rows at a time',
+  '    for kv_block in zip(K, V):',
+  '        online_softmax_update(acc, q_block, kv_block)'
+];
+function flashStage(o){
+  const sh = [];
+  const bars = [[{zh:'score 矩陣（必須常駐）', en:'the score matrix, resident'}, FL.score_matrix_gb, 'bad'],
+                [{zh:'standard 搬運量', en:'standard, moved'}, FL.standard_gb, 'act'],
+                [{zh:'tiled 搬運量', en:'tiled, moved'}, FL.tiled_gb, 'ok']];
+  const top = Math.max.apply(null, bars.map(b => b[1]));
+  bars.forEach((b, i) => {
+    if (i > o.upto) return;
+    const y = 4.20 - i * 1.05;
+    sh.push(fitT(.70, y + .62, b[0], {anchor:'start', c:COL.tealL, fs:.27}));
+    sh.push(S.r(.70, y, Math.max(.06, 6.6 * b[1] / top), .44, b[2], null));
+    sh.push(fitT(9.30, y + .22, b[1].toFixed(2) + ' GB', {anchor:'end', c:COL.pale, fs:.26}));
+  });
+  if (o.upto >= 2)
+    sh.push(fitT(4.9, .95, {zh:'流量只少 ' + FL.ratio.toFixed(1) + ' 倍，但那 ' + FL.score_matrix_gb.toFixed(2) + ' GB **從來沒有被配置過**',
+                            en:'only ' + FL.ratio.toFixed(1) + 'x less traffic - but the ' + FL.score_matrix_gb.toFixed(2) + ' GB is **never allocated at all**'},
+                 {c:COL.pale, fs:.28}));
+  return caps(sh, o);
+}
+function flashFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:flashStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({upto:1, line:1,
+    cap:{zh:'FlashAttention 就是上一個分頁的論證，用在 attention 上',
+         en:'FlashAttention is the previous tab\'s argument, applied to attention'},
+    panels:[{lbl:'score matrix', chips:[chip(FL.score_matrix_gb.toFixed(2) + ' GB', 'bad')]},
+            {lbl:'standard', chips:[chip(FL.standard_gb.toFixed(2) + ' GB', 'act')]}],
+    msg:{zh:'Day 52 已經證過 online softmax 的恆等式：一趟掃過 K、答案一位不差。它沒講的是「為什麼值得」，而答案就是上一個分頁那張表。標準做法把 ' + FL.seq + '×' + FL.seq + ' 的分數矩陣放進 HBM，再走過它好幾趟。',
+         en:'Day 52 proved the online-softmax identity: one pass over the keys, the same answer to the last bit. What it did not say is why that is worth doing, and the answer is the previous tab. The standard implementation puts the ' + FL.seq + 'x' + FL.seq + ' score matrix in HBM and then walks over it several times.'}});
+  p({upto:2, line:6,
+    cap:{zh:'兩個誠實的觀察', en:'two honest observations'},
+    panels:[{lbl:'traffic', chips:[chip(FL.ratio.toFixed(1) + 'x', 'act')]},
+            {lbl:'block', chips:[chip(FL.block + ' rows', 'dim')]},
+            {lbl:'vs SRAM', chips:[chip(Math.round(FL.memory_ratio).toLocaleString() + 'x', 'bad')]}],
+    msg:{zh:'第一：**流量只少 ' + FL.ratio.toFixed(1) + ' 倍，不是十倍。** d_head 128、shared memory 160 KB 時 block 只有 ' + FL.block + ' 列，K/V 要重讀 ' + FL.passes + ' 次；流量的好處取決於 d_head²/SRAM，所以原論文（d_head 64）看起來比現在的模型大。第二：**流量從來不是主要的獎品**——真正買到的是那 ' + FL.score_matrix_gb.toFixed(2) + ' GB 根本不存在，它是 shared memory 的 ' + Math.round(FL.memory_ratio).toLocaleString() + ' 倍。這是容量的論證不是頻寬的論證，也是長 context 能被服務的理由。',
+         en:'First: **the traffic win is ' + FL.ratio.toFixed(1) + 'x, not ten.** With d_head 128 and 160 KB of shared memory the block is only ' + FL.block + ' rows, so K and V are re-read ' + FL.passes + ' times; the traffic saving scales with d_head squared over SRAM, which is why it looked larger in the original paper (d_head 64). Second: **the traffic was never the main prize** - what tiling buys is that the ' + FL.score_matrix_gb.toFixed(2) + ' GB is never allocated, ' + Math.round(FL.memory_ratio).toLocaleString() + 'x the shared memory it runs in. That is a capacity argument, and it is why long contexts are servable at all.'}});
+  p({upto:2, line:8,
+    cap:{zh:'backward 也是同一招：只存 logsumexp，再重算',
+         en:'the backward pass is the same trick: store the logsumexp, recompute'},
+    panels:[{lbl:'stored', chips:[chip('1 number per row', 'ok')]},
+            {lbl:'seq 32768', chips:[chip(FL.scaling[3].mat.toFixed(0) + ' GB matrix', 'bad')]}],
+    msg:{zh:'反向傳遞一樣不存分數矩陣：它只留每一列的 log-sum-exp（一個數字，不是 seq 個數字），再從 Q 和 K 把分數重算出來。**重算比來回搬便宜**，而為什麼便宜，第三個分頁的表已經回答了。seq 32768 時那個矩陣是 ' + FL.scaling[3].mat.toFixed(0) + ' GB——沒有人能存它。',
+         en:'The backward pass does not store the score matrix either: it keeps the log-sum-exp per row - one number instead of seq numbers - and recomputes the scores from Q and K. **Recomputation is cheaper than the round trip**, and the roofline table is why. At seq 32768 that matrix would be ' + FL.scaling[3].mat.toFixed(0) + ' GB, which nobody is going to store.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 7: latency */
+const CODE_LAT = [
+  '# Little\'s law: to keep the pipe full you need',
+  'bytes_in_flight = bandwidth * latency',
+  '5300e9 * 600e-9 = 3.2 MB   # on one GPU, at once',
+  '',
+  '# and a cache line is fetched whole, whatever you asked for',
+  'a[::16].sum()      # a sixteenth of the payload, all of the lines'
+];
+function latStage(o){
+  const sh = [];
+  if (o.upto === 0){
+    sh.push(box(.70, 3.60, 3.0, .70, 'ok', LIT.bandwidth_gbs.toLocaleString() + ' GB/s', .30));
+    sh.push(fitT(4.00, 3.95, 'x', {c:COL.pale, fs:.32}));
+    sh.push(box(4.40, 3.60, 2.2, .70, 'act', LIT.latency_ns + ' ns', .30));
+    sh.push(fitT(6.90, 3.95, '=', {c:COL.pale, fs:.32}));
+    sh.push(box(7.30, 3.60, 1.9, .70, 'hot', (LIT.bytes_in_flight / 1e6).toFixed(1) + ' MB', .30));
+    sh.push(fitT(4.9, 2.70, {zh:'同時必須有 ' + Math.round(LIT.requests_in_flight).toLocaleString() + ' 個請求在路上（每個 ' + LIT.bytes_per_request + ' bytes）',
+                             en:Math.round(LIT.requests_in_flight).toLocaleString() + ' requests have to be in flight at once, at ' + LIT.bytes_per_request + ' bytes each'},
+                 {c:COL.tealL, fs:.30}));
+  } else {
+    ST.forEach((r, i) => {
+      const y = 4.30 - i * .62;
+      sh.push(fitT(1.70, y + .18, 'stride ' + r.s, {anchor:'end', c:COL.pale, fs:.25}));
+      sh.push(S.r(1.90, y, Math.max(.06, 3.4 * r.useful / ST[0].useful), .38, 'ok', null));
+      sh.push(S.r(5.50, y, Math.max(.06, 3.4 * r.fetched / ST[0].fetched), .38, 'bad', null));
+      sh.push(fitT(9.30, y + .18, (r.eff * 100).toFixed(0) + '%　' + r.ms.toFixed(2) + ' ms',
+                   {anchor:'end', c:COL.grey, fs:.23}));
+    });
+    sh.push(fitT(1.90, 4.95, {zh:'有用的位元組', en:'useful bytes'}, {anchor:'start', c:COL.tealL, fs:.25}));
+    sh.push(fitT(5.50, 4.95, {zh:'實際抓進來的', en:'bytes actually fetched'}, {anchor:'start', c:COL.red, fs:.25}));
+  }
+  return caps(sh, o);
+}
+function latFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:latStage(o), panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({upto:0, line:2,
+    cap:{zh:'光有頻寬不夠：還要有足夠多的請求在路上',
+         en:'bandwidth alone is not enough: the requests have to be in flight'},
+    panels:[{lbl:'in flight', chips:[chip((LIT.bytes_in_flight / 1e6).toFixed(1) + ' MB', 'hot')]},
+            {lbl:'requests', chips:[chip(Math.round(LIT.requests_in_flight).toLocaleString(), 'bad')]}],
+    msg:{zh:'記憶體系統有第二個數字，規格表很少跟第一個放在一起：**一次存取要多久**。要把管線填滿，任何時刻都必須有「頻寬 × 延遲」這麼多位元組在路上——這裡是 ' + (LIT.bytes_in_flight / 1e6).toFixed(1) + ' MB，也就是 ' + Math.round(LIT.requests_in_flight).toLocaleString() + ' 個同時在飛的請求。所以一個「發一次 load 然後等」的 kernel 就算完全沒有多餘工作也會慢：硬體需要的是數千個未完成請求，而那只能靠很多執行緒、或一個執行緒展開很多次載入來供應。',
+         en:'A memory system has a second number that specifications rarely put beside the first: **how long one access takes**. To keep the pipe full you need bandwidth times latency bytes in flight at every moment - ' + (LIT.bytes_in_flight / 1e6).toFixed(1) + ' MB here, or ' + Math.round(LIT.requests_in_flight).toLocaleString() + ' simultaneous requests. Which is why a kernel that issues one load and waits is slow even with no redundant work: the hardware wants thousands of outstanding requests, and only many threads - or one thread unrolled over many loads - can supply them.'}});
+  p({upto:1, line:5,
+    cap:{zh:'而且 cache line 是整條抓的（本機實測）',
+         en:'and a cache line is fetched whole - measured here'},
+    panels:[{lbl:'stride 1', chips:[chip('100%', 'ok')]},
+            {lbl:'stride 16', chips:[chip((ST[4].eff * 100).toFixed(0) + '%', 'bad')]},
+            {lbl:'time', chips:[chip(ST[0].ms.toFixed(2) + ' ms', 'dim'),
+                                chip(ST[4].ms.toFixed(2) + ' ms', 'bad')]}],
+    msg:{zh:'到 stride 16 為止，「實際抓進來」那一欄完全不動：不管你跳多遠，每條 cache line 都被碰到，所以有用的比例一路掉到 ' + (ST[4].eff * 100).toFixed(0) + '%，而時間不但沒變少、還變多了。**這就是 GPU 上「coalescing」的全部內容**，在 CPU 上則是 array-of-structs 比 struct-of-arrays 慢的原因——同一個硬體事實。',
+         en:'Up to stride 16 the "fetched" column does not move at all: every cache line is touched whatever the stride, so the useful fraction collapses to ' + (ST[4].eff * 100).toFixed(0) + '% while the time goes *up*. **That is the entire content of coalescing on a GPU**, and on a CPU it is why an array of structs loses to a struct of arrays. One hardware fact, two names.'}});
+  return F.list;
+}
+
+/* ================================================================ tabs 8-9: the frameworks */
+function mapStage(o){
+  const sh = [], rows = o.rows;
+  rows.forEach((r, i) => {
+    if (i > o.upto) return;
+    const y = 4.30 - i * .80;
+    sh.push(box(.70, y, 3.30, .58, 'idle', r[0], .26));
+    sh.push(S.e(4.15, y + .29, 4.75, y + .29, {s:'ghost', arrow:true, w:.05}));
+    sh.push(box(4.90, y, 4.30, .58, i === o.upto ? 'hot' : 'ok', r[1], .26));
+  });
+  sh.push(fitT(2.35, 5.08, {zh:'這個檔案裡的東西', en:'what this file calls it'},
+               {c:COL.grey, fs:.26}));
+  sh.push(fitT(7.05, 5.08, o.title, {c:COL.tealL, fs:.28}));
+  return caps(sh, o);
+}
+const CODE_TORCH = [
+  'with torch.profiler.profile(activities=[CUDA]) as p:',
+  '    model(x)',
+  'p.key_averages().table(sort_by="self_cuda_time_total")',
+  '',
+  'torch.cuda.max_memory_allocated()',
+  'torch.cuda.memory._record_memory_history()',
+  '',
+  'torch.compile(model)                       # fuses the pointwise chains',
+  'F.scaled_dot_product_attention(q, k, v)    # dispatches to a tiled kernel'
+];
+const TORCH_ROWS = [
+  [{zh:'哪個 kernel 花了時間', en:'which kernel spent the time'}, {zh:'torch.profiler', en:'torch.profiler'}],
+  [{zh:'峰值記憶體與去向', en:'peak memory and where it went'}, {zh:'max_memory_allocated ／ _record_memory_history', en:'max_memory_allocated / _record_memory_history'}],
+  [{zh:'逐元素 kernel 的流量', en:'the traffic of pointwise kernels'}, {zh:'torch.compile 的融合', en:'fusion via torch.compile'}],
+  [{zh:'tiling 過的 attention', en:'a tiled attention kernel'}, {zh:'scaled_dot_product_attention ／ sdpa_kernel', en:'scaled_dot_product_attention / sdpa_kernel'}]
+];
+function torchFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:mapStage(Object.assign({rows:TORCH_ROWS, title:'PyTorch'}, o)),
+                           panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({upto:1, line:3,
+    cap:{zh:'profiler 回答的是位元組，不是 FLOPs', en:'the profiler answers in bytes, not FLOPs'},
+    panels:[{lbl:'profiler', chips:[chip('per-kernel time', 'ok')]},
+            {lbl:'memory', chips:[chip('peak + history', 'act')]}],
+    msg:{zh:'把 roofline 放在手邊再去讀 profile，是完全不同的體驗：一個只跑到峰值算力 20% 的 kernel 不一定寫得爛，它可能已經到了峰值頻寬的 95%，而解法是**給它更高的運算密度**，不是給它更多執行緒。',
+         en:'Reading a profile with the roofline in hand is a different experience: a kernel at 20% of peak FLOPs is not necessarily badly written - it may be at 95% of peak bandwidth, and the fix is **more arithmetic per byte**, not more threads.'}});
+  p({upto:3, line:7,
+    cap:{zh:'而最高槓桿的工具是融合', en:'and the highest-leverage tool is fusion'},
+    panels:[{lbl:'torch.compile', chips:[chip('fuses pointwise', 'ok')]},
+            {lbl:'SDPA', chips:[chip('tiled attention', 'act')]}],
+    msg:{zh:'第三個分頁說了：逐元素 kernel 的時間完全是搬運。所以 `torch.compile` 把 norm＋add＋activation 融成一個 kernel，省掉的是一讀一寫而不是乘法——這是對記憶體有界的工作最有效的一招。而 `F.scaled_dot_product_attention` 就是幫你呼叫別人 tiling 好的 attention kernel（必要時用 `sdpa_kernel` 指定後端）。',
+         en:'Tab three said it: a pointwise kernel\'s time is entirely traffic. So `torch.compile` fuses norm + add + activation into one kernel and saves a read and a write rather than a multiply - the most effective single move for memory-bound work. And `F.scaled_dot_product_attention` is how you call the tiled attention kernel somebody already wrote (with `sdpa_kernel` to pin the backend).'}});
+  return F.list;
+}
+const CODE_JAX = [
+  'compiled = jax.jit(f).lower(x).compile()',
+  'compiled.memory_analysis()     # bytes in, out, temporaries',
+  'compiled.cost_analysis()       # the FLOP count to divide by',
+  '',
+  'jax.jit(f, donate_argnums=(0,))   # reuse the input buffer',
+  'jax.profiler.trace("/tmp/tb")',
+  '',
+  '# and when the compiler\'s tiling is not enough: Pallas,',
+  '# where you choose the block sizes against the same constraint'
+];
+const JAX_ROWS = [
+  [{zh:'流量與 FLOPs', en:'traffic and FLOPs'}, {zh:'memory_analysis ／ cost_analysis', en:'memory_analysis / cost_analysis'}],
+  [{zh:'逐元素 kernel 的流量', en:'the traffic of pointwise kernels'}, {zh:'XLA 預設就融合', en:'XLA fuses by default'}],
+  [{zh:'少配置一塊 buffer', en:'one buffer fewer'}, {zh:'donate_argnums', en:'donate_argnums'}],
+  [{zh:'自己選 tile 大小', en:'choosing the block sizes yourself'}, {zh:'Pallas（＝Triton 那個模型）', en:'Pallas, the Triton model'}]
+];
+function jaxFrames(){
+  const F = new Frames();
+  const p = (o) => F.push({shapes:mapStage(Object.assign({rows:JAX_ROWS, title:'JAX'}, o)),
+                           panels:o.panels, line:o.line, msg:o.msg, view:VIEW});
+  p({upto:1, line:3,
+    cap:{zh:'編譯器可以在你跑之前就給你 roofline',
+         en:'the compiler can hand you a roofline before you run anything'},
+    panels:[{lbl:'memory_analysis', chips:[chip('bytes', 'ok')]},
+            {lbl:'cost_analysis', chips:[chip('FLOPs', 'act')]}],
+    msg:{zh:'`compiled.memory_analysis()` 給你這個函式搬了多少位元組、`cost_analysis()` 給你 FLOPs——兩個相除就是運算密度。**這是編譯器在你還沒執行之前就算好的 roofline**，而 XLA 預設就會融合，所以大部分逐元素的流量不用你開口就消失了。',
+         en:'`compiled.memory_analysis()` gives the bytes this function moves and `cost_analysis()` gives the FLOPs; divide one by the other and you have its arithmetic intensity. **That is a roofline computed by the compiler before you run anything** - and XLA fuses by default, so most of the pointwise traffic disappears without being asked.'}});
+  p({upto:3, line:7,
+    cap:{zh:'而 tiling 住在不同的地方', en:'and the tiling lives somewhere else'},
+    panels:[{lbl:'XLA', chips:[chip('tiles the fused region', 'ok')]},
+            {lbl:'Pallas', chips:[chip('you choose the blocks', 'act')]}],
+    msg:{zh:'跟 PyTorch 真正的差別在於 tiling 住在哪裡：PyTorch 是你呼叫別人 tiling 好的 kernel，或自己用 Triton 寫一個；JAX 是編譯器自己把融合後的區塊 tiling 掉，而當那還不夠好的時候你降到 Pallas——那就是 Triton 的模型：**你自己選 block 大小，而你在對抗的約束就是第五個分頁那一條。**',
+         en:'The real difference from PyTorch is where the tiling lives. In PyTorch you call a kernel somebody tiled for you, or you write one in Triton. In JAX the compiler tiles the fused region itself, and when that is not good enough you drop to Pallas - which is the Triton model: **you choose the block sizes, and the constraint you are choosing against is the one in tab five.**'}});
+  return F.list;
+}
+
+const DAY_META = {
+  title: {zh:'記憶體階層與 roofline', en:'The memory hierarchy and the roofline'},
+  sub: {zh:'為什麼有些 kernel 再怎麼優化都不會變快，以及 tiling 為什麼是唯一的出路',
+        en:'why some kernels never get faster, and why tiling is the only way out'},
+  tabs: [
+    {id:'hier', label:{zh:'階層', en:'the hierarchy'},
+     stage:{zh:'容量、頻寬、延遲', en:'capacity, bandwidth, latency'},
+     view:VIEW, code:CODE_HIER, build:hierFrames,
+     idea:{zh:'每一層大約比上一層慢一個數量級、大兩個數量級。shared memory → HBM 是每個 kernel 都在對抗的那一步；而**主機記憶體那一列是 HiCache 分層的理由、RDMA 那一列是 DeepEP 要兩套 kernel 的理由**——同一張表，三個不同的日子。',
+           en:'Each level is about an order of magnitude slower and two orders larger than the one above. The step from shared memory to HBM is what every kernel here fights, and the last two rows are earlier days: **host memory is why HiCache has tiers, RDMA is why DeepEP ships two sets of kernels**.'},
+     legend:[['#ff9736', {zh:'目前這一層', en:'the level being shown'}],
+             ['#12b3b8', {zh:'已經看過的', en:'levels already shown'}]]},
+    {id:'meas', label:{zh:'實測：順序決定一切', en:'measured: order is everything'},
+     stage:{zh:'依序讀 vs 隨機讀', en:'reading in order against at random'},
+     view:VIEW, code:CODE_MEAS, build:measFrames,
+     idea:{zh:'同一台機器、同樣的位元組：依序讀只差 1.x 倍（prefetcher 把延遲藏掉了），隨機讀差 ' + (Math.max.apply(null, RND.map(r => r.ns)) / Math.min.apply(null, RND.map(r => r.ns))).toFixed(0) + ' 倍。**規格表賣你的是頻寬，決定你拿不拿得到的是局部性。**',
+           en:'Same machine, same bytes: read in order the spread is only about 1.x (the prefetcher hides the latency), read at random it is ' + (Math.max.apply(null, RND.map(r => r.ns)) / Math.min.apply(null, RND.map(r => r.ns))).toFixed(0) + 'x. **Bandwidth is what the specification sells; locality decides whether you get it.**'},
+     legend:[['#12b3b8', {zh:'依序讀（GB/s）', en:'in order, GB/s'}],
+             ['#ff5c5c', {zh:'隨機讀（ns／次）', en:'at random, ns per access'}]]},
+    {id:'roof', label:{zh:'roofline', en:'the roofline'},
+     stage:{zh:'運算密度決定被誰卡住', en:'arithmetic intensity decides the limit'},
+     view:VIEW, code:CODE_RF, build:rfFrames,
+     idea:{zh:'機器只有兩個數字，比值是 machine balance（' + MACH.balance + ' FLOPs/byte）。低於它的 kernel 無論怎麼寫都不可能被算力卡住。**同一層 linear：decode 時密度 1.0 被記憶體卡死、prefill 時密度 3186 被算力卡住——變的不是 kernel，是列數。**',
+           en:'A machine is two numbers and their ratio is the balance (' + MACH.balance + ' FLOPs per byte); anything below it cannot be compute-bound however it is written. **The same linear layer: 1.0 FLOPs per byte in decode and memory-bound, 3186 in prefill and compute-bound - the kernel did not change, the number of rows did.**'},
+     legend:[['#ff5c5c', {zh:'roofline', en:'the roofline'}],
+             ['#ff9736', {zh:'這個系列裡的 kernel', en:'kernels from this series'}]]},
+    {id:'batch', label:{zh:'batch 怎麼移動你', en:'what batching does'},
+     stage:{zh:'沿著 roofline 往右走', en:'moving along the roofline'},
+     view:VIEW, code:CODE_BATCH, build:batchFrames,
+     idea:{zh:'權重不管 batch 多大都只讀一遍，所以運算密度隨 batch 線性成長：batch 1 的密度 1.0、batch 256 越過 ridge，而每個 token 的成本從 ' + BATCH[0].us.toFixed(1) + ' µs 掉到 ' + BATCH[BATCH.length - 1].us.toFixed(2) + ' µs。**這就是 serving 的全部經濟學**，也是 speculative decoding 在大 batch 停止划算的同一條曲線。',
+           en:'The weights are read once whatever the batch, so intensity grows linearly: 1.0 at batch 1, past the ridge by batch 256, and the cost per token falls from ' + BATCH[0].us.toFixed(1) + ' to ' + BATCH[BATCH.length - 1].us.toFixed(2) + ' us. **That is the entire economics of serving** - and the same curve that makes speculative decoding stop paying at large batch.'},
+     legend:[['#ff5c5c', {zh:'被記憶體卡住', en:'memory bound'}],
+             ['#12b3b8', {zh:'被算力卡住', en:'compute bound'}]]},
+    {id:'tile', label:{zh:'tiling', en:'tiling'},
+     stage:{zh:'唯一能提高運算密度的辦法', en:'the only way to raise arithmetic intensity'},
+     view:VIEW, code:CODE_TILE, build:tileFrames,
+     idea:{zh:'kernel 不能選 FLOPs，只能選「同樣的位元組重讀幾次」。' + TILE.n + 'x' + TILE.n + ' 的 matmul：不 tiling 搬 ' + TILE.naiveGB.toFixed(0) + ' GB，切成 ' + TILE.tile + ' 的 tile 只搬 ' + TILE.tiledGB.toFixed(1) + ' GB（少 ' + TILE.ratio.toFixed(0) + ' 倍，**倍數剛好等於 tile 大小**）。而 tile 大小由快取決定：T = sqrt(cache/3)。',
+           en:'A kernel cannot choose its FLOPs, only how often it re-reads the same bytes. A ' + TILE.n + 'x' + TILE.n + ' matmul moves ' + TILE.naiveGB.toFixed(0) + ' GB untiled and ' + TILE.tiledGB.toFixed(1) + ' GB in tiles of ' + TILE.tile + ' - ' + TILE.ratio.toFixed(0) + 'x less, **and the factor is exactly the tile size**. The tile size itself is set by the cache: T = sqrt(cache / 3).'},
+     legend:[['#12b3b8', {zh:'裝得進快取', en:'fits in cache'}],
+             ['#8fa3ac', {zh:'裝不進（模型失效）', en:'does not fit: the model stops holding'}]]},
+    {id:'flash', label:{zh:'FlashAttention', en:'FlashAttention'},
+     stage:{zh:'同一個論證，用在 attention 上', en:'the same argument, applied to attention'},
+     view:VIEW, code:CODE_FLASH, build:flashFrames,
+     idea:{zh:'Day 52 證過 online softmax 的恆等式；這裡是「為什麼值得」。誠實地說：**流量只少 ' + FL.ratio.toFixed(1) + ' 倍**（d_head 128 下 block 只有 ' + FL.block + ' 列），真正的獎品是那 ' + FL.score_matrix_gb.toFixed(2) + ' GB 的分數矩陣**從來沒有被配置過**——那是容量的論證，也是長 context 能被服務的理由。backward 一樣只存 logsumexp 再重算。',
+           en:'Day 52 proved the online-softmax identity; this is why it is worth doing. Honestly: **the traffic win is only ' + FL.ratio.toFixed(1) + 'x** (at d_head 128 the block is just ' + FL.block + ' rows). The real prize is that the ' + FL.score_matrix_gb.toFixed(2) + ' GB score matrix **is never allocated** - a capacity argument, and the reason long contexts are servable. The backward pass does the same thing: store the logsumexp, recompute the scores.'},
+     legend:[['#ff5c5c', {zh:'必須常駐的矩陣', en:'the resident matrix'}],
+             ['#9d6bff', {zh:'standard 搬運量', en:'standard traffic'}],
+             ['#12b3b8', {zh:'tiled 搬運量', en:'tiled traffic'}]]},
+    {id:'lat', label:{zh:'延遲與 cache line', en:'latency and cache lines'},
+     stage:{zh:'光有頻寬不夠', en:'bandwidth alone is not enough'},
+     view:VIEW, code:CODE_LAT, build:latFrames,
+     idea:{zh:'Little 法則：要填滿管線就必須隨時有「頻寬 × 延遲」＝ ' + (LIT.bytes_in_flight / 1e6).toFixed(1) + ' MB（約 ' + Math.round(LIT.requests_in_flight).toLocaleString() + ' 個請求）在路上，所以「發一次 load 然後等」的 kernel 再乾淨也慢。另一半是 cache line 整條抓：本機實測 stride 16 時有用比例只剩 ' + (ST[4].eff * 100).toFixed(0) + '%，而時間還變多——這就是 coalescing。',
+           en:'Little\'s law: keeping the pipe full needs bandwidth times latency - ' + (LIT.bytes_in_flight / 1e6).toFixed(1) + ' MB, about ' + Math.round(LIT.requests_in_flight).toLocaleString() + ' requests - in flight at all times, so a kernel that issues one load and waits is slow however clean it is. The other half is that cache lines are fetched whole: measured here, at stride 16 only ' + (ST[4].eff * 100).toFixed(0) + '% of the fetched bytes are useful and the time goes up. That is coalescing.'},
+     legend:[['#12b3b8', {zh:'有用的位元組', en:'useful bytes'}],
+             ['#ff5c5c', {zh:'實際抓進來的', en:'bytes fetched'}]]},
+    {id:'torch', label:{zh:'在 PyTorch 裡', en:'in PyTorch'},
+     stage:{zh:'profiler 與融合', en:'the profiler and fusion'},
+     view:VIEW, code:CODE_TORCH, build:torchFrames,
+     idea:{zh:'`torch.profiler` 告訴你時間花在哪個 kernel、`max_memory_allocated` 與 `_record_memory_history` 告訴你記憶體去哪了。而最高槓桿的是 `torch.compile` 的融合（省掉一讀一寫）與 `scaled_dot_product_attention`（呼叫別人 tiling 好的 kernel）。**拿著 roofline 讀 profile**：只到峰值算力 20% 的 kernel 可能已經在峰值頻寬的 95%。',
+           en:'`torch.profiler` says which kernel spent the time; `max_memory_allocated` and `_record_memory_history` say where the memory went. The highest-leverage tools are `torch.compile` fusion (saving a read and a write) and `scaled_dot_product_attention` (calling a kernel somebody tiled). **Read the profile with the roofline in hand**: a kernel at 20% of peak FLOPs may be at 95% of peak bandwidth.'},
+     legend:[['#ff9736', {zh:'目前這一列', en:'the row being shown'}],
+             ['#12b3b8', {zh:'PyTorch 的工具', en:'the PyTorch tool'}],
+             ['#8fa3ac', {zh:'這個檔案裡的東西', en:'what this file calls it'}]]},
+    {id:'jax', label:{zh:'在 JAX 裡', en:'in JAX'},
+     stage:{zh:'編譯器先算給你看', en:'the compiler computes it for you'},
+     view:VIEW, code:CODE_JAX, build:jaxFrames,
+     idea:{zh:'`memory_analysis()` 給位元組、`cost_analysis()` 給 FLOPs，相除就是運算密度——**編譯器在你執行之前就算好的 roofline**。XLA 預設融合，所以逐元素的流量自己消失；而 tiling 住在編譯器裡，不夠好時降到 Pallas 自己選 block 大小，對抗的就是 tiling 那一頁的約束。',
+           en:'`memory_analysis()` gives the bytes and `cost_analysis()` the FLOPs; divide them and you have the intensity - **a roofline the compiler computed before you ran anything**. XLA fuses by default so pointwise traffic disappears on its own, and the tiling lives in the compiler: when that is not enough you drop to Pallas and choose the block sizes against the constraint from the tiling tab.'},
+     legend:[['#ff9736', {zh:'目前這一列', en:'the row being shown'}],
+             ['#12b3b8', {zh:'JAX 的工具', en:'the JAX tool'}],
+             ['#8fa3ac', {zh:'這個檔案裡的東西', en:'what this file calls it'}]]}
+  ]
+};
