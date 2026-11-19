@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Embeddings and vector search: a document becomes a direction, and retrieval asks whose is closest</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Embeddings and vector search: a document becomes a direction, and retrieval asks whose is closest</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2065%20-%20embeddings%20and%20vector%20search">day 65 on GitHub</a></p>
+<p><em>100 Days of Python - day 65</em></p>
+<p>An embedding turns a document into a direction in space, and retrieval turns a question into &quot;whose direction is closest&quot;. Everything after that is four decisions - normalise or not, how many dimensions, how few bits, how many vectors per document - and today I measured the price of each one instead of quoting defaults.</p>
+<p>To make measurement possible, the corpus has its answers planted in it: <strong>20,000 documents, 200 queries, and 10 known-correct documents for every query</strong>. That turns recall@10 into a fact rather than a judgement.</p>
+<pre><code>                                                recall@10
+----------------------------------------------  ---------
+term matching (tf-idf cosine)                   0.419
+my embedding (256 dims, twenty lines of numpy)  0.617
+the answer key itself                           0.825</code></pre>
+<p><strong>The ceiling is 0.825, not 1.0.</strong> Even ranking by the exact recipe the corpus was generated from cannot recover every planted answer, because background documents about the same topic crowd into the top ten. Finding that ceiling first is what turns &quot;we score 0.62&quot; from a disappointment into three quarters of what is possible.</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_0.png?raw=true">
+<h2>A vector is a direction, so the length has to go</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_1.png?raw=true">
+<p>The length of a document vector correlates <strong>0.92</strong> with how many words the document has. So a raw dot product does not ask &quot;is this about the same thing&quot;, it asks &quot;is this about the same thing <em>and</em> is it long&quot;:</p>
+<pre><code>scoring              recall@10  average length of the top 10
+-------------------  ---------  ----------------------------
+cosine (normalised)  0.617      250 words
+raw dot product      0.092      1,494 words</code></pre>
+<p>The median document is 199 words. Forget to normalise and the index is still an index - it just ranks by length now, and nothing in any log says so. That is the whole reason every library has a <code>normalize_embeddings</code> flag, and why people forget it exactly once.</p>
+<h2>Where the vectors come from</h2>
+<pre><code>X      = log1p(counts) * idf        # down-weight common words
+U,S,Vt = svd(X - X.mean(0))         # the directions that matter
+vec    = X @ Vt[:dims].T            # project into `dims` numbers</code></pre>
+<p>That is the entire embedding: 0.419 for term matching, 0.617 once projected. The SVD is not compression for its own sake - it builds directions out of words that keep appearing together, which is what lets a query match a document that used different words for the same thing. A trained encoder swaps the SVD for a contrastive objective; the output has exactly the same shape, one dense direction per document, which is why everything below carries over to a real model.</p>
+<h2>The two sides are not symmetric</h2>
+<pre><code>encoding                               recall@10
+-------------------------------------  ---------
+both sides normalised (cosine)         0.617
+query left unnormalised                0.617
+documents left unnormalised            0.092
+query encoded without the idf weights  0.629
+query encoded with an idf of its own   0.609
+query with the idf applied twice       0.588</code></pre>
+<p>The first fact is exact and worth keeping: <strong>normalising the query cannot change the ranking</strong>, because scaling one side multiplies every score by the same number. Only the document side matters.</p>
+<p>The last three are the interesting ones. Encoding the query differently from the documents moves the answer by up to 0.041 recall <strong>in both directions</strong>, with no error anywhere and no signal that anything changed. In this corpus the damage is small; what makes it dangerous in production is that instruction-tuned embedding models are trained with a query prefix and a document prefix, so the two encoders really are different functions - and swapping them is exactly this kind of silent move.</p>
+<h2>How many dimensions</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_2.png?raw=true">
+<pre><code>dims  bytes/doc  GB per million  recall@10
+----  ---------  --------------  ---------
+256   1,024      0.95            0.617
+128   512        0.48            0.678
+64    256        0.24            0.710
+32    128        0.12            0.730
+16    64         0.06            0.732
+8     32         0.03            0.672
+4     16         0.01            0.420</code></pre>
+<p>The columns of an SVD come out ordered, so the first <em>d</em> of them are already the best <em>d</em>-dimensional version of the same embedding. Truncation needs no retraining - which is the property Matryoshka training puts into a neural encoder on purpose.</p>
+<p>The peak here is at 16 dimensions rather than 256: <strong>the tail directions are noise, and noise still gets a vote</strong>. A trained Matryoshka model gives a curve that is flat and then falls instead of rising like this one, but the practical conclusion is identical. The dimension count is a hyperparameter, not a virtue, and truncation is the first thing to try when the vector bill arrives.</p>
+<h2>How few bits per number</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_3.png?raw=true">
+<pre><code>representation               256 dims  recall  16 dims  recall
+---------------------------  --------  ------  -------  ------
+float32                      1,024 B   0.617   64 B     0.732
+int8                         256 B     0.618   16 B     0.732
+binary, 1 bit per dimension  32 B      0.032   2 B      0.429
+binary + rescore top 40      34 B      0.086   2.1 B    0.522</code></pre>
+<p><strong>int8 is free</strong>: one scale for the whole corpus leaves the dot product intact up to rounding, at a quarter of the memory. The trap is a per-vector scale - a different unit for every document is exactly the comparison the index exists to make.</p>
+<p><strong>One bit per dimension is not free here</strong>, because this embedding keeps its information in the first few dimensions and a sign bit treats every dimension as equally important. Truncate first and it becomes usable; rescore the binary shortlist with the full vectors and it recovers further. Which is the standard recipe in one line: search in the cheap representation, decide in the dear one.</p>
+<h2>One vector per document is a bet about the document</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_4.png?raw=true">
+<p>4,000 documents, each five sections about different things, with the answer in exactly one section; the competing documents are vaguely on-topic all the way through.</p>
+<pre><code>representation                                vectors/doc  bytes/doc  recall@10
+--------------------------------------------  -----------  ---------  ---------
+one vector for the whole document             1            512        0.100
+one vector per section, score = best section  5            2,560      0.584</code></pre>
+<p><strong>5.8x the recall for 5x the vectors.</strong> The average of five directions points at none of them, so a single vector for a long mixed document is a claim that the document is about one thing. Chunking is how everyone repairs that claim, and late-interaction models - a vector per span, scored by the best match - are the same idea taken to its limit.</p>
+<h2>A second score is not automatically better</h2>
+<pre><code>scoring                              recall@10
+-----------------------------------  ---------
+vector score only                    0.617
+lexical score only (same shortlist)  0.250
+reciprocal rank fusion (k=60)        0.457
+weighted 80% vector / 20% lexical    0.629</code></pre>
+<p>These queries ask for two topics at once and word overlap cannot see that, so the lexical score is genuinely the weaker one. <strong>Reciprocal rank fusion assumes both lists deserve equal trust</strong>, and costs 0.160 recall; weighting the weaker score down to 20% merely gets back to where we started. A second signal helps where the first is wrong, and the fusion weight is a measurement, not a default.</p>
+<h2>What brute force costs</h2>
+<pre><code>documents  memory   ms per query  queries/s
+---------  -------  ------------  ---------
+10,000     0.01 GB  0.24          4,235
+100,000    0.10 GB  9.07          110
+400,000    0.38 GB  23.12         43</code></pre>
+<p>A full scan is one matrix multiply, which makes it the right answer for longer than people expect - a quarter of a millisecond at ten thousand documents. It is also strictly linear, and no amount of vectorisation fixes linear. That gap is what approximate nearest neighbour indexes exist to close, by refusing to look at most of the data.</p>
+<h2>Three traps that never raise an error</h2>
+<p><strong>Near-duplicates take the seats.</strong> Three near-identical copies of one answer cost that query 3 of its 10 slots. They do not split the vote; deduplicate before indexing, not after retrieving.</p>
+<p><strong>Per-vector quantization scales.</strong> A scale computed from each vector on its own is a different unit per document, so the scores stop being comparable while every call still dutifully returns ten results.</p>
+<p><strong>Cosine similarity is not relevance.</strong> It measures &quot;about the same things&quot;, which is exactly why the answer key tops out at 0.825 here: documents about the right topic are not the same as documents that answer the question.</p>
+<h2>In sentence-transformers</h2>
+<pre><code>model = SentenceTransformer(&quot;...&quot;, truncate_dim=256)          # Matryoshka
+doc_vecs = model.encode(docs, normalize_embeddings=True,
+                        prompt_name=&quot;document&quot;, batch_size=256)
+q_vecs   = model.encode(queries, normalize_embeddings=True,
+                        prompt_name=&quot;query&quot;)
+from sentence_transformers.quantization import quantize_embeddings
+small = quantize_embeddings(doc_vecs, precision=&quot;int8&quot;,
+                            calibration_embeddings=doc_vecs[:50_000])</code></pre>
+<p>Four arguments on that page are four sections of this article: <code>normalize_embeddings</code> is the length bias, <code>truncate_dim</code> is the dimension curve, <code>calibration_embeddings</code> is the corpus-wide scale, and the prompt names are the asymmetry.</p>
+<h2>In a vector store</h2>
+<pre><code>index = faiss.IndexFlatIP(dims)        # exactly the brute-force scan
+faiss.normalize_L2(doc_vecs)           # ...so inner product = cosine
+index.add(doc_vecs)
+scores, ids = index.search(q_vecs, 10)</code></pre>
+<p>Every managed vector database is this plus three decisions I now have numbers for: how many dimensions to store, how many bits per number, and whether one vector per document is enough. The index type - the part that avoids the linear scan - is the only piece this day did not build.</p>
+<h2>What I take away</h2>
+<p>Two of today&#x27;s results surprised me. Truncating 256 dimensions to 16 made retrieval <em>better</em>, not merely cheaper, because the tail of the embedding is noise that still gets a vote. And fusing in a second, weaker score with the standard reciprocal-rank recipe cost more recall than forgetting to tune anything at all.</p>
+<p>The thread connecting all of it: every one of these failures returns ten results and logs nothing. The only reason I could see them is the corpus with planted answers - and that is the cheapest thing to build in any retrieval project. Make the answer key first, then argue about models.</p>
+</body>
+</html>

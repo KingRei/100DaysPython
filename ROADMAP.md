@@ -127,16 +127,21 @@
 | 63 | 集合通訊：把模型切到多張 GPU 上而答案不變（TP／EP／DP／DCP／DDP／FSDP／PP）✅ | **Eric 1119 指定：collective 當主軸，推論平行與訓練平行各講一段；框架段兩組都寫但各縮短。****本日核心：七個縮寫其實是同一個決定——哪個 collective 跑、跑幾次、多少位元組。**開場兩個數字：70B+Adam 每卡 1,043 GB（optimizer 16 B/param＝權重的 8 倍），8-way TP 服務一趟 8,192 token 要搬 35 GB（160 次 all-reduce × 224 MB）。**all-reduce 不是原語＝reduce-scatter＋all-gather**（整天很多結論都是這句話套兩次）：ring 8 ranks/64KB＝14 步、每 rank 114,688 B，天真法 917,504 B 擠一條線；**小訊息看跳數(tree 2log2p)、大訊息看位元組(ring)，交叉點約 2 MB**。DDP 正確性＝loss 是平均（單卡 0.014105 vs 4 rank 0.014105、權重差 1.19e-07），**但完全不省記憶體**；bucket：1→25 個讓曝露 4.73→0.22 ms（總量 4.73→5.40）。ZeRO-1/2 **免費**（同樣位元組重排）1043→359→244 GB，ZeRO-3/FSDP 130 GB 但 1.5x 線上＝Day 62.5 的 recompute-vs-store 換成 refetch-vs-store。TP：column 切 w1 讓非線性免通訊、row 切 w2 produce 部分和，**帳單跟 token 長不是跟參數長**；sequence parallel 位元組一樣(224MB)但 activation 128→16 MB。EP：兩次 all-to-all，140 GB/trip＝TP 的 4 倍（token×k），fp8 dispatch 砍半→70 GB。CP：partial out＋lse 合併，**跟單卡 attention 差 1e-16（Day 52 恆等式搬到跨卡）**；KV 2,560 GB，**MLA 把 head 維壓掉所以 TP 切不動（整份 2,560）**，只剩照請求(DP attention)或照位置(CP)切。PP：每邊界 128 MB×7＝896 MB（比 TP 少三個數量級所以能跨節點），bubble=(S-1)/(m+S-1)，1/4/16/64 micro → 87.5/63.6/30.4/9.9%。**placement 表（8-way、8,192 token、每 rank 每步）：EP 140 > TP 35 > CP 17.64 > PP 0.12 GB，DDP 228.17 但一步一次且可藏**；跨節點一律約 8x。**五個無聲 bug**：忘了除 world size（5 步後 loss 1.76e10，單卡測不出來）、rank 分支不同→collective 錯位永遠互等（NCCL 不報錯）、ring vs tree 相加順序 32,459/65,536 個值位元不同（重跑同一種是 bit-identical＝不是亂數是不符合結合律）、1% 卡頓在 512 卡＝99.4% 的步中、整體慢 49.3%（**放大的是機會數不是幅度**）、少一次 all-reduce 形狀全對但錯 77%。**第一個測試永遠是 world size=1 答案有沒有變。**框架段：PyTorch(device_mesh/DDP/fully_shard/Colwise+Rowwise＝標 placement 讓 DTensor 推導 collective)、JAX(NamedSharding 讓 XLA 自己插，review 是讀 HLO)、serving(--tp/--ep/--dp/--pp/--cp；**推論沒有梯度所以最大那列消失**，decode 的 TP 變成被跳數決定)。demo 9 分頁、圖 5 張 | **1119 Eric 第二輪回饋（四點）**：(1) 沒有明寫 DDP → 第 4 節改名 DDP 並補 bucket＋`no_sync()` 梯度累積；(2) 推論與訓練不可混著講 → 全檔重排成 **PART ONE 訓練（DDP／ZeRO-FSDP／TP+SP／PP／64 卡 mesh）** 與 **PART TWO 推論（沒有梯度＋DP attention／EP／DCP）**，demo 分頁也加「訓練 ·／推論 ·」前綴並新增 infer 分頁；(3) 第一張圖要畫各種切法 → day63_0 重畫成六張卡片（DDP 切 batch／FSDP 切參數＋Adam／TP 切矩陣／PP 切層／EP 切 expert／CP 切 KV 位置，各標 training/inference/both），**collective 也補一張 day63_1 的 before→after 示意圖**，其餘圖往後編號（ring=2、bytes=3、bubble=4、zero=5）；(4) DCP 要寫 MLA 限定 → 明寫「切 key 對任何 attention 都成立(Ring Attention)，但 GQA 本來就能照 head 切；**MLA 沒有 head 維度才讓每個 TP rank 存整份，DCP 要讀成「給 MLA 用的」**」。新增數字：64 卡 mesh TP8×PP4×DP2 → 每卡 20 層/2.19B 參數、optimizer 32.6 GB（ZeRO-3 再折半 16.3），TP 8.75／PP 0.12／梯度 4.07 GB per step；**decode vs prefill 的同一個 TP all-reduce：1.75 MB vs 224 MB（128 倍）但跳數都是 28 µs ⇒ decode 86% 是純延遲、160 次＝5.21 ms/step**；DP attention 讓 MLA 的 KV 從每 rank 2,560 GB 降到 320 GB。
 | 64 | Continuous batching 與推論排程器：排程器每秒做幾百次的那個決定 ✅ | **本日核心：serving engine 就是一個迴圈，決定「下一個 forward pass 帶誰」；系統層的推論優化全是在改這個決定。**模組 scheduling.py 是離散事件模擬（5 秒）：Poisson 到達、lognormal prompt（12% 長尾 6k–16k）、KV pool、prefill/decode。成本模型全由公開規格推：70B TP8 bf16 ⇒ **讀一次權重 3.30 ms／KV 每 token 0.008 µs／prefill 每 token 0.027 ms**，decode batch 1/16/64/128 ＝ 3.32/3.54/4.27/5.23 ms ⇒ 301/4,515/14,996/24,456 tok/s（**權重是每步讀一次不是每請求讀一次**，所以 batch 多一個人幾乎免費）。**開場數字（300 請求 @12/s）：static B=8 TTFT p50 25.62 s／807 tok/s、B=32 9.70 s／1368、continuous 0.06 s／2140 ⇒ 吞吐 2.7 倍、首 token 快 400 倍，沒改任何 kernel**；static 的 padding waste B=8 56%、B=32 **72%**（slot 被已結束的請求佔著）。負載曲線（4→24 req/s）：膝點在 ~12–16，之後吞吐只從 2140 爬到 2384 但 TTFT p99 1.04→11.89 s、goodput 40%→1% ⇒ **容量被 prefill 算力決定（平均 prompt 48 ms）不是 batch 大小**。**chunked prefill**：16k prompt ＝428 ms，不切時 ITL p99 61.2 ms（長尾就是整段 prefill 的長度），切 1024/512/256 → 31.7/17.9/10.8 ms，但 TTFT p50 0.06→0.11/0.24/0.43 s、**切到 256 連 ITL 中位數都變差（3.6→10.4，每塊要重讀權重）⇒ 是 TTFT 換 ITL 不是免費**。**KV pool 滿**：pool 60k 時 59 次搶占、吞吐 2140→1238、ITL p99 428 ms、goodput 4%（**不會報錯，只是變慢**）；改成 swap（4k context 來回 ~5 ms PCIe）保住進度 ⇒ 16 次、2140 tok/s、29%。**admission cap 是主張不是旋鈕**：小 pool 設 cap 16 兩邊都賺（吞吐 +60%、goodput 4%→26%，因為被丟掉的工作本來就是浪費）；**但大 pool 設同一個 cap 是純損失（吞吐 −7%、goodput 40%→25%）**。**FCFS vs SJF**：平均 5.8→3.1 s 但 p99 12.5→19.9、長 prompt 5.6→10.0 s ⇒ 被犧牲的正是本來最慢那群，實務要 aging。**goodput 不是 throughput**：三個設定吞吐都 2140 但 goodput 40%／100%／100%，第四個（小 pool）1238／4% ⇒ 調 serving 就是在移動 goodput 那一欄。框架段 vLLM（--max-num-seqs／--max-num-batched-tokens／--enable-chunked-prefill／--preemption-mode，preemption 警告 log）與 SGLang（--max-running-requests／--chunked-prefill-size／**--schedule-policy lpm：為了 radix cache 而做的排程決定**）。**Eric 1119：day63 不要提到 day64 的事（連「明天：…」都不要）** ⇒ 已從 day63 兩篇文章拿掉，feedback_article_future_days 收緊。demo 9 分頁（含用 run_static/run_continuous 的 trace= 真實錄下來的 slot 時間軸）、圖 5 張 | **1119 Eric 追加**：文章最前面要放「概念怎麼推出來」的五步推導鏈（中英文都要）——**(1) attention 是 token 唯一互動的地方、誰能互動由 mask 決定 ⇒「哪些請求批在一起」是 mask 的性質不是 tensor 排列的性質；(2) causal mask ⇒ 舊 token 的 K/V 不變 ⇒ KV cache，O(n²)→O(n)；(3) 有 cache 就能分段餵 ⇒ chunked prefill；(4) batch 軸逼出 padding，換請求時 (n−1)(B−1)（B=8/n=100 ＝693 個），CUDA graph 要求固定形狀更糟；(5) 把 batch 軸拿掉、序列接成一長排＋block-diagonal mask ＝ ragged batching，再加 dynamic scheduling ＝ continuous batching**。並新增 day64_0.png：三個 forward pass 的 mask 方格圖（prefill 5 token → decode 1＋chunked prefill 4 → 收尾 3＋新請求 2，cache 的 token 畫灰、新 token 畫藍，兩個請求用兩種顏色的 True 格子隔開），其餘圖往後編號（loop=1、slots=2、curve=3、chunk=4、goodput=5）。
 
-## Part 9 — 檢索、RAG 與記憶層（Day 65–70）
+## Part 9 — 檢索、context engineering 與結構化輸出（Day 65–70）
+**1119 重排（Eric 決定）**：原本的六天是「embedding → HNSW → IVF/PQ → BM25 → chunking+RAG pipeline → 記憶層」。
+演算法本身沒過時（HNSW／IVF+PQ／BM25 仍是每個 vector store 與記憶層的底層），**過時的是把它們包成一條獨立 RAG pipeline 的框架**：
+2026 的實務是 **retrieval 變成 agent 的一個 tool**（agent 自己下查詢、grep、讀檔，只取當前這一步要的），
+而組織原則是 **context engineering**（write / select / compress / isolate）。
+所以檢索收成四天、RAG 併進 Day 68，空出來的兩天給 context engineering 與結構化輸出。
 
 | Day | 主題 | 備註 |
 |---|---|---|
-| 65 | Embedding 與向量相似度檢索 | word2vec、cosine、暴力搜尋當 baseline |
-| 66 | HNSW 近似最近鄰 | 接 Day 31 Skip List |
-| 67 | IVF 與 Product Quantization | |
-| 68 | BM25、hybrid search 與 rerank | 接 Day 25 rolling hash |
-| 69 | Chunking 策略與 minimal RAG pipeline | 端到端可跑 |
-| 70 | 記憶層：短期 / 長期 / episodic memory | Day 97 專案的地基 |
+| 65 | 現代 embedding 與向量相似度檢索：一份文件＝一個方向 ✅ | **本日核心：embedding 把文件變成方向，檢索就是問誰的方向最近；剩下全是四個決定（要不要正規化／留幾維／幾個 bit／一份文件幾個向量），而每個決定都有價錢。**語料**把答案種進去**（20,000 文件／200 查詢／每查詢 10 份正解，查詢用「兩個主題的組合」而背景只有單主題），所以 recall@10 是事實。模組 embeddings.py（12 秒）：tf-idf→SVD 的 20 行 embedding。三個基準：字詞比對 0.419、embedding 0.617、**答案本人只有 0.825＝天花板不是 1.0**。**長度偏誤**：向量長度跟字數相關 0.92 ⇒ raw dot product recall 0.617→0.092，前十名平均長度 250→1,494 字（中位數 199）——**索引沒壞，它改成照長度排名且不報錯**。**不對稱**：正規化 query 不可能改變排名（縮放一邊＝所有分數乘同一個數，已斷言 argmax 相同），但兩邊編碼不一致（沒 idf／自己的 idf／idf 兩次）會讓答案**上下都跑**最多 0.041、完全無聲 ⇒ 這就是 query/document prefix 弄反的真實形狀。**維度**：SVD 欄位天生有序＝免費的 Matryoshka；256→16 維 recall 0.617→**0.732（反而變好）**、每百萬 0.95→0.06 GB ⇒ **尾巴是雜訊而雜訊也有投票權；維度是超參數不是美德**（真 MRL 模型是先平再掉，結論一樣）。**位元數**：int8 **免費**（0.617→0.618，1/4 記憶體）但**必須整個語料共用一個 scale**（per-vector scale 等於每份文件換單位，內積不再可比）；binary 1 bit 在 256 維是災難 0.032、先截到 16 維變 0.429、再用完整向量 rescore 前 40 名 0.522（2.1 B/doc）⇒ **便宜的表示法搜尋、貴的表示法決定**。**一份文件一個向量是一個賭注**：5 段不同主題、答案只在一段時，整份一個向量 0.100 vs 每段一個向量 **0.584（5.8 倍）**，代價 5 倍向量 ⇒ chunking 與 late-interaction 的存在理由。**第二個分數不是免費的**：詞彙分數只有 0.250，**RRF（預設兩張名單一樣可信）讓 0.617 掉到 0.457**，壓到 20% 權重才回到 0.629 ⇒ 融合權重是量出來的。暴力掃描 10k/100k/400k ＝ 0.24/9.07/23.12 ms（嚴格線性，這就是 ANN 的缺口）；近重複 3 份直接吃掉前十的 3 格（**索引前去重**）。框架段 sentence-transformers（normalize_embeddings／truncate_dim／calibration_embeddings／prompt_name 正好對應四節）與 FAISS IndexFlatIP。demo 8 分頁、圖 5 張 |
+| 66 | HNSW 近似最近鄰 | 接 Day 31 Skip List、Day 05 heap（候選集就是一個 heap）；ef／M 的召回-延遲曲線，刪除與重建的代價 |
+| 67 | IVF + Product Quantization：向量也要量化 | 倒排桶 + 殘差量化、OPQ、SQ vs PQ 的召回代價、記憶體換召回的那條曲線；磁碟取向的 DiskANN。**接 Day 61：同一套量化思路換到向量上** |
+| 68 | BM25、hybrid search、rerank —— 並收尾成「retrieval 是一個 tool」 | **RAG 併進這一天**：chunking 策略（含 contextual chunk：把文件層級的脈絡寫進每一塊）、倒排索引與 BM25、RRF hybrid、cross-encoder／LLM rerank 當 context 預算的守門員；端到端可跑，但框架是 **agentic retrieval**（agent 自己發查詢、工具輸出先摘要再進 context），不是「全部 embed 再 top-k 塞進去」。接 Day 25 rolling hash |
+| 69 | Context engineering：write / select / compress / isolate | **取代原本的「記憶層」那天，而且把記憶包進來。** 核心是「用最小的高訊號 token 集合達成結果」：token 預算；**compaction 已經不是單一操作而是分層管線**（工具輸出裁切 → 時間深度 snip → micro-compact → context collapse → 語意 auto-compact，便宜的先跑）；compaction 的**實測資訊損失**（有研究量到一輪後只保住約一半的規則、五輪後剩個位數百分比，type-aware 版本則幾乎不掉）；**檔案型記憶（MEMORY.md 模式）＋ extraction→consolidation 兩階段**、驅逐但留指標；sub-agent 當 context 隔離；**記憶是攻擊面**（被污染的記憶會改寫無關的工具參數）。**更大的 window 只是把失敗模式從截斷換成稀釋。** 是 Day 96／97 的地基 |
+| 70 | 結構化輸出與 agent 的前綴經濟學 | 前半：**constrained decoding**——JSON schema → 下推自動機 → 每一步對 vocabulary 做 mask（接 Day 24 Trie、Day 59 取樣：mask 跟 top-p 動的是同一排 logits）、grammar／FSM、約束會怎麼扭曲機率、以及什麼時候該 retry 而不是硬壓。後半：**把 Day 57 RadixAttention 換成 agent 視角重算一次帳**——agent 每一輪都重送幾乎一樣的前綴，所以前綴命中率直接決定 agent 的成本與延遲（接 Day 64 的 `--schedule-policy lpm`）|
 
 ## Part 10 — 強化學習：演算法全覆蓋（Day 71–88）
 這 18 天的選材直接照著幾套主流框架真正實作了什麼來排：覆蓋度參照 **Tianshou**，
@@ -189,10 +194,10 @@
 | Day | 主題 | 備註 |
 |---|---|---|
 | 95 | Agent Harness I：tool calling 與 JSON action loop | 工具註冊表、schema 驗證、重試 |
-| 96 | Agent Harness II：接上記憶層 | 用 Day 70 + Day 66 HNSW |
-| 97 | Agent Harness III：ReAct / planner 與多步推理 | 錯誤恢復、預算控制 |
+| 96 | Agent Harness II：接上記憶層 | 用 Day 69 的檔案型記憶＋compaction 管線 + Day 66 HNSW 做召回 |
+| 97 | Agent Harness III：ReAct / planner、多步推理與**安全邊界** | 錯誤恢復、預算控制、計畫檔與 checkpoint／可回復。**本日硬主題：間接 prompt injection**——不可信內容是從 retrieval 結果與工具輸出進來的，而模型分不出指令與資料；in-band（對齊式）防禦在 adaptive attack 下會被大量繞過 ⇒ **把強制力移到模型外面**：capability／資訊流標籤／reference monitor、每個工具最小權限、工具參數在模型外驗證、高風險動作要人確認，並把模型輸出當成不可信的下游輸入 |
 | 98 | Multi-Agent 協作與任務 DAG 排程 | 呼應 Day 13 拓樸排序 + Day 87 MARL |
-| 99 | Eval Harness：LLM-as-judge、回歸測試、追蹤 | 也是 Day 90 verifier 的延伸 |
+| 99 | Eval Harness：**trajectory eval**、回歸測試與追蹤 | **本日硬主題：agent 要評的是一整條軌跡不是最後一句話。** 四類指標（結果／軌跡：工具選擇與參數正確率、規則違規／效率：步數、每次成功的成本、延遲／安全：attack success rate）；**pass^k 而不是 pass@k**（使用者只有一次機會）；**harness 本身就是變數**（同一個模型換 scaffold，WebArena 可以從 25% 到 55%）；lucky pass（有分析指出約一成的通過是運氣）；benchmark 腐壞與訓練污染；全軌跡 log 是安全評估的前提。LLM-as-judge 的坑照 Day 50 的方式處理。也是 Day 90 verifier 的延伸 |
 | 100 | 收官：100 天知識地圖 + 效能剖析 + 打包開源 | |
 
 ---
@@ -203,9 +208,9 @@
 - Day 13 拓樸排序 → Day 98 多代理任務 DAG
 - Day 14 Union-Find → Day 15 Kruskal
 - Day 22 prefix-sum (scan) → Day 43 平行模型 → Day 91 async rollout 排程
-- Day 24 Trie / Radix Tree → Day 57 RadixAttention
+- Day 24 Trie / Radix Tree → Day 57 RadixAttention → Day 70 constrained decoding 的 token mask
 - Day 29 Segment Tree → Day 76 prioritized replay buffer
-- Day 30 LRU → Day 56 KV cache → Day 57 RadixAttention（radix tree + LRU 驅逐）→ Day 58 paged attention
+- Day 30 LRU → Day 56 KV cache → Day 57 RadixAttention（radix tree + LRU 驅逐）→ Day 58 paged attention → Day 70 agent 的前綴經濟學
 - Day 31 Skip List → Day 66 HNSW
 - Day 37 狀壓 TSP → Day 93 GA 解 TSP（精確 vs 啟發式對照）
 - Day 38 Huffman → Day 51 BPE
@@ -213,10 +218,12 @@
 - Day 42 隨機化 → Day 72 bandit → Day 59 取樣策略（探索與溫度是同一件事）
 - Day 43 asyncio / work-depth → Day 64 continuous batching → Day 71 向量化環境 → Day 91 fully async RL → Day 95 agent loop
 - Day 55 mini-GPT → Day 89 RLHF / DPO → Day 90 GRPO → Day 95–100 專案
-- Day 61 量化 → Day 92 低精度 RL 訓練
+- Day 61 量化 → Day 67 向量量化（PQ／int8／binary）、Day 92 低精度 RL 訓練
 - Day 62 MoE 路由 → Day 92 rollout routing replay
 - Day 64 推論排程器 → Day 91 rollout engine（同一個引擎，一個對外服務、一個當 RL 環境）
 - Day 75 off-policy → Day 85 offline RL → Day 91 async 的 staleness 容忍度
 - Day 79 GAE / Day 81 PPO → Day 90 GRPO（同一個 advantage，換成 group 內相對比較）
 - Day 86 GAIL 判別器 → Day 89 reward model（都是學出來的獎勵）
-- Day 90 verifier → Day 99 eval harness
+- Day 59 取樣 → Day 70 結構化輸出（mask 與 top-p 動的是同一排 logits）
+- Day 68 retrieval-as-a-tool → Day 69 context engineering → Day 96 記憶層 → Day 97 harness 的安全邊界
+- Day 90 verifier → Day 99 eval harness（trajectory 指標 + attack success rate）
