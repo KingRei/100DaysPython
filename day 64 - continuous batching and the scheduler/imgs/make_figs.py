@@ -15,7 +15,122 @@ ROWS, W = S.batching_table()
 ST8, ST32, CONT = ROWS
 
 
+CELL = 0.46          # one square of the attention mask
+CHIP = 0.40          # one token chip
+
+
+def _chip(ax, x, y, label, cached, vertical=False):
+    fill = GREY if cached else NAVY
+    edge = GREY_L if cached else TEAL
+    box(ax, x, y, CHIP, CHIP, label=None, fill=fill, edge=edge, lw=1.3)
+    text(ax, x + CHIP / 2, y + CHIP / 2, label, size=8.5, color=WHITE,
+         glowing=False, rotation=90 if vertical else 0)
+
+
+def _pass(ax, x0, y0, cols, rows, mask, note, arrow_row=None, arrow_label=None):
+    """One forward pass: column chips (keys), row chips (queries), the mask."""
+    gx = x0 + 1.55                                   # where the grid starts
+    for j, (lab, cached) in enumerate(cols):
+        _chip(ax, gx + j * CELL + (CELL - CHIP) / 2, y0 + CHIP * 0.15, lab, cached,
+              vertical=True)
+    top = y0 - 0.12
+    for i, (lab, cached) in enumerate(rows):
+        y = top - (i + 1) * CELL
+        _chip(ax, x0 + 1.05, y + (CELL - CHIP) / 2, lab, cached)
+        for j in range(len(cols)):
+            v = mask[i][j]
+            if v == 0:
+                box(ax, gx + j * CELL + 0.03, y + 0.03, CELL - 0.06, CELL - 0.06,
+                    label=None, fill='none', edge=GREY_L, lw=0.9)
+            else:
+                box(ax, gx + j * CELL + 0.03, y + 0.03, CELL - 0.06, CELL - 0.06,
+                    label=None, fill=NAVY if v == 1 else '#3a2a06',
+                    edge=TEAL if v == 1 else AMBER, lw=1.6)
+    if arrow_row is not None:
+        y = top - (arrow_row + 1) * CELL + CELL / 2
+        ax.annotate('', xy=(gx + len(cols) * CELL + 0.75, y),
+                    xytext=(gx + len(cols) * CELL + 0.10, y),
+                    arrowprops=dict(arrowstyle='-|>', color=RED, lw=1.6))
+        box(ax, gx + len(cols) * CELL + 0.80, y - CHIP / 2, 1.00, CHIP,
+            label=arrow_label, size=9.5, edge=RED)
+    nx = gx + len(cols) * CELL + 2.15
+    for k, line in enumerate(note):
+        text(ax, nx, top - 0.30 - k * 0.38, line, size=11, ha='left',
+             color=TEAL_L if k == 0 else GREY_L, glowing=False)
+
+
 def fig0():
+    """One batch is a concatenation plus an attention mask."""
+    fig, ax = canvas(13.2, 12.4, xlim=(0, 13.2), ylim=(0, 12.4))
+    text(ax, 6.6, 12.05, 'continuous batching: one batch is a concatenation '
+         'plus an attention mask', size=16)
+    text(ax, 6.6, 11.62, 'prompts: "Why is decode slow", "The KV cache is read", '
+         '"Each step"', size=11.5, color=GREY_L, glowing=False)
+
+    p1 = ['<bos>', 'Why', 'is', 'dec', 'ode']
+    p2a, p2b = ['<bos>', 'The', 'KV', 'ca'], ['che', 'is', 'read']
+    p3 = ['<bos>', 'Each']
+
+    # ---- pass 1: a plain prefill, 5 tokens = the whole token budget
+    cols = [(t, False) for t in p1]
+    rows = [(t, False) for t in p1]
+    mask = [[1 if j <= i else 0 for j in range(5)] for i in range(5)]
+    _pass(ax, 0.35, 10.95, cols, rows, mask,
+          ['batch: 1 prompt, 5 tokens (prefill)',
+           'the mask is the plain causal triangle',
+           'the last row predicts the next token'],
+          arrow_row=4, arrow_label='?')
+    ax.plot([0.35, 12.85], [8.15, 8.15], color=RED, lw=1.2, ls=(0, (6, 4)))
+    text(ax, 1.15, 8.32, 'forward pass', size=10.5, color=RED, glowing=False)
+
+    # ---- pass 2: one decode token + the first chunk of the second prompt
+    cols = [(t, True) for t in p1] + [('?', False)] + [(t, False) for t in p2a]
+    rows = [('?', False)] + [(t, False) for t in p2a]
+    mask = [[1] * 6 + [0] * 4]
+    for i in range(4):
+        mask.append([0] * 6 + [2 if j <= i else 0 for j in range(4)])
+    _pass(ax, 0.35, 7.55, cols, rows, mask,
+          ['batch: 1 prompt decoding (1 token)',
+           '     + 1 prompt prefilling (4 tokens)',
+           'two blocks, no padding, one forward pass'],
+          arrow_row=0, arrow_label='<eos>')
+    ax.plot([0.35, 12.85], [4.70, 4.70], color=RED, lw=1.2, ls=(0, (6, 4)))
+    text(ax, 1.15, 4.87, 'forward pass', size=10.5, color=RED, glowing=False)
+
+    # ---- pass 3: the rest of prompt 2, and the start of prompt 3
+    cols = [(t, True) for t in p2a] + [(t, False) for t in p2b] + \
+           [(t, False) for t in p3]
+    rows = [(t, False) for t in p2b] + [(t, False) for t in p3]
+    mask = []
+    for i in range(3):
+        mask.append([1] * 4 + [1 if j <= i else 0 for j in range(3)] + [0, 0])
+    for i in range(2):
+        mask.append([0] * 7 + [2 if j <= i else 0 for j in range(2)])
+    _pass(ax, 0.35, 4.10, cols, rows, mask,
+          ['batch: 1 prompt finishing its prefill (3 tokens)',
+           '     + 1 new prompt starting (2 tokens)',
+           'the finished request left; a waiting one took its place'],
+          arrow_row=2, arrow_label='once')
+
+    # ---- legend
+    ly = 0.95
+    box(ax, 0.60, ly, CHIP, CHIP, label=None, fill=NAVY, edge=TEAL, lw=1.3)
+    text(ax, 1.15, ly + CHIP / 2, 'new token, computed this pass', size=11,
+         ha='left', color=GREY_L, glowing=False)
+    box(ax, 5.10, ly, CHIP, CHIP, label=None, fill=GREY, edge=GREY_L, lw=1.3)
+    text(ax, 5.65, ly + CHIP / 2, 'old token, already in the KV cache', size=11,
+         ha='left', color=GREY_L, glowing=False)
+    box(ax, 0.60, ly - 0.60, CHIP, CHIP, label=None, fill='none', edge=GREY_L, lw=0.9)
+    text(ax, 1.15, ly - 0.60 + CHIP / 2, 'False in the attention mask', size=11,
+         ha='left', color=GREY_L, glowing=False)
+    box(ax, 5.10, ly - 0.60, CHIP, CHIP, label=None, fill=NAVY, edge=TEAL, lw=1.6)
+    box(ax, 5.60, ly - 0.60, CHIP, CHIP, label=None, fill='#3a2a06', edge=AMBER, lw=1.6)
+    text(ax, 6.15, ly - 0.60 + CHIP / 2, 'True - one colour per request, which is '
+         'what keeps them apart', size=11, ha='left', color=GREY_L, glowing=False)
+    save(fig, os.path.join(HERE, 'day64_0.png'))
+
+
+def fig1():
     """The loop: what the scheduler decides, and the knobs on each decision."""
     fig, ax = canvas(11.8, 6.6, xlim=(0, 11.8), ylim=(0, 6.6))
     text(ax, 5.9, 6.25, 'the serving loop: one decision, a few hundred times a second',
@@ -44,10 +159,10 @@ def fig0():
         text(ax, 2.95, y, k, size=11.5, ha='right', color=TEAL_L, glowing=False)
         text(ax, 3.10, y, v, size=11.5, ha='left', color=GREY_L, glowing=False)
     text(ax, 5.9, 2.48, 'the four knobs, and the only four', size=12, color=CYAN)
-    save(fig, os.path.join(HERE, 'day64_0.png'))
+    save(fig, os.path.join(HERE, 'day64_1.png'))
 
 
-def fig1():
+def fig2():
     """Static against continuous, drawn as slots over time (schematic)."""
     fig, ax = canvas(11.8, 6.8, xlim=(0, 11.8), ylim=(0, 6.8))
     text(ax, 5.9, 6.45, 'two schedulers, the same arrivals', size=16)
@@ -92,10 +207,10 @@ def fig1():
          '%.2f s instead of %.1f s' % (CONT['throughput'], ST8['throughput'],
                                        CONT['ttft_p50'], ST8['ttft_p50']),
          size=11.5, color=CYAN, glowing=False)
-    save(fig, os.path.join(HERE, 'day64_1.png'))
+    save(fig, os.path.join(HERE, 'day64_2.png'))
 
 
-def fig2():
+def fig3():
     """Throughput against latency as the offered load rises."""
     rows = S.rate_sweep()
     fig, ax = canvas(11.0, 6.4, xlim=(0, 11.0), ylim=(0, 6.4))
@@ -132,10 +247,10 @@ def fig2():
     text(ax, x0, y0 - 1.05, 'bars: throughput    line: TTFT p99    bottom row: '
          'goodput (TTFT < 2 s and ITL p99 < 50 ms)', size=11, ha='left',
          color=GREY_L, glowing=False)
-    save(fig, os.path.join(HERE, 'day64_2.png'))
+    save(fig, os.path.join(HERE, 'day64_3.png'))
 
 
-def fig3():
+def fig4():
     """What the chunked-prefill budget trades."""
     rows = S.chunk_table(W)
     fig, ax = canvas(11.0, 5.8, xlim=(0, 11.0), ylim=(0, 5.8))
@@ -162,10 +277,10 @@ def fig3():
     text(ax, 0.35, 0.50, 'for one of its tokens - cutting it into chunks moves the '
          'tail from the prompt size to the chunk size', size=11.5, ha='left',
          color=GREY_L, glowing=False)
-    save(fig, os.path.join(HERE, 'day64_3.png'))
+    save(fig, os.path.join(HERE, 'day64_4.png'))
 
 
-def fig4():
+def fig5():
     """Throughput is not the score: goodput is."""
     cfgs = [('continuous, no limits', S.run_continuous(W)),
             ('+ chunked prefill (512)', S.run_continuous(W, chunk=512)),
@@ -196,9 +311,9 @@ def fig4():
     text(ax, 0.35, 0.38, 'the left column cannot tell the first three apart; the '
          'right column is the whole decision', size=11.5, ha='left',
          color=AMBER, glowing=False)
-    save(fig, os.path.join(HERE, 'day64_4.png'))
+    save(fig, os.path.join(HERE, 'day64_5.png'))
 
 
 if __name__ == '__main__':
-    fig0(); fig1(); fig2(); fig3(); fig4()
-    print('wrote 5 figures')
+    fig0(); fig1(); fig2(); fig3(); fig4(); fig5()
+    print('wrote 6 figures')

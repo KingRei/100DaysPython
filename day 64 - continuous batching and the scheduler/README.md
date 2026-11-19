@@ -9,12 +9,47 @@ static against continuous batching step by step, the load curve and its knee, ch
 prefill, what happens when the KV pool fills, admission control, the queue policies, and
 why goodput and throughput are different numbers.
 
+## Where continuous batching comes from, in five steps
+
+Before any of the numbers below, the idea itself. Continuous batching is not a trick
+someone invented for throughput; it falls out of the shape of attention, in five steps.
+
+**1. Attention is the only place tokens interact, and the mask decides who interacts.**
+Everything else in a transformer is token-wise. So "which requests are batched together"
+is not a property of the tensor layout - it is a property of the attention mask.
+
+**2. A causal mask means old tokens never change, so cache them.** A new token cannot
+affect the keys and values of the tokens before it, so those can be stored and reused.
+That is the KV cache, and it turns generating token n+1 from O(n^2) work into O(n).
+
+**3. With a cache, a prompt can be fed in pieces.** Store the keys and values of the
+first slice, prepend them to the next slice, extend the mask - the answer is unchanged.
+That is chunked prefill, and it is what makes a long prompt fit a fixed memory budget.
+
+**4. The batch dimension is what forces padding.** Stack prompts along a new axis and
+the tensor must be rectangular, so every prompt is padded to the longest one. Swapping a
+finished request for a new one is worst of all: the newcomer needs a full prefill while
+everybody else decodes one token, so with B requests in flight and a prompt of n tokens
+you pay (n-1)(B-1) padding tokens - 693 of them at B=8, n=100. CUDA graphs make it worse
+by demanding a fixed shape.
+
+**5. So remove the axis.** Concatenate the sequences into one long row of tokens and use
+a block-diagonal attention mask to keep the requests from seeing each other. No padding,
+and prefill chunks and decode tokens can sit in the same forward pass. That is ragged
+batching; add "retire a request the step it finishes and admit a waiting one in its
+place" and you have **continuous batching**.
+
 ![img](https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_0.png?raw=true)
+
+The rest of this article is the second half of the story: given that a batch is a
+concatenation plus a mask, *who* should be in it, and what does each choice cost.
 
 A serving engine is a loop that decides, a few hundred times a second, which requests go
 into the next forward pass. Everything people call "inference optimisation" at the
 system level is a change to that decision. This module simulates the loop - arrivals,
 a waiting queue, a KV pool, prefills and decodes - and measures what each change does.
+
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_1.png?raw=true)
 
 Same model, same GPUs, the same 300 requests arriving at 12 per second:
 
@@ -48,7 +83,7 @@ line is why a scheduler exists: to keep the step as full as the KV pool allows.
 
 ## Static batching: the slot stays occupied after the answer is done
 
-![img](https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_1.png?raw=true)
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_2.png?raw=true)
 
 A static batch runs until its *longest* member finishes. With a batch of 32, **72% of all
 slot-steps are spent on requests that have already produced their last token** - the
@@ -62,7 +97,7 @@ zero, and the arrival queue stops being a function of how unlucky your timing wa
 
 ## The load curve, and where the knee is
 
-![img](https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_2.png?raw=true)
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_3.png?raw=true)
 
 | arrivals/s | throughput | TTFT p50 | TTFT p99 | ITL p99 | goodput |
 |---|---|---|---|---|---|
@@ -81,7 +116,7 @@ second is all the FLOPs allow.
 
 ## A prefill blocks every decode behind it
 
-![img](https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_3.png?raw=true)
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_4.png?raw=true)
 
 A 16,000-token prompt is 428 ms of arithmetic. Run as a single step, every request that
 is currently decoding sees a 428 ms gap between two of its tokens.
@@ -150,7 +185,7 @@ waiting time, so the policy is shortest-job-first with a guarantee attached.
 
 ## Goodput, not throughput
 
-![img](https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_4.png?raw=true)
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_5.png?raw=true)
 
 | configuration | throughput | TTFT p99 | ITL p99 | goodput |
 |---|---|---|---|---|

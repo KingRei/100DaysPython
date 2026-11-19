@@ -29,6 +29,15 @@ li     { margin: .3em 0; }
 <h1>Day 64 — Continuous batching：只改「請求什麼時候能加入批次」，吞吐就變 2.7 倍</h1>
 <p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler">day 64 on GitHub</a></p>
 <p><em>100 Days of Python - day 64</em></p>
+<h2>Continuous batching 是怎麼推出來的：五個步驟</h2>
+<p>在看底下那些數字之前，先講概念本身。Continuous batching 不是誰為了吞吐硬想出來的招，它是從 attention 的形狀一路推出來的，總共五步。</p>
+<p><strong>1. attention 是 token 唯一互相影響的地方，而誰能影響誰由 mask 決定。</strong> transformer 裡其他運算都是 token-wise 的。所以「哪些請求被批在一起」根本不是 tensor 排列的性質，<strong>而是 attention mask 的性質</strong>。</p>
+<p><strong>2. causal mask 代表舊 token 永遠不會變，所以把它們快取起來。</strong> 新的 token 不會改變它前面那些 token 的 key 與 value，於是那些可以存下來重用——這就是 KV cache，它把「生成第 n+1 個 token」從 O(n²) 的工作量變成 O(n)。</p>
+<p><strong>3. 有了 cache，prompt 就可以分段餵。</strong> 把第一段的 key/value 存起來、接在第二段前面、mask 跟著延伸，答案完全不變。這就是 chunked prefill，也是長 prompt 能塞進固定記憶體預算的原因。</p>
+<p><strong>4. 逼出 padding 的其實是 batch 那個維度。</strong> 把多個 prompt 疊在新的軸上，tensor 就必須是矩形，所以每個 prompt 都要補到最長的那個。換請求時最慘：新來的要做完整 prefill，其他人卻只在 decode 一個 token，於是 B 個請求在飛、新 prompt 有 n 個 token，就要付 (n−1)(B−1) 個 padding token——B=8、n=100 時是 693 個。而 CUDA graph 要求固定形狀，只會讓情況更糟。</p>
+<p><strong>5. 那就把那個軸拿掉。</strong> 把多條序列<strong>接成一長排 token</strong>，再用 block-diagonal 的 attention mask 讓請求彼此看不到對方。沒有 padding，而且 prefill 的 chunk 與 decode 的單一 token 可以待在同一次 forward pass 裡。這叫 ragged batching；再加上「請求一做完就在那一步退場、讓排隊中的補進來」，就是 <strong>continuous batching</strong>。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_0.png?raw=true">
+<p>這篇文章接下來講的是故事的後半段：既然一個 batch 就是「串接 ＋ 一張 mask」，那麼<strong>該讓誰進來</strong>，以及每個選擇各要付什麼代價。</p>
 <p>同一個模型、同一批卡、同樣 300 個每秒 12 個到達的請求：</p>
 <pre><code>排程方式                 TTFT p50  吞吐        全部跑完
 -----------------------  --------  ----------  --------
@@ -37,7 +46,7 @@ static batching（B=32）  9.70 s    1368 tok/s  48 s
 continuous batching      0.06 s    2140 tok/s  30 s</code></pre>
 <p>吞吐 2.7 倍、首 token 中位數快四百倍，而且<strong>沒有任何一個 kernel 被改過</strong>。差別只有一條規則：請求可以在<strong>任何兩步之間</strong>加入或離開批次，而不是只能在批次的邊界。</p>
 <p>一個 serving engine 說穿了就是一個迴圈，每秒做幾百次同一個決定：<strong>下一個 forward pass 要帶誰</strong>。系統層講的「推論優化」幾乎都是在改這個決定，所以今天我把這個迴圈模擬出來——到達、等待佇列、KV pool、prefill 與 decode——然後量每一種改動的效果。</p>
-<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_0.png?raw=true">
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_1.png?raw=true">
 <h2>一步要花多少</h2>
 <p>機器是 70B 等級的模型、8 路 tensor parallel、bf16，每個常數都照 Day 62.5 的方式從公開規格推出來：每張卡 17.5 GB 的權重除以 5.3 TB/s ＝ <strong>讀一次全部權重 3.30 ms</strong>；KV cache 每個 token 40 KB ⇒ 讀一個 token <strong>0.008 µs</strong>；prefill 一個 prompt token 是 2·參數/8 的 FLOPs，以一半的峰值算 ⇒ <strong>0.027 ms</strong>。</p>
 <pre><code>batch  一步     每秒輸出 token  每個 token
@@ -48,11 +57,11 @@ continuous batching      0.06 s    2140 tok/s  30 s</code></pre>
 128    5.23 ms  24456           41 µs</code></pre>
 <p>權重是<strong>每一步</strong>讀一次，不是每個請求讀一次，所以在正在跑的批次裡多加一個人幾乎不用錢，直到 KV 的讀取量追上權重為止。這一行就是排程器存在的全部理由：<strong>在 KV pool 允許的範圍內，把那一步塞滿</strong>。</p>
 <h2>static batching 浪費的不是算力，是 slot</h2>
-<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_1.png?raw=true">
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_2.png?raw=true">
 <p>一個 static batch 會跑到裡面<strong>最長</strong>的那個請求結束為止。B=32 時，<strong>所有 slot-step 裡有 72% 是在算已經吐完最後一個 token 的請求</strong>——批次是滿的，但滿的是空氣。而且在批次開始後一步才到的請求，要等整批排乾：那個 25.6 秒的首 token 中位數就是這樣來的。不是模型慢，是排隊。</p>
 <p>continuous batching 只改一條規則：請求一結束就立刻離開、把 KV 還回 pool，排隊中的下一個<strong>在同一步</strong>補進來。padding 浪費歸零，首 token 時間也不再取決於你運氣好不好剛好卡在批次邊界。</p>
 <h2>負載曲線與膝點</h2>
-<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_2.png?raw=true">
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_3.png?raw=true">
 <pre><code>每秒到達  吞吐  TTFT p50  TTFT p99  ITL p99   goodput
 --------  ----  --------  --------  --------  -------
 4         743   0.03 s    0.66 s    20.3 ms   91%
@@ -63,7 +72,7 @@ continuous batching      0.06 s    2140 tok/s  30 s</code></pre>
 24        2258  4.82 s    11.89 s   431.2 ms  1%</code></pre>
 <p>膝點以下，引擎是被「請求來得不夠快」限制住的：吞吐跟著到達率走、延遲幾乎不動。膝點以上，佇列無上限地長，而<strong>唯一還好看的欄位就是吞吐</strong>。這裡的容量是被 prefill 的算力決定的，不是 batch 大小：平均一個 prompt 要 48 ms 的純算術，所以大約每秒 20 個請求就是上限，batch 開多大都一樣。</p>
 <h2>一個長 prompt 會卡住所有人</h2>
-<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_3.png?raw=true">
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_4.png?raw=true">
 <p>16,000 個 token 的 prompt 是 428 ms 的算術。如果它整段當成一步跑，<strong>每一個正在 decode 的請求都會在兩個 token 之間卡 428 ms</strong>——使用者原本每 3.6 ms 看到一個字，突然要等將近半秒。</p>
 <pre><code>chunk 預算           TTFT p50  ITL p50  ITL p99  吞吐
 -------------------  --------  -------  -------  ----
@@ -93,7 +102,7 @@ FCFS             5.8 s  5.5  12.5  15.7  5.6 s
 短的先跑（SJF）  3.1 s  2.0  19.9  21.7  10.0 s</code></pre>
 <p>SJF 是教科書答案，而且它真的有效：平均延遲砍半。但它同時把<strong>本來就最慢的那群</strong>的延遲變成兩倍——長 prompt 在排隊時會被每一個新到的短請求超車，持續過載時甚至永遠排不到。所以實務上的排程器會做 aging：優先權隨等待時間上升，也就是「短的先跑，但有保證」。</p>
 <h2>要看的是 goodput，不是 throughput</h2>
-<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_4.png?raw=true">
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_5.png?raw=true">
 <pre><code>設定                       吞吐  TTFT p99  ITL p99   goodput
 -------------------------  ----  --------  --------  -------
 continuous，不設任何限制   2140  1.04 s    61.2 ms   40%
