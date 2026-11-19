@@ -1,0 +1,611 @@
+// DAY: 64
+// TITLE_ZH: Continuous batching：推論排程器每秒做幾百次的那個決定
+// TITLE_EN: Continuous batching: the decision a serving engine makes a few hundred times a second
+// SUB_ZH: 同樣的模型、同樣的卡、同樣的請求，只是讓請求可以在每一步之間加入與離開批次——吞吐 2.7 倍、首 token 從 25.6 秒變 0.06 秒。這一天把那個迴圈模擬出來：等待佇列、chunked prefill、KV pool 滿了之後的搶占，以及為什麼真正要調的是 goodput 不是 throughput。
+// SUB_EN: Same model, same GPUs, same requests - only now a request may join and leave the batch between steps, and throughput goes up 2.7x while the median first token drops from 25.6 s to 0.06 s. This day simulates that loop: the waiting queue, chunked prefill, what happens when the KV pool fills, and why the number worth tuning is goodput rather than throughput.
+// FOLDER: day%2064%20-%20continuous%20batching%20and%20the%20scheduler
+// MEDIUM: https://medium.com/100-days-of-python
+const VIEW = [9.8, 6.4];
+function chip(t, cls){ return {t:t, cls:cls || ''}; }
+const curV = () => (typeof varIx !== 'undefined' ? varIx : 0);
+
+const isCJK = ch => { const c = ch.codePointAt(0);
+  return (c >= 0x2e80 && c <= 0x9fff) || (c >= 0xff00 && c <= 0xff60) || (c >= 0x3000 && c <= 0x303f); };
+function tw(str, fs){ let w = 0;
+  for (const ch of String(str)) w += isCJK(ch) ? 1.0 : .55;
+  return w * fs; }
+function fitT(x, y, s, opt){
+  opt = Object.assign({}, opt || {});
+  const fs = opt.fs || .32, a = opt.anchor || 'middle', pad = .20;
+  const room = a === 'start' ? VIEW[0] - pad - x
+             : a === 'end'   ? x - pad
+             : 2 * Math.min(x - pad, VIEW[0] - pad - x);
+  const strs = (typeof s === 'string') ? [s] : [s.zh, s.en].filter(t => t != null);
+  const w = Math.max.apply(null, strs.map(t => tw(t, fs)));
+  if (w > room) opt.fs = fs * room / w;
+  return S.t(x, y, s, opt);
+}
+function fitFs(lab, w, fs){
+  const strs = (typeof lab === 'string') ? [lab] : [lab.zh, lab.en];
+  const need = Math.max.apply(null, strs.map(t => tw(t, fs)));
+  return need > w - .08 ? fs * (w - .08) / need : fs;
+}
+const box = (x, y, w, h, s, lab, fs) => S.r(x, y, w, h, s, lab, {fs:fitFs(lab, w, fs || h * .5)});
+function caps(sh, o){
+  if (o.cap) sh.push(fitT(4.9, 5.62, o.cap, {c:o.capc || COL.pale, fs:.30}));
+  if (o.cap2) sh.push(fitT(4.9, 6.06, o.cap2, {c:COL.grey, fs:.26}));
+  return sh;
+}
+const side = (sh, x, y0, lines, dy) => (lines || []).forEach((l, k) =>
+  sh.push(fitT(x, y0 + k * (dy || .5), l[0], {anchor:'start', c:l[1] || COL.pale, fs:l[2] || .30})));
+const fmtN = x => x == null ? 'nan' : String(Math.round(x * 1e4) / 1e4);
+const PURPLE = '#b45cff';
+
+function barRow(sh, x0, base, bw, gap, vals, sts, labs, maxh, top){
+  const hi = top || Math.max.apply(null, vals.map(Math.abs));
+  vals.forEach((v, i) => {
+    const hgt = Math.max(.05, maxh * Math.abs(v) / hi), x = x0 + i * (bw + gap);
+    sh.push(S.r(x, base - hgt, bw, hgt, sts[i] || 'ok', null));
+    if (labs && labs[i] != null) sh.push(fitT(x + bw / 2, base - hgt - .20, labs[i], {c:COL.pale, fs:.24}));
+  });
+  return sh;
+}
+// a 0..1 x 0..1 plot box; data y grows upward, SVG y grows downward
+function Panel(x0, y0, w, h){ this.x0 = x0; this.y0 = y0; this.w = w; this.h = h; }
+Panel.prototype.px = function(p){
+  return [this.x0 + this.w * p[0], this.y0 + this.h * (1 - p[1])];
+};
+Panel.prototype.frame = function(sh){
+  sh.push(S.r(this.x0, this.y0, this.w, this.h, 'ghost', null));
+  return sh;
+};
+function polyline(sh, panel, pts, st, w){
+  for (let i = 1; i < pts.length; i++){
+    const a = panel.px(pts[i - 1]), b = panel.px(pts[i]);
+    sh.push(S.e(a[0], a[1], b[0], b[1], {s:st, arrow:false, w:w || .055}));
+  }
+  return sh;
+}
+const COST = [{"b": 1, "ctx": 2000, "ms": 3.317, "tps": 301, "us": 3317.0}, {"b": 16, "ctx": 32000, "ms": 3.543, "tps": 4515, "us": 221.5}, {"b": 64, "ctx": 128000, "ms": 4.268, "tps": 14996, "us": 66.7}, {"b": 128, "ctx": 256000, "ms": 5.234, "tps": 24456, "us": 40.9}];
+const MACHINE = {"name": "70B bf16, 8-way tensor parallel", "weight_ms": 3.302, "kv_us": 0.008, "prefill_ms": 0.0268, "pool": 150000, "prefill16k": 428, "swap4k": 5};
+const BATCH = [{"name": "static batching (B=8)", "ttft_p50": 25.62, "ttft_p99": 50.887, "itl_p50": 3.413, "itl_p99": 3.623, "tpot_ms": 3.427, "throughput": 807.155, "end_s": 80.599, "pad_waste": 0.564, "goodput": 0.08}, {"name": "static batching (B=32)", "ttft_p50": 9.703, "ttft_p99": 18.625, "itl_p50": 3.767, "itl_p99": 4.195, "tpot_ms": 3.796, "throughput": 1368.131, "end_s": 47.574, "pad_waste": 0.716, "goodput": 0.027}, {"name": "continuous batching", "ttft_p50": 0.06, "ttft_p99": 1.043, "itl_p50": 3.626, "itl_p99": 61.229, "tpot_ms": 9.751, "throughput": 2140.318, "end_s": 30.431, "pad_waste": 0.0, "goodput": 0.397}];
+const SWEEP = [{"rate": 4, "tput": 743, "ttft50": 0.03, "ttft99": 0.66, "itl99": 20.3, "good": 0.91}, {"rate": 8, "tput": 1463, "ttft50": 0.04, "ttft99": 0.79, "itl99": 43.8, "good": 0.82}, {"rate": 12, "tput": 2140, "ttft50": 0.06, "ttft99": 1.04, "itl99": 61.2, "good": 0.397}, {"rate": 16, "tput": 2191, "ttft50": 2.43, "ttft99": 6.63, "itl99": 431.2, "good": 0.013}, {"rate": 20, "tput": 2384, "ttft50": 2.96, "ttft99": 7.88, "itl99": 431.1, "good": 0.013}, {"rate": 24, "tput": 2258, "ttft50": 4.82, "ttft99": 11.89, "itl99": 431.2, "good": 0.007}];
+const CHUNKS = [{"chunk": 0, "ttft50": 0.06, "ttft99": 1.04, "itl50": 3.6, "itl99": 61.2, "tput": 2140}, {"chunk": 1024, "ttft50": 0.11, "ttft99": 1.29, "itl50": 3.7, "itl99": 31.7, "tput": 2140}, {"chunk": 512, "ttft50": 0.24, "ttft99": 1.6, "itl50": 3.7, "itl99": 17.9, "tput": 2140}, {"chunk": 256, "ttft50": 0.43, "ttft99": 2.38, "itl50": 10.4, "itl99": 10.8, "tput": 2139}];
+const POOL = [{"pool": 150000, "cap": 0, "preempt": 0, "tput": 2140, "itl99": 61.2, "good": 0.397}, {"pool": 150000, "cap": 24, "preempt": 0, "tput": 2140, "itl99": 75.4, "good": 0.293}, {"pool": 150000, "cap": 16, "preempt": 0, "tput": 1985, "itl99": 62.0, "good": 0.25}, {"pool": 60000, "cap": 0, "preempt": 59, "tput": 1238, "itl99": 428.4, "good": 0.04}, {"pool": 60000, "cap": 24, "preempt": 7, "tput": 2013, "itl99": 104.4, "good": 0.12}, {"pool": 60000, "cap": 16, "preempt": 0, "tput": 1985, "itl99": 59.5, "good": 0.263}];
+const SWAP = {"preempt": 16, "tput": 2140, "itl99": 75.9, "good": 0.29};
+const POLICY = [{"policy": "fcfs", "mean": 5.77, "p50": 5.52, "p99": 12.53, "max": 15.71, "long_mean": 5.59, "n_long": 27, "throughput": 2549.7}, {"policy": "sjf", "mean": 3.14, "p50": 1.99, "p99": 19.88, "max": 21.69, "long_mean": 9.99, "n_long": 27, "throughput": 2579.09}];
+const GOOD = [{"name": "continuous, no limits", "tput": 2140, "ttft99": 1.04, "itl99": 61.2, "good": 0.397}, {"name": "+ chunked prefill (512)", "tput": 2140, "ttft99": 1.6, "itl99": 17.9, "good": 1.0}, {"name": "+ admission cap (32)", "tput": 2140, "ttft99": 1.6, "itl99": 17.8, "good": 1.0}, {"name": "small KV pool, no cap", "tput": 1238, "ttft99": 22.65, "itl99": 428.4, "good": 0.04}];
+const TAPE_STATIC = [{"kind": "prefill", "ms": 212, "slots": [[0, "prefill"], [1, "prefill"], [2, "prefill"]], "waiting": 0}, {"kind": "decode", "ms": 219, "slots": [[0, "decode"], [1, "decode"], [2, "decode"]], "waiting": 0}, {"kind": "decode", "ms": 225, "slots": [[0, "decode"], [1, "decode"], [2, "decode"]], "waiting": 0}, {"kind": "decode", "ms": 232, "slots": [[0, "decode"], [1, "decode"], [2, "decode"]], "waiting": 0}, {"kind": "decode", "ms": 239, "slots": [[0, "decode"], [1, "decode"], [2, "decode"]], "waiting": 0}, {"kind": "decode", "ms": 245, "slots": [[0, "decode"], [1, "decode"], [2, "decode"]], "waiting": 0}, {"kind": "decode", "ms": 252, "slots": [[0, "decode"], [1, "padding"], [2, "decode"]], "waiting": 0}, {"kind": "decode", "ms": 258, "slots": [[0, "decode"], [1, "padding"], [2, "decode"]], "waiting": 0}, {"kind": "decode", "ms": 265, "slots": [[0, "decode"], [1, "padding"], [2, "decode"]], "waiting": 0}, {"kind": "decode", "ms": 272, "slots": [[0, "decode"], [1, "padding"], [2, "decode"]], "waiting": 0}, {"kind": "decode", "ms": 278, "slots": [[0, "decode"], [1, "padding"], [2, "padding"]], "waiting": 0}, {"kind": "decode", "ms": 285, "slots": [[0, "decode"], [1, "padding"], [2, "padding"]], "waiting": 0}, {"kind": "decode", "ms": 292, "slots": [[0, "decode"], [1, "padding"], [2, "padding"]], "waiting": 0}, {"kind": "decode", "ms": 298, "slots": [[0, "decode"], [1, "padding"], [2, "padding"]], "waiting": 0}, {"kind": "decode", "ms": 305, "slots": [[0, "decode"], [1, "padding"], [2, "padding"]], "waiting": 0}, {"kind": "prefill", "ms": 471, "slots": [[3, "prefill"], [4, "prefill"], [5, "prefill"]], "waiting": 0}, {"kind": "decode", "ms": 478, "slots": [[3, "decode"], [4, "decode"], [5, "decode"]], "waiting": 0}, {"kind": "decode", "ms": 485, "slots": [[3, "decode"], [4, "decode"], [5, "decode"]], "waiting": 0}];
+const TAPE_CONT = [{"kind": "prefill", "ms": 11, "slots": [[0, "prefill"]], "waiting": 0}, {"kind": "decode", "ms": 27, "slots": [[0, "decode"]], "waiting": 0}, {"kind": "decode", "ms": 44, "slots": [[0, "decode"]], "waiting": 0}, {"kind": "decode", "ms": 60, "slots": [[0, "decode"]], "waiting": 0}, {"kind": "decode", "ms": 77, "slots": [[0, "decode"]], "waiting": 0}, {"kind": "prefill", "ms": 98, "slots": [[0, "stalled"], [1, "prefill"]], "waiting": 0}, {"kind": "decode", "ms": 115, "slots": [[0, "decode"], [1, "decode"]], "waiting": 0}, {"kind": "decode", "ms": 131, "slots": [[1, "decode"]], "waiting": 0}, {"kind": "decode", "ms": 203, "slots": [[2, "decode"]], "waiting": 0}, {"kind": "decode", "ms": 220, "slots": [[2, "decode"]], "waiting": 0}, {"kind": "decode", "ms": 236, "slots": [[2, "decode"]], "waiting": 0}, {"kind": "decode", "ms": 253, "slots": [[2, "decode"]], "waiting": 0}, {"kind": "decode", "ms": 285, "slots": [[3, "decode"]], "waiting": 0}, {"kind": "prefill", "ms": 369, "slots": [[4, "prefill"]], "waiting": 0}, {"kind": "decode", "ms": 386, "slots": [[4, "decode"]], "waiting": 0}, {"kind": "decode", "ms": 402, "slots": [[4, "decode"]], "waiting": 0}, {"kind": "decode", "ms": 419, "slots": [[4, "decode"]], "waiting": 0}, {"kind": "decode", "ms": 470, "slots": [[5, "decode"]], "waiting": 0}];
+
+/* ---------------------------------------------------------------- shared */
+const PCT = x => Math.round(x * 100) + '%';
+const SLOT_STY = {decode:'ok', prefill:'hot', padding:'bad', stalled:'ghost'};
+
+function tapeStage(tape, i, title, opt){
+  opt = opt || {};
+  const f = tape[i], sh = [];
+  sh.push(fitT(4.9, .92, title, {c:COL.tealL, fs:.31}));
+  const slots = opt.slots || 3;
+  for (let k = 0; k < slots; k++){
+    const y = 1.60 + k * 1.05;
+    sh.push(fitT(1.55, y + .42, 'slot ' + k, {anchor:'end', c:COL.grey, fs:.28}));
+    const occupant = f.slots[k];
+    if (occupant){
+      sh.push(S.r(1.70, y, 5.2, .70, SLOT_STY[occupant[1]] || 'idle',
+                  'request ' + occupant[0] + '  (' + occupant[1] + ')', {fs:.30}));
+    } else {
+      sh.push(S.r(1.70, y, 5.2, .70, 'ghost', 'empty', {fs:.28}));
+    }
+  }
+  sh.push(fitT(7.20, 1.95, {zh:'這一步', en:'this step'}, {anchor:'start', c:COL.grey, fs:.26}));
+  sh.push(S.r(7.20, 2.15, 2.1, .62, f.kind === 'prefill' ? 'hot' : 'ok', f.kind, {fs:.28}));
+  sh.push(fitT(7.20, 3.25, {zh:'排隊中', en:'waiting'}, {anchor:'start', c:COL.grey, fs:.26}));
+  sh.push(S.r(7.20, 3.45, 2.1, .62, f.waiting ? 'act' : 'ghost',
+              String(f.waiting || 0), {fs:.30}));
+  sh.push(fitT(7.20, 4.55, {zh:'經過時間', en:'elapsed'}, {anchor:'start', c:COL.grey, fs:.26}));
+  sh.push(S.r(7.20, 4.75, 2.1, .62, 'idle', f.ms + ' ms', {fs:.28}));
+  return sh;
+}
+
+/* ================================================================ tab 1: the loop */
+const CODE_LOOP = [
+  'while work remains:',
+  '    for r in waiting:                 # the admission decision',
+  '        if fits_in_kv_pool(r) and len(running) < cap:',
+  '            running.append(waiting.pop(r))',
+  '',
+  '    if any prompt is unfinished:      # prefill, whole or chunked',
+  '        step = prefill(budget)',
+  '    else:                             # one token for everybody',
+  '        step = decode(running)',
+  '',
+  '    retire(r for r in running if r.hit_stop_condition())',
+  '    while kv_used > pool: preempt(biggest(running))'
+];
+function loopFrames(){
+  const F = new Frames();
+  const stages = [
+    [1, {zh:'請求到達，先進等待佇列', en:'a request arrives and joins the waiting queue'},
+     {zh:'請求到了不代表馬上跑。排程器要先問一個很具體的問題：**這個請求的 KV 空間放得下嗎**？放不下就只能等，而「等」並不是浪費——section 8 會看到，讓它等比讓它跑到一半被丟掉便宜。',
+      en:'Arriving is not starting. The scheduler first asks one very concrete question: **is there KV space for this request?** If not it waits - and waiting is not waste: a queue is cheaper than work that gets half done and thrown away.'}],
+    [3, {zh:'admit：放得下才進 running set', en:'admit: only what fits joins the running set'},
+     {zh:'admit 等於承諾：這個請求每生一個 token 都要再吃一塊 KV，而**沒有人知道它會生幾個**。所以 admission 是整個迴圈裡唯一一個真的「賭」的地方。',
+      en:'Admitting is a promise: every token this request generates needs another slice of KV, and **nobody knows how many it will generate**. Admission is the one place in the loop that is genuinely a bet.'}],
+    [6, {zh:'一步：prefill 或 decode', en:'one step: either a prefill or a decode'},
+     {zh:'一步要嘛是 prefill（把一段 prompt 算進 KV），要嘛是 decode（**所有** running 的請求各吐一個 token）。decode 一步讀一次全部權重 ' + MACHINE.weight_ms + ' ms，所以 batch 裡多一個人幾乎不用錢——這就是排程器存在的理由：**把那一步塞滿**。',
+      en:'A step is either a prefill - turning prompt tokens into KV - or a decode, which produces one token for **every** running request. A decode step reads all the weights once (' + MACHINE.weight_ms + ' ms), so one more request in the batch is nearly free. Keeping that step full is the entire job of the scheduler.'}],
+    [11, {zh:'retire 與 preempt', en:'retire, and preempt'},
+     {zh:'生完的請求立刻離開、把 KV 還回去（**這一點就是 continuous batching 和 static batching 的全部差別**）。而如果 pool 還是滿了，就得挑一個受害者踢回佇列——它的 KV 不是被丟掉重算，就是被搬去主記憶體。',
+      en:'A finished request leaves immediately and returns its KV - **that single sentence is the whole difference between continuous and static batching**. And if the pool is still full, somebody has to be evicted back to the queue, losing its KV either to recomputation or to a trip over PCIe.'}]
+  ];
+  stages.forEach((st, i) => {
+    F.push({shapes:caps(tapeStage(TAPE_CONT, Math.min(st[0], TAPE_CONT.length - 1),
+                                  {zh:'排程迴圈', en:'the scheduling loop'}),
+            {cap:st[1]}), line:[1, 3, 8, 11][i], view:VIEW,
+            panels:[{lbl:'running', chips:[chip(String(TAPE_CONT[st[0]].slots.length), 'ok')]},
+                    {lbl:'waiting', chips:[chip(String(TAPE_CONT[st[0]].waiting), 'act')]}],
+            msg:st[2]});
+  });
+  return F.list;
+}
+
+/* ================================================================ tab 2: static */
+const CODE_STATIC = [
+  '# static batching, the way a training loop would do it',
+  'batch = take(queue, B)            # wait until B requests exist',
+  'prefill(batch)',
+  'while any(r.not_finished for r in batch):',
+  '    decode(batch)                 # finished slots keep running',
+  '# only now can the next request start',
+];
+function staticFrames(){
+  const F = new Frames();
+  const picks = [0, 6, 11, TAPE_STATIC.length - 1];
+  const msgs = [
+    {zh:'三個請求一起 prefill、一起開始。第四個請求就算現在到了，也只能等這一批全部做完。',
+     en:'Three requests are prefilled together and start together. A fourth request that arrives now waits for the entire batch to finish.'},
+    {zh:'短的那個已經生完了，但它的 slot **還在**——batch 的大小是固定的，沒人能補進來。',
+     en:'The short request has already produced its last token, but its slot is **still there**: the batch size is fixed and nobody can take the place.'},
+    {zh:'灰色就是在空轉的 slot。整天最刺眼的數字：batch=32 時有 ' + PCT(BATCH[1].pad_waste) + ' 的 slot-step 是在算已經結束的請求。',
+     en:'The grey slots are doing nothing. The sharpest number of the day: with a batch of 32, ' + PCT(BATCH[1].pad_waste) + ' of all slot-steps are spent on requests that already finished.'},
+    {zh:'最長的那個終於結束，下一批才能開始——這就是 static batching 的首 token 中位數 ' + BATCH[0].ttft_p50 + ' 秒的來源，跟模型本身一點關係都沒有。',
+     en:'Only when the longest member finishes can the next batch start. That is where static batching gets its ' + BATCH[0].ttft_p50 + ' s median time to first token - nothing to do with the model.'}
+  ];
+  picks.forEach((p, i) => {
+    F.push({shapes:caps(tapeStage(TAPE_STATIC, p, {zh:'static batching（B=3）',
+                                                   en:'static batching (B=3)'}),
+            {cap:{zh:'橘＝prefill，藍＝decode，紅＝已結束但佔著 slot',
+                  en:'amber = prefill, teal = decode, red = finished but still holding the slot'}}),
+            line:[1, 4, 4, 5][i], view:VIEW,
+            panels:[{lbl:'padding waste', chips:[chip(PCT(BATCH[1].pad_waste), 'bad')]},
+                    {lbl:'TTFT p50', chips:[chip(BATCH[0].ttft_p50 + ' s', 'bad')]}],
+            msg:msgs[i]});
+  });
+  return F.list;
+}
+
+/* ================================================================ tab 3: continuous */
+const CODE_CONT = [
+  '# continuous batching: the batch is rebuilt every step',
+  'while work remains:',
+  '    admit(waiting)                # anyone who fits joins now',
+  '    step(running)                 # prefill or decode',
+  '    retire(finished)              # leaves immediately, frees its KV'
+];
+function contFrames(){
+  const F = new Frames();
+  const picks = [2, 7, 12, TAPE_CONT.length - 1];
+  const msgs = [
+    {zh:'同一批到達，但這次 slot 是每一步重新決定的。',
+     en:'The same arrivals, except the batch is now rebuilt from scratch every step.'},
+    {zh:'一個請求結束，它的 KV 當場還回 pool，下一個排隊的立刻補上——**沒有任何一步是空的**。',
+     en:'A request finishes, its KV goes straight back to the pool, and the next request in the queue takes the slot in the same step - **no step is ever idle**.'},
+    {zh:'對照 static：同樣 300 個請求、同樣的卡，吞吐 ' + BATCH[0].throughput.toFixed(0) + ' → ' + BATCH[2].throughput.toFixed(0) + ' tok/s。',
+     en:'Against static batching on the same 300 requests and the same GPUs: throughput goes from ' + BATCH[0].throughput.toFixed(0) + ' to ' + BATCH[2].throughput.toFixed(0) + ' tokens/s.'},
+    {zh:'而首 token 中位數從 ' + BATCH[0].ttft_p50 + ' 秒變成 ' + BATCH[2].ttft_p50 + ' 秒。**沒有任何 kernel 被改過**，改的只是「誰可以在哪一步加入批次」。',
+     en:'And the median first token goes from ' + BATCH[0].ttft_p50 + ' s to ' + BATCH[2].ttft_p50 + ' s. **No kernel changed** - only the rule about when a request may join the batch.'}
+  ];
+  picks.forEach((p, i) => {
+    F.push({shapes:caps(tapeStage(TAPE_CONT, p, {zh:'continuous batching',
+                                                 en:'continuous batching'}),
+            {cap:{zh:'slot 一空出來就補人', en:'a slot is refilled the step it frees up'}}),
+            line:[2, 3, 4, 4][i], view:VIEW,
+            panels:[{lbl:'throughput', chips:[chip(BATCH[2].throughput.toFixed(0) + ' tok/s', 'ok')]},
+                    {lbl:'TTFT p50', chips:[chip(BATCH[2].ttft_p50 + ' s', 'ok')]},
+                    {lbl:'padding', chips:[chip('0%', 'dim')]}],
+            msg:msgs[i]});
+  });
+  return F.list;
+}
+
+/* ================================================================ tab 4: the curve */
+const CODE_CURVE = [
+  '# the capacity of this deployment is set by prefill arithmetic',
+  'prefill_ms_per_token = 2 * params / gpus / (flops * mfu)',
+  'avg_prompt_ms        = 1800 * prefill_ms_per_token   # about 48 ms',
+  'requests_per_second  = 1000 / avg_prompt_ms          # about 20',
+  '',
+  '# past that point the queue grows and only throughput still looks fine'
+];
+function curveStage(upto){
+  const sh = [];
+  sh.push(fitT(4.9, .92, {zh:'提高負載：吞吐會飽和，延遲不會',
+                          en:'raising the load: throughput saturates, latency does not'},
+               {c:COL.tealL, fs:.31}));
+  const maxT = Math.max.apply(null, SWEEP.map(r => r.tput));
+  const maxL = Math.max.apply(null, SWEEP.map(r => r.ttft99));
+  SWEEP.forEach((r, i) => {
+    if (i > upto) return;
+    const x = .85 + i * 1.48;
+    const h = 2.6 * r.tput / maxT;
+    sh.push(S.r(x, 4.05 - h, 1.05, h, i === upto ? 'hot' : 'ok', null));
+    sh.push(fitT(x + .52, 4.38, r.rate + '/s', {c:COL.grey, fs:.26}));
+    sh.push(fitT(x + .52, 3.95 - h, String(r.tput), {c:COL.tealL, fs:.24}));
+    const ly = 5.35 - 1.1 * r.ttft99 / maxL;
+    sh.push(S.c(x + .52, ly, .10, 'bad', null));
+    sh.push(fitT(x + .52, ly - .28, r.ttft99 + ' s', {c:COL.red, fs:.23}));
+    sh.push(fitT(x + .52, 4.95, PCT(r.good), {c:r.good > .5 ? COL.tealL : COL.red, fs:.26}));
+  });
+  sh.push(fitT(.30, 4.95, {zh:'goodput', en:'goodput'}, {anchor:'start', c:COL.grey, fs:.24}));
+  sh.push(fitT(.30, 5.35, {zh:'TTFT p99', en:'TTFT p99'}, {anchor:'start', c:COL.red, fs:.24}));
+  return sh;
+}
+function curveFrames(){
+  const F = new Frames();
+  [1, 3, SWEEP.length - 1].forEach((u, i) => {
+    F.push({shapes:caps(curveStage(u), {cap:{zh:'每秒到達 ' + SWEEP[u].rate + ' 個請求',
+                                             en:SWEEP[u].rate + ' requests per second'}}),
+            line:[3, 3, 5][i], view:VIEW,
+            panels:[{lbl:'throughput', chips:[chip(SWEEP[u].tput + ' tok/s', 'ok')]},
+                    {lbl:'TTFT p99', chips:[chip(SWEEP[u].ttft99 + ' s', 'bad')]},
+                    {lbl:'goodput', chips:[chip(PCT(SWEEP[u].good), SWEEP[u].good > .5 ? 'ok' : 'bad')]}],
+            msg:[
+              {zh:'低負載時引擎是被「請求來得不夠快」限制住的：吞吐跟著到達率走，延遲幾乎不動，goodput 還有 ' + PCT(SWEEP[1].good) + '。',
+               en:'At low load the engine is arrival-limited: throughput tracks the offered rate, latency barely moves, and goodput is still ' + PCT(SWEEP[1].good) + '.'},
+              {zh:'過了膝點，**吞吐幾乎不再成長**（' + SWEEP[2].tput + ' → ' + SWEEP[3].tput + ' tok/s）但 TTFT p99 從 ' + SWEEP[2].ttft99 + ' 跳到 ' + SWEEP[3].ttft99 + ' 秒。這裡的容量是被 prefill 的算力決定的：平均 prompt 要 48 ms 的純算術，所以大約每秒 20 個請求就是上限，跟 batch 開多大無關。',
+               en:'Past the knee **throughput barely grows** (' + SWEEP[2].tput + ' to ' + SWEEP[3].tput + ' tokens/s) while TTFT p99 jumps from ' + SWEEP[2].ttft99 + ' to ' + SWEEP[3].ttft99 + ' s. Capacity here is set by prefill arithmetic: the average prompt is 48 ms of pure FLOPs, so about 20 requests per second is the ceiling whatever the batch size.'},
+              {zh:'再加負載只是把佇列拉長：吞吐 ' + SWEEP[SWEEP.length - 1].tput + ' tok/s 看起來還好，但 goodput 只剩 ' + PCT(SWEEP[SWEEP.length - 1].good) + '。**只報 throughput 的 serving 報告是讀不出這件事的。**',
+               en:'More load just lengthens the queue: throughput still reads ' + SWEEP[SWEEP.length - 1].tput + ' tokens/s while goodput is down to ' + PCT(SWEEP[SWEEP.length - 1].good) + '. **A serving report that quotes throughput alone cannot show this.**'}
+            ][i]});
+  });
+  return F.list;
+}
+
+/* ================================================================ tab 5: chunked prefill */
+const CODE_CHUNK = [
+  '# without a budget, one prompt owns the whole step',
+  'if waiting_prompt: prefill(whole_prompt)   # 16k tokens = 428 ms',
+  'else:              decode(running)',
+  '',
+  '# with a budget, prefill and decode share every step',
+  'take = min(budget, prompt_left)',
+  'step = decode(running) + prefill(take)     # budget = 512 tokens'
+];
+function chunkFrames(){
+  const F = new Frames();
+  const maxI = Math.max.apply(null, CHUNKS.map(r => r.itl99));
+  const maxT = Math.max.apply(null, CHUNKS.map(r => r.ttft50));
+  const stage = (upto) => {
+    const sh = [];
+    sh.push(fitT(4.9, .92, {zh:'chunked prefill：同樣的工作，切成好幾步',
+                            en:'chunked prefill: the same work, cut into steps'},
+                 {c:COL.tealL, fs:.31}));
+    CHUNKS.forEach((r, i) => {
+      if (i > upto) return;
+      const y = 1.55 + i * 1.05;
+      const lbl = r.chunk ? r.chunk + ' tokens' : (TR_WHOLE);
+      sh.push(fitT(2.25, y + .40, lbl, {anchor:'end', c:COL.tealL, fs:.27}));
+      const w1 = Math.max(.25, 3.1 * r.itl99 / maxI);
+      sh.push(S.r(2.40, y, w1, .64, r.itl99 > 50 ? 'bad' : 'ok', null));
+      sh.push(fitT(2.52 + w1, y + .40, 'ITL p99 ' + r.itl99 + ' ms',
+                   {anchor:'start', c:r.itl99 > 50 ? COL.red : COL.tealL, fs:.26}));
+      const w2 = Math.max(.25, 1.05 * r.ttft50 / maxT);
+      sh.push(S.r(7.05, y, w2, .64, 'hot', null));
+      sh.push(fitT(7.17 + w2, y + .40, 'TTFT ' + r.ttft50 + ' s',
+                   {anchor:'start', c:COL.orangeL, fs:.26}));
+    });
+    return sh;
+  };
+  const TR_WHOLE = 'whole prompt';
+  [0, 2, CHUNKS.length - 1].forEach((u, i) => {
+    F.push({shapes:caps(stage(u), {cap:{zh:'紅色＝超過 50 ms 的 ITL 尾巴',
+                                        en:'red: an inter-token tail beyond 50 ms'}}),
+            line:[1, 6, 6][i], view:VIEW,
+            panels:[{lbl:'ITL p99', chips:[chip(CHUNKS[u].itl99 + ' ms', CHUNKS[u].itl99 > 50 ? 'bad' : 'ok')]},
+                    {lbl:'TTFT p50', chips:[chip(CHUNKS[u].ttft50 + ' s', 'hot')]}],
+            msg:[
+              {zh:'一個 16,000 token 的 prompt 是 ' + MACHINE.prefill16k + ' ms 的純算術。如果它整段當成一步跑，**每一個正在 decode 的請求都會在兩個 token 之間卡 ' + MACHINE.prefill16k + ' ms**——這就是第一列的 ITL p99 ' + CHUNKS[0].itl99 + ' ms。',
+               en:'A 16,000-token prompt is ' + MACHINE.prefill16k + ' ms of pure arithmetic. Run it as one step and **every request currently decoding sees a ' + MACHINE.prefill16k + ' ms gap between two of its tokens** - which is the ' + CHUNKS[0].itl99 + ' ms ITL p99 in the first row.'},
+              {zh:'把 prompt 切成 512 個 token 一塊、混進 decode 步裡，尾巴從 ' + CHUNKS[0].itl99 + ' 掉到 ' + CHUNKS[2].itl99 + ' ms——**尾巴的大小從「prompt 多長」變成「chunk 多大」**。代價是首 token 從 ' + CHUNKS[0].ttft50 + ' 變 ' + CHUNKS[2].ttft50 + ' 秒。',
+               en:'Cut the prompt into 512-token pieces and mix them into decode steps: the tail falls from ' + CHUNKS[0].itl99 + ' to ' + CHUNKS[2].itl99 + ' ms - **the tail is now the size of a chunk instead of the size of a prompt**. The price is the first token moving from ' + CHUNKS[0].ttft50 + ' to ' + CHUNKS[2].ttft50 + ' s.'},
+              {zh:'再切小到 256，ITL p99 ' + CHUNKS[3].itl99 + ' ms 但 **ITL 中位數反而變差**（' + CHUNKS[0].itl50 + ' → ' + CHUNKS[3].itl50 + ' ms，每個 chunk 都要再讀一次權重），首 token 也變成 ' + CHUNKS[3].ttft50 + ' 秒。這個旋鈕是 TTFT 換 ITL，不是免費的。',
+               en:'Cut it to 256 and the ITL p99 is ' + CHUNKS[3].itl99 + ' ms, but the **median gets worse** (' + CHUNKS[0].itl50 + ' to ' + CHUNKS[3].itl50 + ' ms, because every chunk re-reads the weights) and the first token slips to ' + CHUNKS[3].ttft50 + ' s. The knob trades TTFT for ITL; it does not create time.'}
+            ][i]});
+  });
+  return F.list;
+}
+
+/* ================================================================ tab 6: the pool */
+const CODE_POOL = [
+  '# admitting is a promise about tokens nobody has generated yet',
+  'kv_used += prompt_len                 # now',
+  'kv_used += 1 per decode step          # for as long as it keeps going',
+  '',
+  'while kv_used > pool:                 # somebody has to go',
+  '    victim = max(running, key=context)',
+  '    if mode == "recompute": drop its KV, prefill again later',
+  '    else:                   copy its KV to host memory and back'
+];
+function poolFrames(){
+  const F = new Frames();
+  const small = POOL.filter(r => r.pool === 60000 && r.cap === 0)[0];
+  const big = POOL.filter(r => r.pool === 150000 && r.cap === 0)[0];
+  const stage = (mode) => {
+    const sh = [];
+    sh.push(fitT(4.9, .92, {zh:'KV pool 滿了之後', en:'what happens when the KV pool fills'},
+                 {c:COL.tealL, fs:.31}));
+    const rows = mode === 0
+      ? [[{zh:'大 pool（150k token）', en:'big pool (150k tokens)'}, big, 'ok'],
+         [{zh:'小 pool（60k token）', en:'small pool (60k tokens)'}, small, 'bad']]
+      : [[{zh:'小 pool，被搶占後重算', en:'small pool, preempt by recompute'}, small, 'bad'],
+         [{zh:'小 pool，被搶占後換出 KV', en:'small pool, preempt by swapping the KV'}, SWAP, 'act']];
+    rows.forEach((r, i) => {
+      const y = 1.75 + i * 1.75;
+      sh.push(fitT(.45, y + .10, r[0], {anchor:'start', c:COL.tealL, fs:.29}));
+      const cells = [['preemptions', r[1].preempt], ['tok/s', r[1].tput],
+                     ['ITL p99', r[1].itl99 + ' ms'], ['goodput', PCT(r[1].good)]];
+      cells.forEach((c, k) => {
+        const x = .45 + k * 2.35;
+        sh.push(S.r(x, y + .35, 2.1, .68, r[2], String(c[1]), {fs:.30}));
+        sh.push(fitT(x + 1.05, y + 1.28, c[0], {c:COL.grey, fs:.25}));
+      });
+    });
+    return sh;
+  };
+  F.push({shapes:caps(stage(0), {cap:{zh:'同樣的請求，只有 pool 大小不同',
+                                      en:'the same requests, only the pool size differs'}}),
+          line:1, view:VIEW,
+          panels:[{lbl:'big pool', chips:[chip(big.tput + ' tok/s', 'ok')]},
+                  {lbl:'small pool', chips:[chip(small.tput + ' tok/s', 'bad'), chip(small.preempt + ' preempt', 'bad')]}],
+          msg:{zh:'admit 一個請求等於承諾「它每生一個 token 我都還有 KV 給它」，而沒人知道它會生幾個。pool 一滿就得挑人踢掉：小 pool 這一輪發生了 ' + small.preempt + ' 次搶占，吞吐從 ' + big.tput + ' 掉到 ' + small.tput + ' tok/s、ITL p99 ' + small.itl99 + ' ms、goodput 只剩 ' + PCT(small.good) + '。**沒有任何錯誤訊息**，它只是變慢。',
+               en:'Admitting a request promises KV for every token it will produce, and nobody knows how many that is. When the pool fills, somebody is evicted: the small pool took ' + small.preempt + ' preemptions, throughput fell from ' + big.tput + ' to ' + small.tput + ' tokens/s, the ITL tail went to ' + small.itl99 + ' ms and goodput to ' + PCT(small.good) + '. **Nothing raises an error** - it just gets slower.'}});
+  F.push({shapes:caps(stage(1), {cap:{zh:'重算 vs 換出：被丟掉的是進度還是時間',
+                                      en:'recompute or swap: lose the progress, or pay for moving it'}}),
+          line:6, view:VIEW,
+          panels:[{lbl:'recompute', chips:[chip(small.tput + ' tok/s', 'bad')]},
+                  {lbl:'swap', chips:[chip(SWAP.tput + ' tok/s', 'ok')]}],
+          msg:{zh:'重算是把受害者的 KV 整個丟掉、之後 prompt 再 prefill 一次——它已經生出來的 token 也等於白生。換出則是把 KV 搬去主記憶體再搬回來，4,000 個 token 的 context 來回大約 ' + MACHINE.swap4k + ' ms（PCIe），進度全部保留：搶占次數 ' + small.preempt + ' → ' + SWAP.preempt + '、吞吐 ' + small.tput + ' → ' + SWAP.tput + ' tok/s。',
+               en:'Recompute throws the victim\'s KV away and prefills its prompt again later, so the tokens it had already produced were wasted too. Swapping copies the KV to host memory and back - about ' + MACHINE.swap4k + ' ms over PCIe for a 4,000-token context - and keeps every bit of progress: preemptions go from ' + small.preempt + ' to ' + SWAP.preempt + ', throughput from ' + small.tput + ' to ' + SWAP.tput + ' tokens/s.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 7: admission cap */
+const CODE_CAP = [
+  '# the cap is a claim about which resource is binding',
+  'if len(running) >= max_running_requests: wait',
+  'if kv_used + prompt > pool:              wait',
+  '',
+  '# vLLM:    --max-num-seqs',
+  '# SGLang:  --max-running-requests'
+];
+function capFrames(){
+  const F = new Frames();
+  const g = (pool, cap) => POOL.filter(r => r.pool === pool && r.cap === cap)[0];
+  const rows = [[{zh:'小 pool，不設上限', en:'small pool, no cap'}, g(60000, 0), 'bad'],
+                [{zh:'小 pool，上限 16', en:'small pool, cap of 16'}, g(60000, 16), 'ok'],
+                [{zh:'大 pool，不設上限', en:'big pool, no cap'}, g(150000, 0), 'ok'],
+                [{zh:'大 pool，上限 16', en:'big pool, cap of 16'}, g(150000, 16), 'hot']];
+  const stage = (upto) => {
+    const sh = [];
+    sh.push(fitT(4.9, .92, {zh:'admission control：不要開始做不完的工作',
+                            en:'admission control: do not start work you cannot finish'},
+                 {c:COL.tealL, fs:.31}));
+    rows.forEach((r, i) => {
+      if (i > upto) return;
+      const y = 1.55 + i * 1.05;
+      sh.push(fitT(2.55, y + .38, r[0], {anchor:'end', c:COL.tealL, fs:.27}));
+      sh.push(S.r(2.70, y, 1.85, .62, r[2], r[1].tput + ' tok/s', {fs:.27}));
+      sh.push(S.r(4.70, y, 1.85, .62, r[1].preempt ? 'bad' : 'idle',
+                  r[1].preempt + ' preempt', {fs:.27}));
+      sh.push(S.r(6.70, y, 2.4, .62, r[1].good > .3 ? 'ok' : 'bad',
+                  'goodput ' + PCT(r[1].good), {fs:.27}));
+    });
+    return sh;
+  };
+  F.push({shapes:caps(stage(1), {cap:{zh:'小 pool：上限讓兩個數字同時變好',
+                                      en:'small pool: the cap improves both columns'}}),
+          line:1, view:VIEW,
+          panels:[{lbl:'no cap', chips:[chip(PCT(g(60000, 0).good), 'bad')]},
+                  {lbl:'cap 16', chips:[chip(PCT(g(60000, 16).good), 'ok')]}],
+          msg:{zh:'在小 pool 上，設上限是**兩邊都賺**：吞吐 ' + g(60000, 0).tput + ' → ' + g(60000, 16).tput + ' tok/s、goodput ' + PCT(g(60000, 0).good) + ' → ' + PCT(g(60000, 16).good) + '。因為被搶占丟掉的那些工作本來就是純浪費（prompt 被 prefill 兩次、KV 寫了又丟）。**排隊比做到一半被丟掉便宜**，這就是 admission control 的全部理由。',
+               en:'On the small pool the cap wins on both axes: throughput ' + g(60000, 0).tput + ' to ' + g(60000, 16).tput + ' tokens/s and goodput ' + PCT(g(60000, 0).good) + ' to ' + PCT(g(60000, 16).good) + '. What the preemptions threw away was pure waste - prompts prefilled twice, KV written and dropped. **A queue is cheaper than half-finished work**, and that is the whole argument for admission control.'}});
+  F.push({shapes:caps(stage(3), {cap:{zh:'大 pool：同一個上限變成純粹的損失',
+                                      en:'big pool: the same cap is now pure loss'}}),
+          line:2, view:VIEW,
+          panels:[{lbl:'big, no cap', chips:[chip(PCT(g(150000, 0).good), 'ok')]},
+                  {lbl:'big, cap 16', chips:[chip(PCT(g(150000, 16).good), 'bad')]}],
+          msg:{zh:'但在大 pool 上，本來就沒有人被搶占，設上限只是多排隊：吞吐 ' + g(150000, 0).tput + ' → ' + g(150000, 16).tput + '、goodput ' + PCT(g(150000, 0).good) + ' → ' + PCT(g(150000, 16).good) + '。**上限不是「調大調小」的旋鈕，而是一個主張：KV pool 是這裡的瓶頸**；如果不是，這個主張就直接讓你損失餘裕。',
+               en:'On the big pool nothing was being preempted, so the same cap only adds queueing: throughput ' + g(150000, 0).tput + ' to ' + g(150000, 16).tput + ' and goodput ' + PCT(g(150000, 0).good) + ' to ' + PCT(g(150000, 16).good) + '. **A cap is not a knob you tune up and down; it is a claim that the KV pool is the binding constraint** - and when it is not, the claim costs you the slack.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 8: policy */
+const CODE_POLICY = [
+  '# first come, first served',
+  'waiting.sort(key=lambda r: r.arrive)',
+  '',
+  '# shortest job first: better mean, worse tail',
+  'waiting.sort(key=lambda r: r.prompt)',
+  '',
+  '# what production actually does: age the queue',
+  'waiting.sort(key=lambda r: r.prompt - alpha * r.waited)'
+];
+function policyFrames(){
+  const F = new Frames();
+  const f = POLICY[0], s = POLICY[1];
+  const stage = (upto) => {
+    const sh = [];
+    sh.push(fitT(4.9, .92, {zh:'誰先跑：平均數與尾巴的取捨',
+                            en:'who goes first: the mean against the tail'},
+                 {c:COL.tealL, fs:.31}));
+    const cols = [['mean', 'mean'], ['p50', 'p50'], ['p99', 'p99'], ['max', 'max'],
+                  ['long prompts', 'long_mean']];
+    [f, s].forEach((r, i) => {
+      if (i > upto) return;
+      const y = 1.75 + i * 1.55;
+      sh.push(fitT(.45, y + .05, r.policy === 'fcfs'
+                   ? {zh:'FCFS（先到先跑）', en:'FCFS (first come, first served)'}
+                   : {zh:'SJF（短的先跑）', en:'SJF (shortest job first)'},
+                   {anchor:'start', c:COL.tealL, fs:.29}));
+      cols.forEach((c, k) => {
+        const x = .45 + k * 1.87;
+        const hot = (c[1] === 'long_mean' || c[1] === 'p99') && r.policy === 'sjf';
+        sh.push(S.r(x, y + .32, 1.68, .66, hot ? 'bad' : (r.policy === 'sjf' ? 'ok' : 'idle'),
+                    r[c[1]] + ' s', {fs:.28}));
+        sh.push(fitT(x + .84, y + 1.22, c[0], {c:COL.grey, fs:.24}));
+      });
+    });
+    return sh;
+  };
+  F.push({shapes:caps(stage(0), {cap:{zh:'先到先跑：所有人付一樣的排隊成本',
+                                      en:'first come, first served: everybody pays the same queue'}}),
+          line:1, view:VIEW,
+          panels:[{lbl:'mean', chips:[chip(f.mean + ' s', 'dim')]},
+                  {lbl:'long prompts', chips:[chip(f.long_mean + ' s', 'ok')]}],
+          msg:{zh:'FCFS 在過載時每個人的平均延遲是 ' + f.mean + ' 秒，而長 prompt 的平均 ' + f.long_mean + ' 秒跟整體差不多——**沒有人被特別犧牲**。',
+               en:'Under overload FCFS gives everybody a mean latency of ' + f.mean + ' s, and the long prompts sit at ' + f.long_mean + ' s, about the same as everyone else: **nobody is singled out**.'}});
+  F.push({shapes:caps(stage(1), {cap:{zh:'短的先跑：平均減半，尾巴變兩倍',
+                                      en:'shortest job first: half the mean, twice the tail'}}),
+          line:4, view:VIEW,
+          panels:[{lbl:'mean', chips:[chip(s.mean + ' s', 'ok')]},
+                  {lbl:'p99', chips:[chip(s.p99 + ' s', 'bad')]},
+                  {lbl:'long prompts', chips:[chip(s.long_mean + ' s', 'bad')]}],
+          msg:{zh:'SJF 把平均從 ' + f.mean + ' 壓到 ' + s.mean + ' 秒，但 p99 從 ' + f.p99 + ' 變 ' + s.p99 + '、長 prompt 從 ' + f.long_mean + ' 變 ' + s.long_mean + ' 秒——**被犧牲的剛好是本來就最慢的那群**，而且在持續過載下它們永遠排不到。所以實務上的排程器會讓優先權隨等待時間上升（aging），也就是「短的先跑，但有保證」。',
+               en:'SJF cuts the mean from ' + f.mean + ' to ' + s.mean + ' s, but p99 goes from ' + f.p99 + ' to ' + s.p99 + ' and the long prompts from ' + f.long_mean + ' to ' + s.long_mean + ' s - **the requests that were already slowest are exactly the ones that pay**, and under sustained overload they never run at all. Production schedulers therefore age the queue: priority rises with waiting time, so the policy is shortest-job-first with a guarantee attached.'}});
+  return F.list;
+}
+
+/* ================================================================ tab 9: goodput */
+const CODE_GOOD = [
+  'def goodput(run, ttft_s=2.0, itl_ms=50.0):',
+  '    ok = 0',
+  '    for r in run.requests:',
+  '        if r.ttft <= ttft_s and p99(r.itls) <= itl_ms:',
+  '            ok += 1',
+  '    return ok / len(run.requests)   # the number worth tuning'
+];
+function goodFrames(){
+  const F = new Frames();
+  const top = Math.max.apply(null, GOOD.map(r => r.tput));
+  const stage = (mode) => {
+    const sh = [];
+    sh.push(fitT(4.9, .92, mode === 0
+      ? {zh:'只看吞吐：前三個分不出來', en:'by throughput alone, the first three are identical'}
+      : {zh:'看 goodput：差別整個出來了', en:'by goodput, they are not remotely the same'},
+      {c:COL.tealL, fs:.31}));
+    GOOD.forEach((r, i) => {
+      const y = 1.55 + i * 1.05;
+      sh.push(fitT(2.95, y + .38, r.name, {anchor:'end', c:COL.tealL, fs:.26}));
+      const w = 2.6 * r.tput / top;
+      sh.push(S.r(3.10, y, w, .62, 'ok', null));
+      sh.push(fitT(3.22 + w, y + .38, r.tput + ' tok/s', {anchor:'start', c:COL.tealL, fs:.26}));
+      if (mode === 1){
+        const wg = Math.max(.12, 2.2 * r.good);
+        sh.push(S.r(6.85, y, wg, .62, r.good > .9 ? 'ok' : (r.good > .3 ? 'hot' : 'bad'), null));
+        sh.push(fitT(6.97 + wg, y + .38, PCT(r.good), {anchor:'start',
+                c:r.good > .9 ? COL.tealL : (r.good > .3 ? COL.orangeL : COL.red), fs:.26}));
+      }
+    });
+    return sh;
+  };
+  F.push({shapes:caps(stage(0), {cap:{zh:'四種設定的吞吐', en:'throughput of four configurations'}}),
+          line:0, view:VIEW,
+          panels:[{lbl:'first three', chips:[chip(GOOD[0].tput + ' tok/s', 'ok')]}],
+          msg:{zh:'前三個設定搬的 token 數**完全一樣**（' + GOOD[0].tput + ' tok/s），第四個因為搶占掉到 ' + GOOD[3].tput + '。如果報告只有這一欄，你會以為前三個沒差。',
+               en:'The first three configurations move **exactly the same** number of tokens per second (' + GOOD[0].tput + '), and the fourth drops to ' + GOOD[3].tput + ' because of preemption. With only this column in a report, the first three look interchangeable.'}});
+  F.push({shapes:caps(stage(1), {cap:{zh:'goodput＝首 token < 2 秒且 ITL p99 < 50 ms 的請求比例',
+                                      en:'goodput: requests with TTFT under 2 s and ITL p99 under 50 ms'}}),
+          line:3, view:VIEW,
+          panels:[{lbl:'no limits', chips:[chip(PCT(GOOD[0].good), 'hot')]},
+                  {lbl:'chunked', chips:[chip(PCT(GOOD[1].good), 'ok')]},
+                  {lbl:'small pool', chips:[chip(PCT(GOOD[3].good), 'bad')]}],
+          msg:{zh:'同樣的吞吐，goodput 是 ' + PCT(GOOD[0].good) + ' vs ' + PCT(GOOD[1].good) + '。**調一個 serving stack 就是在移動右邊那一欄**，而右邊那一欄在只量左邊的時候完全看不見。這也是為什麼每份 serving 報告都要同時給 input/output 長度、併發數、TTFT、TPOT 與 ITL——少了任何一個，剩下的都可以被調出來好看。',
+               en:'Same throughput, goodput of ' + PCT(GOOD[0].good) + ' against ' + PCT(GOOD[1].good) + '. **Tuning a serving stack means moving the right-hand column**, and the right-hand column is invisible if you only measure the left one. That is why a serving report needs input and output lengths, concurrency, TTFT, TPOT and ITL together: drop any one of them and the rest can be made to look good.'}});
+  return F.list;
+}
+
+const DAY_META = {
+  title: {zh:'Continuous batching 與推論排程器', en:'Continuous batching and the inference scheduler'},
+  sub: {zh:'同樣的卡、同樣的請求，只是讓請求能在每一步之間加入與離開批次',
+        en:'the same GPUs and the same requests, with one rule changed: when a request may join the batch'},
+  tabs: [
+    {id:'loop', label:{zh:'排程迴圈', en:'the loop'},
+     stage:{zh:'admit、一步、retire、preempt', en:'admit, step, retire, preempt'},
+     view:VIEW, code:CODE_LOOP, build:loopFrames,
+     idea:{zh:'引擎每秒做幾百次同一個決定：**誰進得了下一個 forward pass**。decode 一步讀一次全部權重（' + MACHINE.weight_ms + ' ms），所以 batch 裡多一個人幾乎免費——排程器的工作就是在 KV pool 允許的範圍內把那一步塞滿。',
+           en:'The engine makes one decision a few hundred times a second: **who is in the next forward pass**. A decode step reads every weight once (' + MACHINE.weight_ms + ' ms), so one more request in the batch is nearly free; the scheduler exists to keep that step as full as the KV pool allows.'},
+     legend:[['#ff9736', {zh:'prefill 的那一步', en:'a prefill step'}],
+             ['#3fe0dd', {zh:'decode 的那一步', en:'a decode step'}],
+             ['#9d6bff', {zh:'還在排隊的請求', en:'requests still queued'}]]},
+    {id:'static', label:{zh:'static batching', en:'static batching'},
+     stage:{zh:'一起開始，一起結束', en:'start together, end together'},
+     view:VIEW, code:CODE_STATIC, build:staticFrames,
+     idea:{zh:'批次跑到**最長**的那一個結束為止，所以短請求生完之後 slot 還佔著：B=32 時 ' + PCT(BATCH[1].pad_waste) + ' 的 slot-step 是在算已經結束的請求，而新來的請求要等整批做完（首 token 中位數 ' + BATCH[0].ttft_p50 + ' 秒）。',
+           en:'A batch runs until its **longest** member finishes, so a short request keeps its slot after its last token: at B=32, ' + PCT(BATCH[1].pad_waste) + ' of all slot-steps are spent on finished requests, and an arrival waits for the whole batch (median first token ' + BATCH[0].ttft_p50 + ' s).'},
+     legend:[['#ff5c5c', {zh:'已結束但佔著 slot', en:'finished, still holding a slot'}],
+             ['#3fe0dd', {zh:'還在生 token', en:'still generating'}]]},
+    {id:'cont', label:{zh:'continuous batching', en:'continuous batching'},
+     stage:{zh:'slot 一空就補人', en:'a freed slot is refilled immediately'},
+     view:VIEW, code:CODE_CONT, build:contFrames,
+     idea:{zh:'差別只有一句話：**請求可以在任何一步之間加入與離開**。同樣 300 個請求、同樣的卡：吞吐 ' + BATCH[0].throughput.toFixed(0) + ' → ' + BATCH[2].throughput.toFixed(0) + ' tok/s，首 token 中位數 ' + BATCH[0].ttft_p50 + ' → ' + BATCH[2].ttft_p50 + ' 秒，沒有任何 kernel 被改過。',
+           en:'The difference is one sentence: **a request may join or leave between any two steps**. Same 300 requests, same GPUs: throughput ' + BATCH[0].throughput.toFixed(0) + ' to ' + BATCH[2].throughput.toFixed(0) + ' tokens/s and the median first token ' + BATCH[0].ttft_p50 + ' to ' + BATCH[2].ttft_p50 + ' s, with no kernel changed.'},
+     legend:[['#3fe0dd', {zh:'正在 decode', en:'decoding'}],
+             ['#ff9736', {zh:'正在 prefill', en:'prefilling'}]]},
+    {id:'curve', label:{zh:'負載曲線', en:'the load curve'},
+     stage:{zh:'吞吐會飽和，延遲不會', en:'throughput saturates, latency does not'},
+     view:VIEW, code:CODE_CURVE, build:curveFrames,
+     idea:{zh:'膝點之後吞吐幾乎不動（' + SWEEP[2].tput + ' → ' + SWEEP[SWEEP.length - 1].tput + ' tok/s）而 TTFT p99 從 ' + SWEEP[2].ttft99 + ' 衝到 ' + SWEEP[SWEEP.length - 1].ttft99 + ' 秒、goodput 從 ' + PCT(SWEEP[2].good) + ' 掉到 ' + PCT(SWEEP[SWEEP.length - 1].good) + '。**容量是 prefill 的算力決定的**，不是 batch 大小。',
+           en:'Past the knee throughput barely moves (' + SWEEP[2].tput + ' to ' + SWEEP[SWEEP.length - 1].tput + ' tokens/s) while TTFT p99 climbs from ' + SWEEP[2].ttft99 + ' to ' + SWEEP[SWEEP.length - 1].ttft99 + ' s and goodput falls from ' + PCT(SWEEP[2].good) + ' to ' + PCT(SWEEP[SWEEP.length - 1].good) + '. **Capacity is set by prefill arithmetic**, not by the batch dimension.'},
+     legend:[['#3fe0dd', {zh:'吞吐（tok/s）', en:'throughput'}],
+             ['#ff5c5c', {zh:'TTFT p99', en:'TTFT p99'}],
+             ['#ff9736', {zh:'目前這個負載', en:'the load being shown'}]]},
+    {id:'chunk', label:{zh:'chunked prefill', en:'chunked prefill'},
+     stage:{zh:'把 prompt 切進 decode 步裡', en:'mixing prompt tokens into decode steps'},
+     view:VIEW, code:CODE_CHUNK, build:chunkFrames,
+     idea:{zh:'16,000 token 的 prompt 是 ' + MACHINE.prefill16k + ' ms 的算術；整段跑就是每個 decode 中的請求卡那麼久（ITL p99 ' + CHUNKS[0].itl99 + ' ms）。切成 512 一塊之後尾巴剩 ' + CHUNKS[2].itl99 + ' ms，**代價是首 token 從 ' + CHUNKS[0].ttft50 + ' 變 ' + CHUNKS[2].ttft50 + ' 秒**。',
+           en:'A 16,000-token prompt is ' + MACHINE.prefill16k + ' ms of arithmetic; run whole, that is how long every decoding request waits between two tokens (ITL p99 ' + CHUNKS[0].itl99 + ' ms). In 512-token chunks the tail is ' + CHUNKS[2].itl99 + ' ms, **and the first token slips from ' + CHUNKS[0].ttft50 + ' to ' + CHUNKS[2].ttft50 + ' s**.'},
+     legend:[['#ff5c5c', {zh:'超過 50 ms 的 ITL 尾巴', en:'an ITL tail past 50 ms'}],
+             ['#ff9736', {zh:'首 token 時間', en:'time to first token'}]]},
+    {id:'pool', label:{zh:'KV pool 滿了', en:'when the pool fills'},
+     stage:{zh:'搶占：重算還是換出', en:'preemption: recompute or swap'},
+     view:VIEW, code:CODE_POOL, build:poolFrames,
+     idea:{zh:'pool 不夠時引擎不會報錯，它會開始搶占：這一輪 ' + POOL.filter(r => r.pool === 60000 && r.cap === 0)[0].preempt + ' 次，吞吐掉到 ' + POOL.filter(r => r.pool === 60000 && r.cap === 0)[0].tput + ' tok/s、ITL p99 ' + POOL.filter(r => r.pool === 60000 && r.cap === 0)[0].itl99 + ' ms。改成換出 KV（約 ' + MACHINE.swap4k + ' ms/4k token 來回）可以保住進度。',
+           en:'A pool that is too small does not raise an error, it starts preempting: ' + POOL.filter(r => r.pool === 60000 && r.cap === 0)[0].preempt + ' times here, with throughput down to ' + POOL.filter(r => r.pool === 60000 && r.cap === 0)[0].tput + ' tokens/s and an ITL tail of ' + POOL.filter(r => r.pool === 60000 && r.cap === 0)[0].itl99 + ' ms. Swapping the KV instead (about ' + MACHINE.swap4k + ' ms per 4k tokens, round trip) keeps the progress.'},
+     legend:[['#ff5c5c', {zh:'被搶占影響的指標', en:'what preemption costs'}],
+             ['#9d6bff', {zh:'換出 KV 的版本', en:'the swapping version'}]]},
+    {id:'cap', label:{zh:'admission control', en:'admission control'},
+     stage:{zh:'上限何時幫忙、何時只是損失', en:'when a cap helps and when it only costs'},
+     view:VIEW, code:CODE_CAP, build:capFrames,
+     idea:{zh:'**小 pool 上設上限兩邊都賺**（吞吐 +' + Math.round(100 * (POOL.filter(r => r.pool === 60000 && r.cap === 16)[0].tput / POOL.filter(r => r.pool === 60000 && r.cap === 0)[0].tput - 1)) + '%、goodput ' + PCT(POOL.filter(r => r.pool === 60000 && r.cap === 0)[0].good) + ' → ' + PCT(POOL.filter(r => r.pool === 60000 && r.cap === 16)[0].good) + '），因為被丟掉的工作本來就是浪費；**大 pool 上同一個上限只是多排隊**（goodput ' + PCT(POOL.filter(r => r.pool === 150000 && r.cap === 0)[0].good) + ' → ' + PCT(POOL.filter(r => r.pool === 150000 && r.cap === 16)[0].good) + '）。',
+           en:'**On a small pool the cap wins twice** (throughput +' + Math.round(100 * (POOL.filter(r => r.pool === 60000 && r.cap === 16)[0].tput / POOL.filter(r => r.pool === 60000 && r.cap === 0)[0].tput - 1)) + '%, goodput ' + PCT(POOL.filter(r => r.pool === 60000 && r.cap === 0)[0].good) + ' to ' + PCT(POOL.filter(r => r.pool === 60000 && r.cap === 16)[0].good) + ') because the preempted work was waste. **On a big pool the same cap is only queueing** (goodput ' + PCT(POOL.filter(r => r.pool === 150000 && r.cap === 0)[0].good) + ' to ' + PCT(POOL.filter(r => r.pool === 150000 && r.cap === 16)[0].good) + ').'},
+     legend:[['#3fe0dd', {zh:'上限幫上忙', en:'the cap helping'}],
+             ['#ff9736', {zh:'上限造成的損失', en:'the cap costing'}],
+             ['#ff5c5c', {zh:'發生搶占', en:'preemption happening'}]]},
+    {id:'policy', label:{zh:'誰先跑', en:'who goes first'},
+     stage:{zh:'FCFS vs SJF', en:'FCFS against shortest-job-first'},
+     view:VIEW, code:CODE_POLICY, build:policyFrames,
+     idea:{zh:'SJF 把平均延遲從 ' + POLICY[0].mean + ' 壓到 ' + POLICY[1].mean + ' 秒，**代價是長 prompt 從 ' + POLICY[0].long_mean + ' 變 ' + POLICY[1].long_mean + ' 秒**——被犧牲的正是本來就最慢的那群。實務上要加 aging：優先權隨等待時間上升。',
+           en:'SJF cuts mean latency from ' + POLICY[0].mean + ' to ' + POLICY[1].mean + ' s, **and doubles the long prompts from ' + POLICY[0].long_mean + ' to ' + POLICY[1].long_mean + ' s** - the requests that were already worst off. Production adds aging: priority rises with waiting time.'},
+     legend:[['#3fe0dd', {zh:'變好的指標', en:'what improved'}],
+             ['#ff5c5c', {zh:'變差的指標', en:'what got worse'}]]},
+    {id:'good', label:{zh:'goodput 不是 throughput', en:'goodput, not throughput'},
+     stage:{zh:'同樣的 tok/s，不同的服務品質', en:'same tokens per second, different service'},
+     view:VIEW, code:CODE_GOOD, build:goodFrames,
+     idea:{zh:'前三個設定吞吐完全一樣（' + GOOD[0].tput + ' tok/s），goodput 卻是 ' + PCT(GOOD[0].good) + ' 與 ' + PCT(GOOD[1].good) + '。**要調的是後面那一欄**，而它在只量吞吐的時候完全看不見。',
+           en:'The first three configurations have identical throughput (' + GOOD[0].tput + ' tokens/s) and goodput of ' + PCT(GOOD[0].good) + ' against ' + PCT(GOOD[1].good) + '. **The second column is the one worth tuning**, and it is invisible if you only measure the first.'},
+     legend:[['#3fe0dd', {zh:'達標的請求', en:'requests that met the objective'}],
+             ['#ff9736', {zh:'部分達標', en:'partly met'}],
+             ['#ff5c5c', {zh:'沒達標', en:'missed'}]]}
+  ]
+};

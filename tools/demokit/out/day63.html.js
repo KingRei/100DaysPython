@@ -124,6 +124,10 @@ function moveArrows(sh, moves, st){
   });
   return sh;
 }
+const MESH = {"gpus": 64, "tp": 8, "pp": 4, "dp": 2, "layers_per_stage": 20, "params_per_gpu_b": 2.19, "mem_ddp_gb": 32.6, "mem_zero3_gb": 16.3, "tp_gb": 8.75, "pp_gb": 0.12, "dp_gb": 4.07};
+const DEC = {"phase": "decode (1 token x 64 requests)", "mb": 1.75, "latency_us": 28.0, "bandwidth_us": 4.59, "total_us": 32.59, "latency_share": 0.86, "per_step_ms": 5.21};
+const PRE = {"phase": "prefill (8,192 tokens)", "mb": 224.0, "latency_us": 28.0, "bandwidth_us": 587.2, "total_us": 615.2, "latency_share": 0.05, "per_step_ms": 98.43};
+const DPA = {"kv_total_gb": 2560.0, "tp_mla_per_rank_gb": 2560.0, "dp_attention_per_rank_gb": 320.0, "requests_per_rank": 8, "collective_per_step": "none for the gradients (there are none)"};
 
 /* ================================================================ tab 1: ring all-reduce */
 const CODE_RING = [
@@ -340,6 +344,38 @@ function dpFrames(){
                   {lbl:'FSDP', chips:[chip(ZERO[3].gb + ' GB', 'ok'), chip(ZERO[3].vs + 'x', 'hot')]}],
           msg:{zh:'Adam 在混合精度下每個參數要 16 個位元組（bf16 權重 2 ＋ bf16 梯度 2 ＋ fp32 master 4 ＋ m 4 ＋ v 4）＝**權重本身的 8 倍**，所以 70B 複製一份要 ' + ZERO[0].gb + ' GB。ZeRO 一階一階把它切掉，到 ZeRO-3／FSDP 連參數都切，剩 ' + ZERO[3].gb + ' GB；代價是線上多跑 ' + ZERO[3].vs + ' 倍（每層算之前 all-gather 權重、算完丟掉）。**這就是 Day 62.5 的 recompute vs store 換成了 refetch vs store。**',
                en:'Adam in mixed precision keeps 16 bytes per parameter (2 for the bf16 weight, 2 for the bf16 gradient, 4 for the fp32 master copy, 4 and 4 for m and v) - **eight times the weights themselves** - so one replica of 70B is ' + ZERO[0].gb + ' GB. ZeRO shards that one stage at a time, and ZeRO-3 / FSDP shards the parameters too, reaching ' + ZERO[3].gb + ' GB. The price is ' + ZERO[3].vs + 'x the traffic, because every layer is all-gathered just before it runs and dropped straight after. **It is Day 62.5 recompute-versus-store, with refetch in place of recompute.**'}});
+
+  const sh4 = [];
+  sh4.push(fitT(4.9, .95, {zh:'真正的訓練會同時疊上去：64 張卡 = TP 8 x PP 4 x DP 2',
+                           en:'a real run stacks them: 64 GPUs = TP 8 x PP 4 x DP 2'},
+                {c:COL.tealL, fs:.31}));
+  sh4.push(fitT(.55, 1.55, {zh:'每張卡只拿 ' + MESH.layers_per_stage + ' 層、' + MESH.params_per_gpu_b + ' B 個參數',
+                            en:'each GPU holds ' + MESH.layers_per_stage + ' layers and ' + MESH.params_per_gpu_b + ' B parameters'},
+                {anchor:'start', c:COL.pale, fs:.28}));
+  [[{zh:'optimizer state（不切）', en:'optimizer state, unsharded'}, MESH.mem_ddp_gb, 'hot'],
+   [{zh:'同樣的東西加上 ZeRO-3', en:'the same with ZeRO-3 on the dp axis'}, MESH.mem_zero3_gb, 'ok']]
+   .forEach((r, i) => {
+     const y = 1.95 + i * .85;
+     sh4.push(fitT(4.35, y + .42, r[0], {anchor:'end', c:COL.pale, fs:.26}));
+     sh4.push(S.r(4.50, y, Math.max(.3, 2.6 * r[1] / MESH.mem_ddp_gb), .66, r[2], null));
+     sh4.push(fitT(7.3, y + .42, r[1] + ' GB', {anchor:'start', c:COL.orangeL, fs:.26}));
+   });
+  [[{zh:'TP 流量（節點內）', en:'tensor-parallel traffic (in node)'}, MESH.tp_gb],
+   [{zh:'PP 交接（點對點）', en:'pipeline hand-offs (point to point)'}, MESH.pp_gb],
+   [{zh:'梯度 all-reduce（一步一次）', en:'gradient all-reduce (once per step)'}, MESH.dp_gb]]
+   .forEach((r, i) => {
+     const y = 3.75 + i * .62;
+     sh4.push(fitT(4.35, y + .30, r[0], {anchor:'end', c:COL.grey, fs:.25}));
+     sh4.push(S.r(4.50, y, Math.max(.22, 2.6 * r[1] / MESH.tp_gb), .46, 'act', null));
+     sh4.push(fitT(7.3, y + .30, r[1] + ' GB', {anchor:'start', c:COL.purpleL, fs:.25}));
+   });
+  F.push({shapes:caps(sh4, {cap:{zh:'TP 與 PP 已經先把參數切掉了，ZeRO 只切剩下被複製的那部分',
+                                 en:'TP and PP shard the parameters first; ZeRO only shards what is still replicated'}}),
+          line:9, view:VIEW,
+          panels:[{lbl:'per GPU', chips:[chip(MESH.mem_ddp_gb + ' GB', 'hot')]},
+                  {lbl:'with ZeRO-3', chips:[chip(MESH.mem_zero3_gb + ' GB', 'ok')]}],
+          msg:{zh:'一張卡只拿 ' + MESH.layers_per_stage + ' 層（PP）、每層又只拿八分之一（TP），所以 section 5 那個 ' + ZERO[0].gb + ' GB 在 ZeRO 還沒做事之前就已經剩 ' + MESH.mem_ddp_gb + ' GB；ZeRO-3 再把 DP 軸上重複的那份切掉變 ' + MESH.mem_zero3_gb + ' GB。**三條流量各自走不同的線**：TP ' + MESH.tp_gb + ' GB 一定要節點內、PP ' + MESH.pp_gb + ' GB 可以跨節點、梯度 ' + MESH.dp_gb + ' GB 一步只付一次所以藏得住。',
+               en:'One GPU holds ' + MESH.layers_per_stage + ' layers (pipeline) and an eighth of each (tensor), so the ' + ZERO[0].gb + ' GB from the ZeRO frame is already down to ' + MESH.mem_ddp_gb + ' GB before ZeRO does anything; ZeRO-3 then shards what the data-parallel axis still replicates, reaching ' + MESH.mem_zero3_gb + ' GB. **The three traffic rows belong on three different links**: tensor ' + MESH.tp_gb + ' GB must stay in the node, pipeline ' + MESH.pp_gb + ' GB can cross one, and the ' + MESH.dp_gb + ' GB gradient all-reduce is paid once per step so it hides.'}});
   return F.list;
 }
 
@@ -734,6 +770,82 @@ function failFrames(){
   return F.list;
 }
 
+/* ================================================================ tab: inference */
+const CODE_INFER = [
+  '# training step                      # inference step',
+  'loss.backward()                      (nothing)',
+  'all_reduce(grad)                     (nothing)',
+  'opt.step()                           (nothing)',
+  '',
+  '# what is left is one all-reduce per block, on one token',
+  '# per request - the hops stay, the bytes do not',
+  'all_reduce(act)    # 2(p-1) hops, 1.75 MB instead of 224 MB'
+];
+function inferFrames(){
+  const F = new Frames();
+  const sh = [];
+  sh.push(fitT(4.9, .95, {zh:'推論沒有梯度，所以整天最大的那個 collective 直接消失',
+                          en:'no gradients at inference, so the largest collective of the day is never called'},
+               {c:COL.tealL, fs:.30}));
+  sh.push(S.r(.55, 1.45, 4.0, .70, 'ghost', 'all-reduce(gradients)', {fs:.30}));
+  sh.push(fitT(2.55, 2.45, {zh:'訓練：每步 ' + PLACE[4].gb + ' GB', en:'training: ' + PLACE[4].gb + ' GB per step'},
+               {c:COL.grey, fs:.26}));
+  sh.push(S.r(5.25, 1.45, 4.0, .70, 'bad', 'not called', {fs:.30}));
+  sh.push(fitT(7.25, 2.45, {zh:'推論：沒有這一步', en:'inference: this step does not exist'},
+               {c:COL.red, fs:.26}));
+  const rows = [[{zh:'KV cache（64 個請求 x 128K token）', en:'KV cache (64 requests x 128K tokens)'},
+                 DPA.kv_total_gb, 'soft'],
+                [{zh:'TP + MLA：每個 rank 都存一整份', en:'TP with MLA: a full copy on every rank'},
+                 DPA.tp_mla_per_rank_gb, 'bad'],
+                [{zh:'DP attention：每個 rank 擁有 ' + DPA.requests_per_rank + ' 個完整請求',
+                  en:'DP attention: ' + DPA.requests_per_rank + ' whole requests per rank'},
+                 DPA.dp_attention_per_rank_gb, 'ok']];
+  rows.forEach((r, i) => {
+    const y = 3.15 + i * .80;
+    sh.push(fitT(5.05, y + .42, r[0], {anchor:'end', c:COL.pale, fs:.27}));
+    sh.push(S.r(5.20, y, Math.max(.35, 3.3 * r[1] / DPA.kv_total_gb), .66, r[2], null));
+    sh.push(fitT(8.70, y + .42, r[1].toLocaleString() + ' GB', {anchor:'start',
+            c:r[2] === 'ok' ? COL.tealL : COL.grey, fs:.26}));
+  });
+  F.push({shapes:caps(sh, {cap:{zh:'推論的瓶頸不是權重，是 KV cache',
+                                en:'what does not fit at inference is the KV cache, not the weights'}}),
+          line:2, view:VIEW,
+          panels:[{lbl:'gradient traffic', chips:[chip('0 GB', 'ok')]},
+                  {lbl:'KV per rank', chips:[chip(DPA.dp_attention_per_rank_gb + ' GB', 'act')]}],
+          msg:{zh:'訓練那一半最大的一列（梯度 all-reduce，' + PLACE[4].gb + ' GB/step）在推論完全不存在，所以**服務端的 data parallel 就是「各自獨立的副本」，成本只有記憶體**。而記憶體的大頭是 KV cache：' + DPA.kv_total_gb.toLocaleString() + ' GB。MLA 之下 TP 每個 rank 都要一整份，改成 DP attention（照請求切）才降到 ' + DPA.dp_attention_per_rank_gb + ' GB。',
+               en:'The largest row of the training half - the gradient all-reduce at ' + PLACE[4].gb + ' GB per step - does not exist at inference, so **data parallelism in a serving stack is just independent replicas and its only cost is memory**. And the memory that matters is the KV cache: ' + DPA.kv_total_gb.toLocaleString() + ' GB. Under MLA every tensor-parallel rank keeps a full copy; splitting by request (DP attention) brings it to ' + DPA.dp_attention_per_rank_gb + ' GB per rank.'}});
+
+  const sh2 = [];
+  sh2.push(fitT(4.9, .95, {zh:'同一個 TP all-reduce：prefill 被位元組決定，decode 被跳數決定',
+                           en:'the same TP all-reduce: bytes decide it in prefill, hops decide it in decode'},
+                {c:COL.tealL, fs:.29}));
+  [[PRE, 'prefill, 8,192 tokens', 1.6], [DEC, 'decode, 1 token x 64 requests', 3.3]].forEach(pair => {
+    const r = pair[0], y = pair[2];
+    sh2.push(fitT(.55, y - .18, pair[1], {anchor:'start', c:COL.tealL, fs:.28}));
+    const latw = Math.max(.45, 4.6 * r.latency_us / PRE.total_us);
+    const bww = Math.max(.45, 4.6 * r.bandwidth_us / PRE.total_us);
+    sh2.push(S.r(.55, y, latw, .72, 'hot', null));
+    sh2.push(S.r(.55 + latw + .08, y, bww, .72, 'act', null));
+    sh2.push(fitT(.55 + latw + bww + .25, y + .44,
+                  'hops ' + r.latency_us + ' us  +  bytes ' + r.bandwidth_us + ' us',
+                  {anchor:'start', c:COL.pale, fs:.25}));
+    sh2.push(fitT(.55 + latw + bww + .25, y + .78, r.mb + ' MB moved',
+                  {anchor:'start', c:COL.grey, fs:.24}));
+  });
+  sh2.push(fitT(.55, 4.9, {zh:'橘色＝2(p-1) 跳的延遲（兩種情況完全一樣），紫色＝真的在搬的位元組',
+                           en:'amber is the 2(p-1) hops - identical in both - and purple is the bytes actually moved'},
+                {anchor:'start', c:COL.grey, fs:.26}));
+  F.push({shapes:caps(sh2, {cap:{zh:'decode 的 all-reduce 有 ' + Math.round(DEC.latency_share * 100) + '% 是純延遲',
+                                 en:Math.round(DEC.latency_share * 100) + '% of the decode all-reduce is pure latency'}}),
+          line:7, view:VIEW,
+          panels:[{lbl:'prefill', chips:[chip(Math.round(PRE.latency_share * 100) + '% latency', 'dim')]},
+                  {lbl:'decode', chips:[chip(Math.round(DEC.latency_share * 100) + '% latency', 'hot')]},
+                  {lbl:'per decode step', chips:[chip(DEC.per_step_ms + ' ms', 'bad')]}],
+          msg:{zh:'decode 一個請求只產生一個 token，所以 TP 要搬的 activation 從 ' + PRE.mb + ' MB 掉到 ' + DEC.mb + ' MB（' + Math.round(PRE.mb / DEC.mb) + ' 倍），**但跳數一步都沒少**：兩邊都是 2(p-1)=14 跳、28 µs。於是 prefill 只有 ' + Math.round(PRE.latency_share * 100) + '% 是延遲、decode 有 ' + Math.round(DEC.latency_share * 100) + '%。160 次加起來仍是 ' + DEC.per_step_ms + ' ms/step，所以服務端會把 all-reduce 跟下一個 norm 融在一起、寧可少而肥也不要多而瘦。',
+               en:'A decode step produces one token per request, so the activation tensor parallelism ships falls from ' + PRE.mb + ' MB to ' + DEC.mb + ' MB - ' + Math.round(PRE.mb / DEC.mb) + 'x less - **while the hop count does not move at all**: 2(p-1) = 14 hops and 28 us in both cases. Prefill is ' + Math.round(PRE.latency_share * 100) + '% latency, decode is ' + Math.round(DEC.latency_share * 100) + '%. Across 160 of them that is still ' + DEC.per_step_ms + ' ms per step, which is why serving stacks fuse the all-reduce into the next norm and prefer fewer, fatter collectives.'}});
+  return F.list;
+}
+
 const DAY_META = {
   title: {zh:'平行化與集合通訊', en:'Parallelism and collective communication'},
   sub: {zh:'TP、EP、DP、DCP、DDP、FSDP、PP 其實是同樣幾個集合通訊，在不同地方被呼叫',
@@ -753,7 +865,7 @@ const DAY_META = {
            en:'The whole day is built from these. **all-gather is what FSDP does before every layer, reduce-scatter is how ZeRO stores gradients, all-to-all is MoE dispatch and combine** - and an all-reduce is just the first two glued together.'},
      legend:[['#3fe0dd', {zh:'操作之後', en:'after the operation'}],
              ['#12b3b8', {zh:'操作之前', en:'before'}]]},
-    {id:'dp', label:{zh:'DDP 與 FSDP', en:'DDP and FSDP'},
+    {id:'dp', label:{zh:'訓練 · DDP 與 FSDP', en:'training: DDP and FSDP'},
      stage:{zh:'梯度 all-reduce、bucket、ZeRO 三階段', en:'the gradient all-reduce, buckets, the ZeRO stages'},
      view:VIEW, code:CODE_DP, build:dpFrames,
      idea:{zh:'data parallel 的全部就是每步一次梯度 all-reduce，而它會對是因為**loss 是平均**：四個 rank 各吃四分之一 batch，60 步後權重差 ' + DDP.diff + '。它完全不省記憶體，所以才有 ZeRO：把 optimizer、梯度、參數依序切開，' + ZERO[0].gb + ' GB 變 ' + ZERO[3].gb + ' GB，代價是線上多 ' + ZERO[3].vs + ' 倍。',
@@ -761,7 +873,7 @@ const DAY_META = {
      legend:[['#9d6bff', {zh:'每個 rank 自己的梯度', en:'per-rank gradients'}],
              ['#ff9736', {zh:'集合通訊', en:'the collective'}],
              ['#3fe0dd', {zh:'同步之後', en:'after synchronising'}]]},
-    {id:'tp', label:{zh:'tensor parallel', en:'tensor parallel'},
+    {id:'tp', label:{zh:'訓練 · tensor parallel', en:'training: tensor parallel'},
      stage:{zh:'column-split、row-split、一次 all-reduce', en:'column split, row split, one all-reduce'},
      view:VIEW, code:CODE_TP, build:tpFrames,
      idea:{zh:'w1 按行切讓非線性不用通訊，w2 按列切讓每個 rank 拿到**部分和**，一次 all-reduce 收尾。位元組跟著 token 數長（8,192 token、8-way 時每趟 ' + TPT.total_gb + ' GB），**跟 data parallel 剛好相反**。把那行 all-reduce 刪掉不會報錯，只會錯 ' + (DROP.rel * 100).toFixed(0) + '%。',
@@ -769,23 +881,7 @@ const DAY_META = {
      legend:[['#9d6bff', {zh:'被切開的權重', en:'the split weights'}],
              ['#ff9736', {zh:'部分和 / 集合通訊', en:'partial sums and the collective'}],
              ['#ff5c5c', {zh:'少了 all-reduce', en:'the all-reduce removed'}]]},
-    {id:'ep', label:{zh:'expert parallel', en:'expert parallel'},
-     stage:{zh:'兩次 all-to-all', en:'two all-to-alls'},
-     view:VIEW, code:CODE_EP, build:epFrames,
-     idea:{zh:'expert 分給 rank，**權重不動、token 飛過去再飛回來**：一層兩次 all-to-all，8,192 token、top-8 時整趟 ' + EPT.total_gb + ' GB，是 tensor parallel 的 ' + Math.round(EPT.total_gb / TPT.total_gb) + ' 倍。fp8 dispatch 直接砍一半，這就是 DeepEP 的主題。',
-           en:'The experts are handed out to ranks, so **the weights stay and the tokens fly there and back**: two all-to-alls per layer, ' + EPT.total_gb + ' GB per pass at 8,192 tokens with top-8 routing - ' + Math.round(EPT.total_gb / TPT.total_gb) + 'x what tensor parallelism moves. An fp8 dispatch halves it, which is what DeepEP is about.'},
-     legend:[['#9d6bff', {zh:'要被送走的 token', en:'tokens about to travel'}],
-             ['#ff9736', {zh:'all-to-all', en:'the all-to-all'}],
-             ['#3fe0dd', {zh:'回到原 rank 的結果', en:'results back home'}]]},
-    {id:'cp', label:{zh:'context parallel 與 KV', en:'context parallel and the KV'},
-     stage:{zh:'切 KV，用 log-sum-exp 合併', en:'split the KV, merge with the log-sum-exp'},
-     view:VIEW, code:CODE_CP, build:cpFrames,
-     idea:{zh:'每個 rank 只看一段 key，回傳部分輸出與 lse，合併之後**和單卡 attention 一致到 1e-16**——就是 Day 52 的恆等式搬到跨卡。要這麼做是因為 KV 放不下：64 個請求 x 128K token 要 ' + KV.total + ' GB，而 **MLA 把 head 維度壓掉之後 TP 切不動它**，只剩「照請求切」和「照位置切」。',
-           en:'Each rank sees one key range and returns a partial output plus its log-sum-exp; merged, the result is **identical to single-GPU attention to 1e-16** - the Day 52 identity, moved across GPUs. The reason to bother is capacity: 64 requests of 128K tokens need ' + KV.total + ' GB, and **MLA removes the head dimension that TP was splitting**, leaving only splitting by request or by position.'},
-     legend:[['#9d6bff', {zh:'部分輸出', en:'partial outputs'}],
-             ['#ff9736', {zh:'log-sum-exp', en:'the log-sum-exp'}],
-             ['#ff5c5c', {zh:'切不動的那一種', en:'the layout that cannot be split'}]]},
-    {id:'pp', label:{zh:'pipeline 與 bubble', en:'pipeline and the bubble'},
+    {id:'pp', label:{zh:'訓練 · pipeline 與 bubble', en:'training: pipeline and the bubble'},
      stage:{zh:'位元組最少，代價是閒置', en:'the fewest bytes, paid for in idle time'},
      view:VIEW, code:CODE_PP, build:ppFrames,
      idea:{zh:'pipeline 只在 stage 邊界送 activation，而且是點對點：8,192 token 時每個邊界 ' + PPT.per_boundary_mb + ' MB，比 tensor parallel 少三個數量級，所以可以跨節點。代價是 bubble =(stages-1)/(micro+stages-1)，**切更多 micro-batch 會把 bubble 變小、也會把每個 matmul 變瘦**。',
@@ -793,6 +889,31 @@ const DAY_META = {
      legend:[['#3fe0dd', {zh:'有事做的格子', en:'busy slots'}],
              ['#ff9736', {zh:'目前這一格', en:'the current slot'}],
              ['#123f4d', {zh:'bubble', en:'the bubble'}]]},
+    {id:'infer', label:{zh:'推論 · 少了什麼、多了什麼', en:'inference: what disappears'},
+     stage:{zh:'沒有梯度、一次一個 token', en:'no gradients, one token per request'},
+     view:VIEW, code:CODE_INFER, build:inferFrames,
+     idea:{zh:'推論沒有梯度，所以訓練那半最大的一列（梯度 all-reduce ' + PLACE[4].gb + 'GB/step）整個消失，**服務端的 DP 只是獨立副本、成本只有記憶體**；而記憶體卡住的是 KV cache（' + DPA.kv_total_gb.toLocaleString() + 'GB，MLA 之下每個 TP rank 一整份，DP attention 才降到 ' + DPA.dp_attention_per_rank_gb + 'GB）。另一半是 decode 的 all-reduce 只剩 ' + DEC.mb + 'MB 但跳數一步沒少 ⇒ ' + Math.round(DEC.latency_share * 100) + '% 是純延遲。',
+           en:'There are no gradients, so the largest row of the training half (the ' + PLACE[4].gb + 'GB gradient all-reduce) disappears and **data parallelism becomes independent replicas whose only cost is memory**. What does not fit is the KV cache (' + DPA.kv_total_gb.toLocaleString() + 'GB; under MLA every TP rank keeps a full copy, DP attention brings it to ' + DPA.dp_attention_per_rank_gb + 'GB). And the decode all-reduce ships only ' + DEC.mb + 'MB while keeping every hop, so ' + Math.round(DEC.latency_share * 100) + '% of it is pure latency.'},
+     legend:[['#ff9736', {zh:'跳數（延遲）', en:'hops (latency)'}],
+             ['#9d6bff', {zh:'真正搬的位元組', en:'bytes actually moved'}],
+             ['#ff5c5c', {zh:'推論沒有這一步', en:'does not exist at inference'}]]},
+
+    {id:'ep', label:{zh:'推論 · expert parallel', en:'inference: expert parallel'},
+     stage:{zh:'兩次 all-to-all', en:'two all-to-alls'},
+     view:VIEW, code:CODE_EP, build:epFrames,
+     idea:{zh:'expert 分給 rank，**權重不動、token 飛過去再飛回來**：一層兩次 all-to-all，8,192 token、top-8 時整趟 ' + EPT.total_gb + ' GB，是 tensor parallel 的 ' + Math.round(EPT.total_gb / TPT.total_gb) + ' 倍。fp8 dispatch 直接砍一半，這就是 DeepEP 的主題。',
+           en:'The experts are handed out to ranks, so **the weights stay and the tokens fly there and back**: two all-to-alls per layer, ' + EPT.total_gb + ' GB per pass at 8,192 tokens with top-8 routing - ' + Math.round(EPT.total_gb / TPT.total_gb) + 'x what tensor parallelism moves. An fp8 dispatch halves it, which is what DeepEP is about.'},
+     legend:[['#9d6bff', {zh:'要被送走的 token', en:'tokens about to travel'}],
+             ['#ff9736', {zh:'all-to-all', en:'the all-to-all'}],
+             ['#3fe0dd', {zh:'回到原 rank 的結果', en:'results back home'}]]},
+    {id:'cp', label:{zh:'推論 · context parallel（MLA）', en:'inference: context parallel (MLA)'},
+     stage:{zh:'切 KV，用 log-sum-exp 合併', en:'split the KV, merge with the log-sum-exp'},
+     view:VIEW, code:CODE_CP, build:cpFrames,
+     idea:{zh:'每個 rank 只看一段 key，回傳部分輸出與 lse，合併之後**和單卡 attention 一致到 1e-16**——就是 Day 52 的恆等式搬到跨卡。要這麼做是因為 KV 放不下：64 個請求 x 128K token 要 ' + KV.total + ' GB，而 **MLA 把 head 維度壓掉之後 TP 切不動它**，只剩「照請求切」和「照位置切」。',
+           en:'Each rank sees one key range and returns a partial output plus its log-sum-exp; merged, the result is **identical to single-GPU attention to 1e-16** - the Day 52 identity, moved across GPUs. The reason to bother is capacity: 64 requests of 128K tokens need ' + KV.total + ' GB, and **MLA removes the head dimension that TP was splitting**, leaving only splitting by request or by position.'},
+     legend:[['#9d6bff', {zh:'部分輸出', en:'partial outputs'}],
+             ['#ff9736', {zh:'log-sum-exp', en:'the log-sum-exp'}],
+             ['#ff5c5c', {zh:'切不動的那一種', en:'the layout that cannot be split'}]]},
     {id:'place', label:{zh:'哪一軸放哪裡', en:'which axis goes where'},
      stage:{zh:'把五條軸放在同一個單位下比', en:'all five axes in the same unit'},
      view:VIEW, code:CODE_PLACE, build:placeFrames,

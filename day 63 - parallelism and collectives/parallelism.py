@@ -604,6 +604,67 @@ def missing_all_reduce(tokens=8, d=32, h=64, p=4, seed=0):
             'rel_dropped': float(rel), 'shape_ok': bad.shape == ref.shape}
 
 
+
+# ------------------------------------------- what a training run looks like
+def training_mesh(gpus=64, tp=8, pp=4, tokens=8192, layers=MODEL['layers'],
+                  params=MODEL['params'], dtype='bf16'):
+    """A real run stacks the axes: one mesh dimension per kind of parallelism.
+
+    Tensor and pipeline parallelism already shard the parameters, so what is
+    left for ZeRO to shard is only what the data-parallel axis replicates.
+    """
+    dp = gpus // (tp * pp)
+    d = MODEL['d_model']
+    act = tokens * d * BYTES[dtype]
+    per_stage = layers // pp
+    params_per_gpu = params / (tp * pp)
+    adam = sum(optimizer_state_bytes().values())
+    return {
+        'gpus': gpus, 'tp': tp, 'pp': pp, 'dp': dp,
+        'layers_per_stage': per_stage,
+        'params_per_gpu_b': params_per_gpu / 1e9,
+        'mem_ddp_gb': params_per_gpu * adam / 1024 ** 3,
+        'mem_zero3_gb': params_per_gpu * adam / dp / 1024 ** 3,
+        'tp_gb': 2 * (tp - 1) / tp * act * per_stage * 2 / 1024 ** 3,
+        'pp_gb': act / 1024 ** 3,
+        'dp_gb': 2 * (dp - 1) / dp * params_per_gpu * BYTES[dtype] / 1024 ** 3,
+    }
+
+
+# ------------------------------------------- what changes at inference time
+def decode_tp_cost(requests=64, p=8, layers=MODEL['layers'], dtype='bf16',
+                   alpha_us=2.0, beta_gbs=400.0):
+    """The same tensor-parallel all-reduce, in decode and in prefill.
+
+    Decode produces one token per request, so the payload collapses and what
+    is left is the hop count - the collective becomes a latency problem.
+    """
+    rows = []
+    for name, tokens in (('decode (1 token x %d requests)' % requests, requests),
+                         ('prefill (8,192 tokens)', 8192)):
+        act = tokens * MODEL['d_model'] * BYTES[dtype]
+        per = 2 * (p - 1) / p * act
+        lat = 2 * (p - 1) * alpha_us
+        bw = per / (beta_gbs * 1e3)
+        rows.append({'phase': name, 'mb': per / 1024 ** 2, 'latency_us': lat,
+                     'bandwidth_us': bw, 'total_us': lat + bw,
+                     'latency_share': lat / (lat + bw),
+                     'per_step_ms': (lat + bw) * layers * 2 / 1e3})
+    return rows
+
+
+def dp_attention(requests=64, p=8, **kw):
+    """Serving replicas: no gradient, so data parallelism costs only memory.
+
+    Under plain tensor parallelism with MLA every rank keeps the whole KV
+    cache; under DP attention each rank owns whole requests instead.
+    """
+    full = kv_cache_gb(batch=requests, **kw)
+    return {'kv_total_gb': full, 'tp_mla_per_rank_gb': full,
+            'dp_attention_per_rank_gb': full / p,
+            'requests_per_rank': requests // p,
+            'collective_per_step': 'none for the gradients (there are none)'}
+
 # ----------------------------------------------------------------- printing
 def head(n, title):
     print('\n' + '=' * 72)
@@ -616,7 +677,7 @@ def main():
     print('Splitting a model across GPUs is choosing which collective runs,')
     print('how often, and on how many bytes.  Everything below is that sentence.')
 
-    # ------------------------------------------------------------------ 1
+    # ------------------------------------------------------------ 1
     head(1, 'The short version')
     z = zero_table(p=8)
     tp = tp_traffic(8192, p=8)
@@ -632,9 +693,16 @@ def main():
     print('  attention and one after the MLP in all 80 layers.\n')
     print('  Those two numbers - how much memory a split saves and how many bytes')
     print('  it costs - are what the rest of this file computes, for every kind of')
-    print('  parallelism, from five primitives that we build first.')
+    print('  parallelism, from five primitives that we build first.\n')
+    print('  The file is in two halves, because the two jobs are genuinely')
+    print('  different.  Training has gradients and optimizer state, so its')
+    print('  problem is that the *weights* do not fit: DDP, ZeRO/FSDP, tensor and')
+    print('  pipeline parallelism.  Inference has neither, so its problems are')
+    print('  that the *KV cache* does not fit and that every collective happens on')
+    print('  a latency budget: DP attention, expert parallelism, context')
+    print('  parallelism.  The collectives underneath are the same five.')
 
-    # ------------------------------------------------------------------ 2
+    # ------------------------------------------------------------ 2
     head(2, 'The five collectives everything is made of')
     p = 8
     for r in collective_costs(p=p, n_bytes=256 * 1024 ** 2):
@@ -661,7 +729,7 @@ def main():
     print('  ever holds more than one chunk of the sum at a time, so the volume')
     print('  stops growing with the world size and only the step count does.')
 
-    # ------------------------------------------------------------------ 3
+    # ------------------------------------------------------------ 3
     head(3, 'Ring or tree: who wins depends on the message size')
     print('    bytes        ring (2(p-1) steps)   tree (2log2(p) steps)   winner')
     for nb in (4 * 1024, 64 * 1024, 1024 * 1024, 64 * 1024 ** 2, 1024 ** 3):
@@ -679,13 +747,21 @@ def main():
     print('  also why a small all-reduce inside a decode step is not free: it costs')
     print('  hops even when it costs almost no bytes.')
 
-    # ------------------------------------------------------------------ 4
-    head(4, 'Data parallelism: the same model, different rows of the batch')
+    print('\n' + '#' * 72)
+    print('# PART ONE - TRAINING: the model does not fit, and the gradients have to agree')
+    print('#' * 72)
+
+    # ------------------------------------------------------------ 4
+    head(4, 'DDP: the same model on every GPU, a different slice of the batch')
     single_loss, single_params = train_single()
     ddp_wire = Wire()
     ddp_loss, ddp_params = train_ddp(p=4, wire=ddp_wire)
     diff = max(float(np.abs(a - b).max()) for a, b in zip(single_params, ddp_params))
-    print(f'  Trained the same tiny network twice, 60 steps:')
+    print('  DDP - torch.nn.parallel.DistributedDataParallel - is the simplest')
+    print('  thing that works: every GPU keeps a *complete* copy of the model and')
+    print('  reads a different slice of the batch.  One process per GPU, one')
+    print('  gradient all-reduce per step, and nothing else is shared.\n')
+    print('  Trained the same tiny network twice, 60 steps:')
     print(f'    one device, full batch         : loss {single_loss:.6f}')
     print(f'    4 ranks, quarter batch each    : loss {ddp_loss:.6f}')
     print(f'    largest weight difference      : {diff:.2e}\n')
@@ -695,17 +771,25 @@ def main():
     print('  Nothing else about the model is split, so the memory per GPU does')
     print('  not move - which is why DDP alone stops working above a few billion')
     print('  parameters.\n')
-    print('  Gradients become ready back to front, so the all-reduce is cut into')
-    print('  buckets that fly while the backward pass is still running:')
+    print('  Two DDP details are worth knowing, because they are how that')
+    print('  all-reduce stops being visible.  The first is bucketing: gradients')
+    print('  become ready back to front, so the all-reduce is cut into chunks that')
+    print('  fly while the backward pass is still running:')
     print('    buckets   bucket size   all-reduce each   total comm   exposed')
     for r in ddp_overlap():
         print(f"    {r['buckets']:7}   {r['bucket_mb']:8.0f} MB   "
               f"{r['comm_ms_each']:12.2f} ms   {r['all_comm_ms']:8.2f} ms   "
               f"{r['exposed_ms']:5.2f} ms")
     print('\n  More buckets means slightly more total traffic (each one pays the')
-    print('  latency again) but much less of it exposed at the end of the step.')
+    print('  latency again) but much less of it exposed at the end of the step.\n')
+    print('  The second is gradient accumulation.  Inside `with model.no_sync():`')
+    print('  DDP skips the all-reduce entirely and lets gradients pile up locally,')
+    print('  so N micro-steps cost one all-reduce instead of N.  That is how a')
+    print('  large effective batch is reached on few GPUs - and it is the one')
+    print('  place where skipping a collective is safe, because *every* rank skips')
+    print('  it, which is exactly the condition that failure 2 below breaks.')
 
-    # ------------------------------------------------------------------ 5
+    # ------------------------------------------------------------ 5
     head(5, 'ZeRO and FSDP: stop replicating what you can shard')
     s = optimizer_state_bytes()
     print('  Adam in mixed precision keeps, per parameter:')
@@ -724,7 +808,7 @@ def main():
     print('  the same trade the whole series keeps making - Day 62.5 called it')
     print('  recompute versus store, here it is refetch versus store.')
 
-    # ------------------------------------------------------------------ 6
+    # ------------------------------------------------------------ 6
     head(6, 'Tensor parallelism: one layer, split across GPUs')
     rng = np.random.default_rng(1)
     x = rng.standard_normal((64, 256)).astype(np.float32)
@@ -746,9 +830,11 @@ def main():
           f"{t['per_all_reduce_mb']:.0f} MB per")
     print(f"  all-reduce, {t['all_reduces']} of them per forward pass = "
           f"{t['total_gb']:.0f} GB per rank per pass.")
-    print('  Notice what that scales with: tokens, not parameters.  TP is cheap')
-    print('  for one decode token and brutal for a long prefill - the opposite of')
-    print('  data parallelism, whose bill is the weights and ignores the batch.\n')
+    print('  Notice what that scales with: tokens, not parameters - the opposite')
+    print('  of DDP, whose bill is the weights and ignores the batch.  That is why')
+    print('  this is the axis that lets a long sequence train at all, and why it')
+    print('  has to stay inside a node.  What the same all-reduce costs when there')
+    print('  is only one token per request is section 9.\n')
     sp = sequence_parallel_bytes(8192, p=8)
     print('  Sequence parallelism splits the leftover norms and residuals too:')
     print(f"    one all-reduce                    : {sp['all_reduce_mb']:.0f} MB")
@@ -760,8 +846,81 @@ def main():
     print('  the trade is real, and it comes from noticing that an all-reduce was')
     print('  two collectives glued together and the middle was worth keeping.')
 
-    # ------------------------------------------------------------------ 7
-    head(7, 'Expert parallelism: the tokens move, the weights stay')
+    # ------------------------------------------------------------ 7
+    head(7, 'Pipeline parallelism: cheap on the wire, expensive in idle time')
+    pt = pipeline_traffic(8192, stages=8)
+    print(f"  Only the boundary activation crosses: {pt['per_boundary_mb']:.0f} MB x "
+          f"{pt['boundaries']} boundaries")
+    print(f"  = {pt['total_mb']:.0f} MB per forward pass, point to point, no collective.")
+    print('  That is three orders of magnitude less than tensor parallelism moves,')
+    print('  which is why pipeline stages can sit on different nodes.\n')
+    print('  The cost is the bubble: stage 8 has nothing to do until the first')
+    print('  micro-batch reaches it.')
+    print('    micro-batches   bubble   utilisation')
+    for r in pipeline_bubble(stages=8):
+        print(f"    {r['micro']:13}   {r['bubble']:6.1%}   {r['util']:11.1%}")
+    print('\n  bubble = (stages - 1) / (micro-batches + stages - 1), so the fix is')
+    print('  always more micro-batches - until they get small enough that the')
+    print('  matmuls stop filling the GPU, which is the Day 62.5 roofline again.')
+
+    # ------------------------------------------------------------ 8
+    head(8, 'A real training run stacks all four at once')
+    tm = training_mesh(gpus=64, tp=8, pp=4)
+    print(f"  {tm['gpus']} GPUs as a mesh: tensor {tm['tp']} x pipeline {tm['pp']} x "
+          f"data {tm['dp']}, so each GPU")
+    print(f"  holds {tm['layers_per_stage']} of the 80 layers and "
+          f"{tm['params_per_gpu_b']:.2f} B of the {MODEL['params'] / 1e9:.0f} B parameters.\n")
+    print(f"    optimizer state per GPU, no sharding : {tm['mem_ddp_gb']:.1f} GB")
+    print(f"    the same with ZeRO-3 on the dp axis  : {tm['mem_zero3_gb']:.1f} GB")
+    print(f"    tensor-parallel traffic per step     : {tm['tp_gb']:.2f} GB  (inside the node)")
+    print(f"    pipeline hand-offs per step          : {tm['pp_gb']:.2f} GB  (point to point)")
+    print(f"    gradient all-reduce per step         : {tm['dp_gb']:.2f} GB  (once, overlapped)\n")
+    print('  The ordering is the lesson.  Tensor and pipeline parallelism already')
+    print('  shard the parameters, so the 1,043 GB from section 5 is down to')
+    print(f"  {tm['mem_ddp_gb']:.1f} GB before ZeRO does anything at all - ZeRO only shards what the")
+    print('  data-parallel axis is still replicating.  And the three traffic rows')
+    print('  are three different links: tensor parallelism on the fastest one,')
+    print('  pipeline on the slowest, data parallelism anywhere because it is')
+    print('  paid once per step rather than once per layer.')
+
+    print('\n' + '#' * 72)
+    print('# PART TWO - INFERENCE: no gradients, tiny activations, enormous caches')
+    print('#' * 72)
+
+    # ------------------------------------------------------------ 9
+    head(9, 'What inference changes: no gradients, one token per request')
+    da = dp_attention(requests=64, p=8)
+    print('  Two things disappear and one thing takes over.\n')
+    print('  First, there are no gradients, so the largest collective in the whole')
+    print('  training half - the gradient all-reduce - is simply not called.  Data')
+    print('  parallelism in a serving stack means independent replicas with their')
+    print('  own schedulers, and its only cost is memory:\n')
+    print(f"    KV cache for {64} requests x 128K tokens  : "
+          f"{da['kv_total_gb']:,.0f} GB")
+    print(f"    tensor parallel with MLA, per rank      : "
+          f"{da['tp_mla_per_rank_gb']:,.0f} GB  (a full copy on every rank)")
+    print(f"    DP attention, per rank                  : "
+          f"{da['dp_attention_per_rank_gb']:,.0f} GB  "
+          f"({da['requests_per_rank']} whole requests each)\n")
+    print('  Second, decode produces one token per request, so the activation that')
+    print('  tensor parallelism was shipping collapses - and what is left is the')
+    print('  hop count:\n')
+    print('    phase                            payload    latency   bandwidth   total')
+    for r in decode_tp_cost(requests=64, p=8):
+        print(f"    {r['phase']:30} {r['mb']:7.2f} MB  {r['latency_us']:6.1f} us  "
+              f"{r['bandwidth_us']:7.1f} us  {r['total_us']:7.1f} us")
+    d, pre = decode_tp_cost(requests=64, p=8)
+    print(f"\n  In prefill the all-reduce is {pre['latency_share']:.0%} latency and the rest is")
+    print(f"  bandwidth; in decode it is {d['latency_share']:.0%} latency.  Same collective, same")
+    print(f"  2(p-1) hops, {pre['mb'] / d['mb']:.0f}x less data.  Across 160 of them that is still")
+    print(f"  {d['per_step_ms']:.2f} ms per decode step, which is why serving stacks fuse the")
+    print('  all-reduce into the next norm, prefer fewer and fatter collectives,')
+    print('  and why tensor parallelism stops helping decode long before it runs')
+    print('  out of bandwidth.  Day 62.5 said decode is memory-bound; this is the')
+    print('  same sentence with the interconnect in place of HBM.')
+
+    # ------------------------------------------------------------ 10
+    head(10, 'Expert parallelism: the tokens move, the weights stay')
     rng = np.random.default_rng(2)
     xm = rng.standard_normal((64, 128)).astype(np.float32)
     experts = [((rng.standard_normal((128, 256)) / 11).astype(np.float32),
@@ -783,10 +942,13 @@ def main():
     print(f"  Dispatching in fp8 halves it to {e['fp8_total_gb']:.0f} GB, which is "
           f"exactly why DeepEP")
     print('  ships a quantized dispatch path and why MoE serving lives or dies on')
-    print('  the interconnect rather than on the GPUs.')
+    print('  the interconnect rather than on the GPUs.\n')
+    print('  Training a MoE uses the same two all-to-alls and two more in the')
+    print('  backward pass, so the expert axis belongs inside a node for exactly')
+    print('  the reason section 12 gives.')
 
-    # ------------------------------------------------------------------ 8
-    head(8, 'Context parallelism: split the keys, merge with the log-sum-exp')
+    # ------------------------------------------------------------ 11
+    head(11, 'Context parallelism (DCP): split the keys, merge with the log-sum-exp')
     rng = np.random.default_rng(3)
     q = rng.standard_normal((32, 128)).astype(np.float32)
     k = rng.standard_normal((8192, 128)).astype(np.float32)
@@ -803,35 +965,33 @@ def main():
     print('  now on different GPUs instead of in different registers.  The same')
     print('  algebra that made FlashAttention possible is what makes a million-')
     print('  token context splittable.\n')
+    print('  Who needs this, and who does not.  Splitting the keys works for any')
+    print('  attention - that is Ring Attention - but it is only the cheapest')
+    print('  option when there is nothing else left to split.  With MHA or GQA the')
+    print('  KV cache divides neatly by head, so tensor parallelism already shards')
+    print('  it for free and nobody reaches for context parallelism.  With MLA')
+    print('  there is one latent per token and no head dimension at all, so every')
+    print('  tensor-parallel rank keeps a full copy - and that is the case the')
+    print('  serving feature called DCP exists for.  Read DCP as "for the MLA')
+    print('  models", not as a general-purpose axis.\n')
     print('  Why anybody bothers: the KV cache, at 64 requests x 128K tokens,')
     print(f'  is {kv_cache_gb():,.0f} GB, which no single GPU has.')
     print('    layout                             KV GB per rank   why')
     for name, gb, why in kv_layouts(p=8):
         print(f'    {name:34} {gb:9,.0f}   {why}')
-    print('\n  The MLA row is the one that surprises people: compressing the KV')
-    print('  into one latent per token removes the head dimension that tensor')
+    print('\n  The MLA row is the one that surprises people, and it is the whole')
+    print('  reason this axis exists in a serving stack: compressing the KV into')
+    print('  one latent per token removes the head dimension that tensor')
     print('  parallelism was splitting along, so every rank keeps a full copy and')
-    print('  the only ways left to shard it are by request or by sequence.')
+    print('  the only ways left to shard it are by request (section 9) or by')
+    print('  position (this one).')
 
-    # ------------------------------------------------------------------ 9
-    head(9, 'Pipeline parallelism: cheap on the wire, expensive in idle time')
-    pt = pipeline_traffic(8192, stages=8)
-    print(f"  Only the boundary activation crosses: {pt['per_boundary_mb']:.0f} MB x "
-          f"{pt['boundaries']} boundaries")
-    print(f"  = {pt['total_mb']:.0f} MB per forward pass, point to point, no collective.")
-    print('  That is three orders of magnitude less than tensor parallelism moves,')
-    print('  which is why pipeline stages can sit on different nodes.\n')
-    print('  The cost is the bubble: stage 8 has nothing to do until the first')
-    print('  micro-batch reaches it.')
-    print('    micro-batches   bubble   utilisation')
-    for r in pipeline_bubble(stages=8):
-        print(f"    {r['micro']:13}   {r['bubble']:6.1%}   {r['util']:11.1%}")
-    print('\n  bubble = (stages - 1) / (micro-batches + stages - 1), so the fix is')
-    print('  always more micro-batches - until they get small enough that the')
-    print('  matmuls stop filling the GPU, which is the Day 62.5 roofline again.')
+    print('\n' + '#' * 72)
+    print('# BOTH HALVES AT ONCE')
+    print('#' * 72)
 
-    # ----------------------------------------------------------------- 10
-    head(10, 'Putting them together: which axis goes where')
+    # ------------------------------------------------------------ 12
+    head(12, 'Putting them together: which axis goes where')
     print('  One rank, one step, 8,192 tokens, 8-way on each axis:\n')
     print('    axis                     GB     steps   in-node   cross-node  penalty')
     for r in placement_table():
@@ -847,8 +1007,8 @@ def main():
     print('  a mesh with one axis per kind - and the mesh shape is chosen exactly')
     print('  by this table.')
 
-    # ----------------------------------------------------------------- 11
-    head(11, 'Five ways this goes wrong without an error message')
+    # ------------------------------------------------------------ 13
+    head(13, 'Five ways this goes wrong without an error message')
     print('  1. Summing the gradients instead of averaging them.')
     print('     The learning rate is silently multiplied by the world size:')
     print('       steps   averaged     summed')
@@ -891,8 +1051,8 @@ def main():
     print('     not a crash, which is why the first test for any of them is')
     print('     "does one rank still match the single-GPU answer".')
 
-    # ----------------------------------------------------------------- 12
-    head(12, 'In PyTorch, briefly')
+    # ------------------------------------------------------------ 14
+    head(14, 'In PyTorch, briefly')
     print('    from torch.distributed.device_mesh import init_device_mesh')
     print('    mesh = init_device_mesh("cuda", (2, 4), mesh_dim_names=("dp", "tp"))\n')
     print('  One mesh, one axis per kind of parallelism, and every wrapper takes')
@@ -914,8 +1074,8 @@ def main():
     print('  and torch.profiler shows each one as an nccl kernel, so the bytes')
     print('  from section 10 are directly checkable against a trace.')
 
-    # ----------------------------------------------------------------- 13
-    head(13, 'In JAX, briefly')
+    # ------------------------------------------------------------ 15
+    head(15, 'In JAX, briefly')
     print('    mesh = jax.make_mesh((2, 4), ("dp", "tp"))')
     print('    x = jax.device_put(x, NamedSharding(mesh, P("dp", None)))')
     print('    w = jax.device_put(w, NamedSharding(mesh, P(None, "tp")))\n')
@@ -933,8 +1093,8 @@ def main():
     print('  collective it added, so a parallelism review in JAX is reading that')
     print('  text, while in PyTorch it is reading a profiler trace.')
 
-    # ----------------------------------------------------------------- 14
-    head(14, 'In the serving stacks, briefly')
+    # ------------------------------------------------------------ 16
+    head(16, 'In the serving stacks, briefly')
     print('    --tensor-parallel-size 8        # section 6, inside one node')
     print('    --expert-parallel-size 8        # section 7, for MoE layers')
     print('    --data-parallel-size 2          # whole replicas, separate schedulers')
@@ -956,12 +1116,10 @@ def main():
     print('  cannot be split by head, so each rank serves whole requests and keeps')
     print('  their KV, instead of all ranks keeping one copy of everything.')
 
-    # ----------------------------------------------------------------- 15
-    head(15, 'Assertions')
+    # ------------------------------------------------------------ 17
+    head(17, 'Assertions')
     check()
     print('all assertions passed')
-
-
 def check():
     rng = np.random.default_rng(7)
     p = 8
@@ -1052,6 +1210,21 @@ def check():
     by = {r['axis'].split(' (')[0]: r['gb'] for r in pl}
     assert by['pipeline parallel'] < by['tensor parallel'] / 100
     assert by['expert parallel'] > by['tensor parallel']
+
+    # the mesh: tensor and pipeline shard the parameters before ZeRO does
+    tm = training_mesh(gpus=64, tp=8, pp=4)
+    assert tm['dp'] == 2 and tm['layers_per_stage'] == 20
+    assert tm['mem_ddp_gb'] < zero_table(p=8)[0]['gb_per_rank'] / 30
+    assert abs(tm['mem_zero3_gb'] * tm['dp'] - tm['mem_ddp_gb']) < 1e-6
+
+    # decode keeps the hops and loses the bytes
+    dec, pre = decode_tp_cost(requests=64, p=8)
+    assert dec['latency_us'] == pre['latency_us']
+    assert dec['latency_share'] > 0.8 and pre['latency_share'] < 0.1
+
+    # no gradient at inference: data parallelism is a memory layout, not traffic
+    da = dp_attention(requests=64, p=8)
+    assert abs(da['tp_mla_per_rank_gb'] / da['dp_attention_per_rank_gb'] - 8) < 1e-9
 
     # the five failures
     assert mismatched_order()['finished'] is False

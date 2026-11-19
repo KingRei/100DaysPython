@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Continuous batching: serving 2.7x more tokens by changing when a request may join the batch</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Continuous batching: serving 2.7x more tokens by changing when a request may join the batch</h1>
+<p>Code: <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler">day 64 on GitHub</a></p>
+<p><em>100 Days of Python - day 64</em></p>
+<p>Same model, same GPUs, the same 300 requests arriving at 12 per second:</p>
+<pre><code>scheduler               TTFT p50  throughput  finished in
+----------------------  --------  ----------  -----------
+static batching (B=8)   25.62 s   807 tok/s   81 s
+static batching (B=32)  9.70 s    1368 tok/s  48 s
+continuous batching     0.06 s    2140 tok/s  30 s</code></pre>
+<p>2.7x the throughput and a median first token four hundred times sooner, and <strong>not one kernel changed</strong>. The only difference is a rule: a request may join and leave the batch between steps instead of only at its edges.</p>
+<p>A serving engine is a loop that decides, a few hundred times a second, which requests go into the next forward pass. Almost everything called &quot;inference optimisation&quot; at the system level is a change to that decision, so today I simulated the loop - arrivals, a waiting queue, a KV pool, prefills and decodes - and measured what each change does.</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_0.png?raw=true">
+<h2>What one step costs</h2>
+<p>The machine is a 70B-class model served 8-way tensor parallel in bf16, with every constant derived the way Day 62.5 did it: 17.5 GB of weights per GPU over 5.3 TB/s is <strong>3.30 ms to read the weights once</strong>; one token of KV cache is 40 KB, so <strong>0.008 us</strong> to read; one prompt token is 2·params/8 FLOPs at half of peak, so <strong>0.027 ms</strong>.</p>
+<pre><code>batch  step time  output tokens/s  per token
+-----  ---------  ---------------  ---------
+1      3.32 ms    301              3317 us
+16     3.54 ms    4515             222 us
+64     4.27 ms    14996            67 us
+128    5.23 ms    24456            41 us</code></pre>
+<p>The weights are read once per <em>step</em>, not once per request, so a request added to a running batch is nearly free until the KV reads catch up with the weight read. That line is why a scheduler exists at all: to keep the step as full as the KV pool allows.</p>
+<h2>Static batching wastes the slot, not the FLOPs</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_1.png?raw=true">
+<p>A static batch runs until its <em>longest</em> member finishes. With a batch of 32, <strong>72% of all slot-steps are spent on requests that already produced their last token</strong> - the batch is full of nothing. And a request that arrives one step after the batch started waits for the whole batch to drain, which is where that 25.6-second median first token comes from. Not the model. The queueing.</p>
+<p>Continuous batching changes one rule: a finished request leaves immediately and returns its KV, and whoever is waiting takes the slot in the same step. Padding waste goes to zero and the first-token time stops being a function of how unlucky your timing was.</p>
+<h2>The load curve, and where the knee is</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_2.png?raw=true">
+<pre><code>arrivals/s  throughput  TTFT p50  TTFT p99  ITL p99   goodput
+----------  ----------  --------  --------  --------  -------
+4           743         0.03 s    0.66 s    20.3 ms   91%
+8           1463        0.04 s    0.79 s    43.8 ms   82%
+12          2140        0.06 s    1.04 s    61.2 ms   40%
+16          2191        2.43 s    6.63 s    431.2 ms  1%
+20          2384        2.96 s    7.88 s    431.1 ms  1%
+24          2258        4.82 s    11.89 s   431.2 ms  1%</code></pre>
+<p>Below the knee the engine is arrival-limited: throughput tracks the offered load and latency barely moves. Above it the queue grows without bound and <strong>the only column that still looks healthy is throughput</strong>. The capacity here is set by prefill rather than by the batch dimension - the average prompt is 48 ms of pure arithmetic, so about 20 requests per second is all the FLOPs allow, whatever you set the batch size to.</p>
+<h2>One long prompt stalls everybody else</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_3.png?raw=true">
+<p>A 16,000-token prompt is 428 ms of arithmetic. Run it as a single step and every request currently decoding sees a 428 ms gap between two of its tokens - a user watching tokens appear at 3.6 ms intervals suddenly waits almost half a second.</p>
+<pre><code>chunk budget         TTFT p50  ITL p50  ITL p99  throughput
+-------------------  --------  -------  -------  ----------
+none (whole prompt)  0.06 s    3.6 ms   61.2 ms  2140
+1024 tokens          0.11 s    3.7 ms   31.7 ms  2140
+512 tokens           0.24 s    3.7 ms   17.9 ms  2140
+256 tokens           0.43 s    10.4 ms  10.8 ms  2139</code></pre>
+<p>Chunked prefill cuts the prompt into pieces and mixes them into decode steps, so the tail becomes the size of a chunk instead of the size of a prompt. It is not free: each chunk pays the weight read again - which is why the ITL <em>median</em> gets worse at 256 - and a prompt that now takes several steps reaches its first token later. The knob trades TTFT for ITL; it does not create time.</p>
+<h2>When the KV pool runs out</h2>
+<p>Admitting a request is a promise of cache space for every token it will generate, and nobody knows how many that is. When the pool fills, somebody has to be evicted.</p>
+<pre><code>pool tokens  admission cap  preemptions  throughput  ITL p99   goodput
+-----------  -------------  -----------  ----------  --------  -------
+150,000      none           0            2140        61.2 ms   40%
+150,000      16             0            1985        62.0 ms   25%
+60,000       none           59           1238        428.4 ms  4%
+60,000       16             0            1985        59.5 ms   26%
+60,000       none, swap     16           2140        75.9 ms   29%</code></pre>
+<p>With <strong>recompute</strong> the victim loses everything: its KV is dropped and its prompt is prefilled again later, so the tokens it had already produced were wasted too. Fifty-nine preemptions cost 42% of the throughput and left a 428 ms inter-token tail. With <strong>swap</strong> the KV is copied to host memory and back - about 5 ms for a 4,000-token context over PCIe - progress is kept, and both numbers recover.</p>
+<p>Nothing in that table raises an error. A pool too small for the admitted set just looks like a slow server.</p>
+<h2>Admission control is a claim, not a knob</h2>
+<p>On the small pool, capping the running set at 16 wins on <strong>both</strong> axes: throughput goes <em>up</em> 60% (1238 → 1985) and goodput by 7x (4% → 26%), because what the preemptions threw away was pure waste - prompts prefilled twice, KV written and dropped. A queue is cheaper than half-finished work, and that is the whole argument for admission control.</p>
+<p>On the big pool the same cap is a mistake: nothing was being preempted, so capping only adds queueing - 7% less throughput and goodput down from 40% to 25%. So the cap is not a dial you turn up until things improve. It is a claim that the KV pool is the binding constraint, and when it is not, the claim costs you the slack.</p>
+<h2>Which request goes first</h2>
+<pre><code>policy              mean   p50  p99   max   long prompts (n=27)
+------------------  -----  ---  ----  ----  -------------------
+FCFS                5.8 s  5.5  12.5  15.7  5.6 s
+shortest-job-first  3.1 s  2.0  19.9  21.7  10.0 s</code></pre>
+<p>Shortest-job-first is the textbook answer and it works: the mean halves. It also doubles the latency of exactly the requests that were already slowest, because a long prompt is overtaken by every short one that arrives while it waits; under sustained overload it never runs at all. Production schedulers therefore age the queue - priority rises with waiting time - so the policy is shortest-job-first with a guarantee attached.</p>
+<h2>Goodput, not throughput</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_4.png?raw=true">
+<pre><code>configuration            throughput  TTFT p99  ITL p99   goodput
+-----------------------  ----------  --------  --------  -------
+continuous, no limits    2140        1.04 s    61.2 ms   40%
++ chunked prefill (512)  2140        1.60 s    17.9 ms   100%
++ admission cap (32)     2140        1.60 s    17.8 ms   100%
+small KV pool, no cap    1238        22.65 s   428.4 ms  4%</code></pre>
+<p>The first three move the same number of tokens per second. What separates them is how many requests met a service-level objective - here a first token within 2 s and a 99th-percentile inter-token latency under 50 ms. <strong>Tuning a serving stack means moving the last column</strong>, and the last column is invisible if you only measure the first. It is also why a serving report needs input length, output length, concurrency, TTFT, TPOT and ITL together: drop any one of them and the rest can be made to look good.</p>
+<h2>Four things that look like wins and are not</h2>
+<p><strong>&quot;A bigger batch is always better.&quot;</strong> With a pool that cannot hold it, raising the running set produces 59 preemptions, 42% less throughput and a 428 ms tail. The limit is the KV pool, not the batch dimension of the kernels.</p>
+<p><strong>&quot;Throughput went up, so it is better.&quot;</strong> Three configurations at identical throughput and goodput between 40% and 100%.</p>
+<p><strong>&quot;Shortest-job-first minimises latency.&quot;</strong> It minimises the mean while roughly doubling the latency of the long prompts.</p>
+<p><strong>&quot;The batch is full, so the GPU is busy.&quot;</strong> At B=32, 72% of the slot-steps are requests that have already finished.</p>
+<h2>In vLLM</h2>
+<pre><code>--max-num-seqs 256              # the running set, the admission cap
+--max-num-batched-tokens 8192   # the chunked-prefill budget
+--enable-chunked-prefill
+--gpu-memory-utilization 0.9    # how much HBM becomes KV pool
+--preemption-mode recompute     # or swap</code></pre>
+<p>vLLM calls the admitted set the running queue and keeps a waiting queue behind it; the block manager hands out KV in pages, which turns admission into a counting problem instead of a guess. The log line worth watching is the preemption warning: it is the engine telling you that the KV-pool section is happening to you right now.</p>
+<h2>In SGLang</h2>
+<pre><code>--max-running-requests 256      # the same cap
+--chunked-prefill-size 8192
+--schedule-policy lpm           # longest-prefix-match, not FCFS
+--schedule-conservativeness 1.0 # how eagerly to admit</code></pre>
+<p>The interesting difference is the default policy: SGLang orders the waiting queue by longest prefix match, so requests that share a prefix run next to each other and hit the radix cache instead of prefilling the same tokens twice. A scheduling decision taken for a memory reason - the same move as everything else in this series.</p>
+<h2>What I take away</h2>
+<p>Five decisions, and all of them are about memory rather than arithmetic: who joins the batch, how much prompt goes into one step, how many requests run at once, what happens when the cache fills, and who goes first. Four of the five trade one latency for another, and the only one that is free - continuous batching itself - is free because it stops wasting slots, not because it computes anything faster.</p>
+<p>And the number to put in the report is goodput. Throughput alone cannot tell a server that answers everybody in two seconds apart from one that answers a third of them in twenty.</p>
+</body>
+</html>

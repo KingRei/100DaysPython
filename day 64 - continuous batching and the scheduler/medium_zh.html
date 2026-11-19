@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 64 — Continuous batching：只改「請求什麼時候能加入批次」，吞吐就變 2.7 倍</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 64 — Continuous batching：只改「請求什麼時候能加入批次」，吞吐就變 2.7 倍</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler">day 64 on GitHub</a></p>
+<p><em>100 Days of Python - day 64</em></p>
+<p>同一個模型、同一批卡、同樣 300 個每秒 12 個到達的請求：</p>
+<pre><code>排程方式                 TTFT p50  吞吐        全部跑完
+-----------------------  --------  ----------  --------
+static batching（B=8）   25.62 s   807 tok/s   81 s
+static batching（B=32）  9.70 s    1368 tok/s  48 s
+continuous batching      0.06 s    2140 tok/s  30 s</code></pre>
+<p>吞吐 2.7 倍、首 token 中位數快四百倍，而且<strong>沒有任何一個 kernel 被改過</strong>。差別只有一條規則：請求可以在<strong>任何兩步之間</strong>加入或離開批次，而不是只能在批次的邊界。</p>
+<p>一個 serving engine 說穿了就是一個迴圈，每秒做幾百次同一個決定：<strong>下一個 forward pass 要帶誰</strong>。系統層講的「推論優化」幾乎都是在改這個決定，所以今天我把這個迴圈模擬出來——到達、等待佇列、KV pool、prefill 與 decode——然後量每一種改動的效果。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_0.png?raw=true">
+<h2>一步要花多少</h2>
+<p>機器是 70B 等級的模型、8 路 tensor parallel、bf16，每個常數都照 Day 62.5 的方式從公開規格推出來：每張卡 17.5 GB 的權重除以 5.3 TB/s ＝ <strong>讀一次全部權重 3.30 ms</strong>；KV cache 每個 token 40 KB ⇒ 讀一個 token <strong>0.008 µs</strong>；prefill 一個 prompt token 是 2·參數/8 的 FLOPs，以一半的峰值算 ⇒ <strong>0.027 ms</strong>。</p>
+<pre><code>batch  一步     每秒輸出 token  每個 token
+-----  -------  --------------  ----------
+1      3.32 ms  301             3317 µs
+16     3.54 ms  4515            222 µs
+64     4.27 ms  14996           67 µs
+128    5.23 ms  24456           41 µs</code></pre>
+<p>權重是<strong>每一步</strong>讀一次，不是每個請求讀一次，所以在正在跑的批次裡多加一個人幾乎不用錢，直到 KV 的讀取量追上權重為止。這一行就是排程器存在的全部理由：<strong>在 KV pool 允許的範圍內，把那一步塞滿</strong>。</p>
+<h2>static batching 浪費的不是算力，是 slot</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_1.png?raw=true">
+<p>一個 static batch 會跑到裡面<strong>最長</strong>的那個請求結束為止。B=32 時，<strong>所有 slot-step 裡有 72% 是在算已經吐完最後一個 token 的請求</strong>——批次是滿的，但滿的是空氣。而且在批次開始後一步才到的請求，要等整批排乾：那個 25.6 秒的首 token 中位數就是這樣來的。不是模型慢，是排隊。</p>
+<p>continuous batching 只改一條規則：請求一結束就立刻離開、把 KV 還回 pool，排隊中的下一個<strong>在同一步</strong>補進來。padding 浪費歸零，首 token 時間也不再取決於你運氣好不好剛好卡在批次邊界。</p>
+<h2>負載曲線與膝點</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_2.png?raw=true">
+<pre><code>每秒到達  吞吐  TTFT p50  TTFT p99  ITL p99   goodput
+--------  ----  --------  --------  --------  -------
+4         743   0.03 s    0.66 s    20.3 ms   91%
+8         1463  0.04 s    0.79 s    43.8 ms   82%
+12        2140  0.06 s    1.04 s    61.2 ms   40%
+16        2191  2.43 s    6.63 s    431.2 ms  1%
+20        2384  2.96 s    7.88 s    431.1 ms  1%
+24        2258  4.82 s    11.89 s   431.2 ms  1%</code></pre>
+<p>膝點以下，引擎是被「請求來得不夠快」限制住的：吞吐跟著到達率走、延遲幾乎不動。膝點以上，佇列無上限地長，而<strong>唯一還好看的欄位就是吞吐</strong>。這裡的容量是被 prefill 的算力決定的，不是 batch 大小：平均一個 prompt 要 48 ms 的純算術，所以大約每秒 20 個請求就是上限，batch 開多大都一樣。</p>
+<h2>一個長 prompt 會卡住所有人</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_3.png?raw=true">
+<p>16,000 個 token 的 prompt 是 428 ms 的算術。如果它整段當成一步跑，<strong>每一個正在 decode 的請求都會在兩個 token 之間卡 428 ms</strong>——使用者原本每 3.6 ms 看到一個字，突然要等將近半秒。</p>
+<pre><code>chunk 預算           TTFT p50  ITL p50  ITL p99  吞吐
+-------------------  --------  -------  -------  ----
+不切（整段 prompt）  0.06 s    3.6 ms   61.2 ms  2140
+1024 token           0.11 s    3.7 ms   31.7 ms  2140
+512 token            0.24 s    3.7 ms   17.9 ms  2140
+256 token            0.43 s    10.4 ms  10.8 ms  2139</code></pre>
+<p>chunked prefill 把 prompt 切成好幾塊、混進 decode 的步驟裡，於是<strong>尾巴的大小從「prompt 多長」變成「chunk 多大」</strong>。但它不是免費的：每一塊都要再讀一次權重（所以切到 256 時 ITL 的<strong>中位數</strong>反而變差），而且一個要跑好幾步才做完的 prompt，首 token 自然更晚。這個旋鈕是拿 TTFT 換 ITL，不會生出時間。</p>
+<h2>KV pool 滿掉的時候</h2>
+<p>admit 一個請求，等於承諾「它每生一個 token 我都還有 KV 給它」，而沒有人知道它會生幾個。pool 一滿，就得挑一個踢掉。</p>
+<pre><code>pool token  admission 上限     搶占次數  吞吐  ITL p99   goodput
+----------  -----------------  --------  ----  --------  -------
+150,000     無                 0         2140  61.2 ms   40%
+150,000     16                 0         1985  62.0 ms   25%
+60,000      無                 59        1238  428.4 ms  4%
+60,000      16                 0         1985  59.5 ms   26%
+60,000      無（改成換出 KV）  16        2140  75.9 ms   29%</code></pre>
+<p><strong>重算（recompute）</strong> 是把受害者的 KV 整個丟掉，之後 prompt 再 prefill 一次——它已經生出來的 token 也等於白生。59 次搶占讓吞吐掉了 42%、ITL 尾巴 428 ms。<strong>換出（swap）</strong> 則是把 KV 搬去主記憶體再搬回來（4,000 token 的 context 走 PCIe 來回大約 5 ms），進度全部保留，兩個數字就都回來了。</p>
+<p>這張表裡沒有任何一列會噴錯。pool 不夠大，看起來就只是「伺服器有點慢」。</p>
+<h2>admission control 是一個主張，不是一個旋鈕</h2>
+<p>在小 pool 上，把同時跑的請求上限設成 16 是<strong>兩邊都賺</strong>：吞吐往<strong>上</strong> 60%（1238 → 1985）、goodput 7 倍（4% → 26%）。因為被搶占丟掉的工作本來就是純浪費——prompt 被 prefill 兩次、KV 寫了又丟。<strong>排隊比做到一半被丟掉便宜</strong>，這就是 admission control 的全部理由。</p>
+<p>但在大 pool 上，同一個上限是個錯誤：本來就沒有人被搶占，設上限只是多排隊——吞吐少 7%、goodput 從 40% 掉到 25%。所以上限不是「不舒服就往上調」的旋鈕，<strong>它是一個主張：KV pool 是這裡的瓶頸</strong>；如果不是，這個主張就直接讓你損失餘裕。</p>
+<h2>誰先跑</h2>
+<pre><code>策略             平均   p50  p99   最大  長 prompt（n=27）
+---------------  -----  ---  ----  ----  -----------------
+FCFS             5.8 s  5.5  12.5  15.7  5.6 s
+短的先跑（SJF）  3.1 s  2.0  19.9  21.7  10.0 s</code></pre>
+<p>SJF 是教科書答案，而且它真的有效：平均延遲砍半。但它同時把<strong>本來就最慢的那群</strong>的延遲變成兩倍——長 prompt 在排隊時會被每一個新到的短請求超車，持續過載時甚至永遠排不到。所以實務上的排程器會做 aging：優先權隨等待時間上升，也就是「短的先跑，但有保證」。</p>
+<h2>要看的是 goodput，不是 throughput</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2064%20-%20continuous%20batching%20and%20the%20scheduler/imgs/day64_4.png?raw=true">
+<pre><code>設定                       吞吐  TTFT p99  ITL p99   goodput
+-------------------------  ----  --------  --------  -------
+continuous，不設任何限制   2140  1.04 s    61.2 ms   40%
+＋ chunked prefill（512）  2140  1.60 s    17.9 ms   100%
+＋ admission 上限（32）    2140  1.60 s    17.8 ms   100%
+小 KV pool、不設上限       1238  22.65 s   428.4 ms  4%</code></pre>
+<p>前三個每秒搬的 token 數<strong>完全一樣</strong>。真正把它們分開的是「有多少請求達到了服務目標」——這裡定成首 token 在 2 秒內、而且 ITL 的 p99 在 50 ms 以內。<strong>調一個 serving stack 就是在移動最後那一欄</strong>，而最後那一欄在你只量第一欄的時候完全看不見。這也是為什麼一份 serving 報告要同時給 input 長度、output 長度、併發數、TTFT、TPOT 與 ITL：少掉任何一個，其他的都可以被調得很好看。</p>
+<h2>四個看起來是贏、其實不是的結論</h2>
+<p><strong>「batch 開大一定比較好。」</strong> 在裝不下的 pool 上把同時跑的數量拉高，結果是 59 次搶占、吞吐少 42%、ITL 尾巴 428 ms。限制你的是 KV pool，不是 kernel 的 batch 維度。</p>
+<p><strong>「吞吐變高了，所以比較好。」</strong> 上面那張表：三個設定吞吐一模一樣，goodput 從 40% 到 100%。</p>
+<p><strong>「短的先跑可以最小化延遲。」</strong> 它最小化的是<strong>平均</strong>，代價是長 prompt 的延遲變兩倍。</p>
+<p><strong>「batch 是滿的，所以 GPU 很忙。」</strong> B=32 的 static batching 裡，72% 的 slot-step 是已經結束的請求。</p>
+<h2>vLLM 怎麼開</h2>
+<pre><code>--max-num-seqs 256              # 同時跑的上限（admission cap）
+--max-num-batched-tokens 8192   # chunked prefill 的預算
+--enable-chunked-prefill
+--gpu-memory-utilization 0.9    # 有多少 HBM 變成 KV pool
+--preemption-mode recompute     # 或 swap</code></pre>
+<p>vLLM 把被 admit 的那一組叫 running queue，後面還有一條 waiting queue；block manager 以 page 為單位發 KV，這讓 admission 變成一個<strong>數得出來</strong>的問題而不是用猜的。最值得盯的那一行 log 是 preemption 警告——那是引擎在告訴你「KV pool 那一節正在你身上發生」。</p>
+<h2>SGLang 怎麼開</h2>
+<pre><code>--max-running-requests 256      # 一樣的上限
+--chunked-prefill-size 8192
+--schedule-policy lpm           # 最長前綴匹配，不是 FCFS
+--schedule-conservativeness 1.0 # 多積極 admit</code></pre>
+<p>有趣的差別在預設策略：SGLang 把等待佇列照<strong>最長共同前綴</strong>排序，讓共用前綴的請求排在一起跑、直接命中 radix cache，而不是把同樣的 token 再 prefill 一次。<strong>一個為了記憶體而做的排程決定</strong>——跟這個系列裡其他東西是同一招。</p>
+<h2>我自己的收穫</h2>
+<p>五個決定，而且全部都是記憶體的問題不是算力的問題：誰可以加入批次、一步放多少 prompt、同時跑幾個、cache 滿了要怎麼辦、誰先跑。其中四個都是拿一種延遲換另一種延遲；唯一免費的那個（continuous batching 本身）之所以免費，是因為它停止浪費 slot，而不是因為它算得比較快。</p>
+<p>而要寫進報告的數字是 goodput。只看吞吐，分不出「兩秒內回覆每一個人」和「只回覆三分之一的人、其他人等二十秒」這兩種伺服器。</p>
+</body>
+</html>
