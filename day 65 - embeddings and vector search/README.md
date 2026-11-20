@@ -9,16 +9,27 @@ the length bias, building an embedding out of a term-count matrix, the truncatio
 quantization with rescoring, one vector per document against one per section, what
 fusing a second score does, and three traps that never raise an error.
 
-![img](https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_0.png?raw=true)
-
 An embedding turns a document into a direction in space; retrieval turns a question into
 "whose direction is closest". Everything after that is a handful of decisions - normalise
 or not, how many dimensions, how few bits, how many vectors per document - and this day
 measures the price of each one instead of quoting defaults.
 
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_0.png?raw=true)
+
+Read that picture and the algorithm is finished. Every document is an arrow from the
+origin; the query is an arrow too; the score is the cosine of the angle between them,
+which is just the dot product once both arrows have been scaled to length one. Doc B is
+the same subject written at greater length - a longer arrow pointing almost the same way
+- so cosine leaves it where it belongs while a raw dot product promotes it to first
+place. The cyan dots are where the arrows land after normalising: **retrieval is a
+nearest-neighbour search on the unit circle**, and the rest of this article is about what
+it costs to store and compare those points.
+
 To make measurement possible the corpus has its answers planted: **20,000 documents, 200
 queries, and 10 known-correct documents for every query**, so recall@10 is a fact rather
 than a judgement.
+
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_1.png?raw=true)
 
 | | recall@10 |
 |---|---|
@@ -33,7 +44,7 @@ system scores 0.62" from a disappointment into a 75%-of-possible.
 
 ## A vector is a direction, so the length has to go
 
-![img](https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_1.png?raw=true)
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_2.png?raw=true)
 
 The length of a document vector correlates **0.92** with how many words the document has.
 A raw dot product therefore does not ask "is this about the same thing", it asks "is this
@@ -87,7 +98,7 @@ this kind of silent move.
 
 ## How many dimensions
 
-![img](https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_2.png?raw=true)
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_3.png?raw=true)
 
 | dims | bytes/doc | GB per million | recall@10 |
 |---|---|---|---|
@@ -110,7 +121,7 @@ hyperparameter, not a virtue, and truncation is the first thing to try on a vect
 
 ## How few bits per number
 
-![img](https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_3.png?raw=true)
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_4.png?raw=true)
 
 | representation | bytes/doc (256 dims) | recall | bytes/doc (16 dims) | recall |
 |---|---|---|---|---|
@@ -131,7 +142,7 @@ representation, decide in the dear one.
 
 ## One vector per document is a bet about the document
 
-![img](https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_4.png?raw=true)
+![img](https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_5.png?raw=true)
 
 4,000 documents, each five sections about different things, with the answer in exactly
 one section; the competing documents are vaguely on-topic throughout.

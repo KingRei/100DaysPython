@@ -21,6 +21,88 @@ BEST = max(CURVE, key=lambda r: r['recall'])
 
 
 def fig0():
+    """The algorithm in one picture: directions, angles, and the unit circle."""
+    fig, ax = canvas(12.6, 6.8, xlim=(0, 12.6), ylim=(0, 6.8))
+    text(ax, 6.3, 6.45, 'the whole algorithm: a document is a direction, a query is a '
+         'direction, retrieval is the angle', size=15)
+
+    ox, oy, sc = 1.15, 1.15, 1.90
+    P = lambda v: (ox + v[0] * sc, oy + v[1] * sc)
+    docs = [('doc A  "KV cache sizing"', np.array([0.90, 0.44])),
+            ('doc B  same topic, 2.5x longer', 2.55 * np.array([0.95, 0.31])),
+            ('doc C  "GPU memory bandwidth"', np.array([0.52, 0.86])),
+            ('doc D  unrelated', np.array([0.05, 1.00]))]
+    q = np.array([0.80, 0.60])
+    q = q / np.linalg.norm(q)
+
+    arrow(ax, (ox, oy), (ox + 5.05, oy), lw=1.4, color=GREY_L, ms=9)
+    arrow(ax, (ox, oy), (ox, oy + 3.30), lw=1.4, color=GREY_L, ms=9)
+    text(ax, ox + 5.00, oy - 0.28, 'one direction of meaning', size=10.5, ha='right',
+         color=GREY_L, glowing=False)
+    text(ax, ox + 0.12, oy + 3.28, 'another', size=10.5, ha='left', color=GREY_L,
+         glowing=False)
+    th = np.linspace(0, np.pi / 2, 160)
+    ax.plot(ox + sc * np.cos(th), oy + sc * np.sin(th), color=TEAL_L, lw=1.2,
+            ls=(0, (5, 4)), zorder=2)
+    text(ax, ox + sc * 1.26 * np.cos(np.radians(70)),
+         oy + sc * 1.26 * np.sin(np.radians(70)), 'unit circle', size=10.5,
+         color=TEAL_L, glowing=False)
+
+    for name, v in docs:
+        n = np.linalg.norm(v)
+        long_one = n > 1.5
+        col = AMBER if long_one else TEAL
+        arrow(ax, (ox, oy), P(v), lw=1.9, color=col, ms=11)
+        u = v / n
+        ax.plot([P(u)[0]], [P(u)[1]], 'o', color=CYAN, ms=6, zorder=6)
+        tip = P(v * 1.03)
+        steep = u[0] < 0.25                       # keep labels off the circle text
+        text(ax, tip[0] + (-0.12 if steep else 0.10), tip[1] + 0.12,
+             name.split('  ')[0], size=11, ha='right' if steep else 'left',
+             color=col, glowing=False)
+    arrow(ax, (ox, oy), P(q * 1.35), lw=2.6, color=RED, ms=13)
+    text(ax, P(q * 1.35)[0] + 0.12, P(q * 1.35)[1] + 0.02, 'query', size=11.5,
+         ha='left', color=RED, glowing=False)
+
+    a = docs[0][1] / np.linalg.norm(docs[0][1])
+    ang0, ang1 = (np.degrees(np.arctan2(x[1], x[0])) for x in (q, a))
+    arc = np.linspace(np.radians(min(ang0, ang1)), np.radians(max(ang0, ang1)), 60)
+    ax.plot(ox + 0.78 * np.cos(arc), oy + 0.78 * np.sin(arc), color=RED, lw=1.8,
+            zorder=6)
+    mid = np.radians((ang0 + ang1) / 2)
+    text(ax, ox + 1.00 * np.cos(mid), oy + 1.00 * np.sin(mid), 'θ', size=14, color=RED)
+
+    text(ax, 6.75, 5.75, 'cos θ  =  (q · d) / (|q| |d|)', size=12.5, ha='left',
+         color=TEAL_L, glowing=False)
+    text(ax, 6.75, 5.30, 'normalise first and the dot product *is* the cosine',
+         size=11.5, ha='left', color=GREY_L, glowing=False)
+    text(ax, 6.75, 4.55, 'scored against the query:', size=12, ha='left',
+         color=TEAL_L, glowing=False)
+    text(ax, 10.95, 4.55, 'cosine', size=11, ha='right', color=CYAN, glowing=False)
+    text(ax, 12.25, 4.55, 'raw dot', size=11, ha='right', color=RED, glowing=False)
+    rows = sorted([(n, float(q @ v / np.linalg.norm(v)), float(q @ v))
+                   for n, v in docs], key=lambda r: -r[1])
+    for i, (name, cos, dot) in enumerate(rows):
+        y = 4.05 - i * 0.52
+        best_c = cos == max(r[1] for r in rows)
+        best_d = dot == max(r[2] for r in rows)
+        text(ax, 6.75, y, name, size=10.5, ha='left',
+             color=TEAL_L if best_c else GREY_L, glowing=False)
+        text(ax, 10.95, y, '%.2f' % cos, size=11, ha='right',
+             color=CYAN if best_c else GREY_L, glowing=False)
+        text(ax, 12.25, y, '%.2f' % dot, size=11, ha='right',
+             color=RED if best_d else GREY_L, glowing=False)
+    nodot = E.recall_at_k(E.search(EMB['queries'], EMB['docs'], 10, False), GOLD)
+    text(ax, 6.75, 1.55, 'cosine picks the document about the same thing;', size=11.5,
+         ha='left', color=AMBER, glowing=False)
+    text(ax, 6.75, 1.15, 'the raw dot product picks whichever is longest.', size=11.5,
+         ha='left', color=AMBER, glowing=False)
+    text(ax, 6.75, 0.70, 'on the real corpus that is recall@10 %.3f against %.3f'
+         % (BASE, nodot), size=11.5, ha='left', color=GREY_L, glowing=False)
+    save(fig, os.path.join(HERE, 'day65_0.png'))
+
+
+def fig1():
     """The map: what a retrieval system decides, and what each decision costs."""
     fig, ax = canvas(12.4, 6.6, xlim=(0, 12.4), ylim=(0, 6.6))
     text(ax, 6.2, 6.25, 'one query, four decisions, and what each one costs', size=16)
@@ -47,10 +129,10 @@ def fig0():
         text(ax, 5.80, y, a, size=12, ha='left', color=GREY_L, glowing=False)
     text(ax, 6.2, 0.78, 'the answer key for this corpus tops out at %.3f recall@10 - '
          'that is the ceiling, not 1.0' % ORACLE, size=11.5, color=AMBER)
-    save(fig, os.path.join(HERE, 'day65_0.png'))
+    save(fig, os.path.join(HERE, 'day65_1.png'))
 
 
-def fig1():
+def fig2():
     """Length bias: the dot product ranks by size."""
     lb = E.length_bias(W, EMB)
     fig, ax = canvas(11.0, 5.6, xlim=(0, 11.0), ylim=(0, 5.6))
@@ -73,10 +155,10 @@ def fig1():
     text(ax, 0.35, 0.80, 'cosine is the same dot product after dividing that length '
          'out - one line, five times the recall', size=11.5, ha='left', color=AMBER,
          glowing=False)
-    save(fig, os.path.join(HERE, 'day65_1.png'))
+    save(fig, os.path.join(HERE, 'day65_2.png'))
 
 
-def fig2():
+def fig3():
     """Dimensions: recall against memory."""
     fig, ax = canvas(11.0, 6.0, xlim=(0, 11.0), ylim=(0, 6.0))
     text(ax, 5.5, 5.65, 'more dimensions is not more recall', size=16)
@@ -112,10 +194,10 @@ def fig2():
          'of an SVD is noise, and noise votes'
          % (BEST['dims'], BEST['recall'], CURVE[0]['recall'], CURVE[0]['dims']),
          size=11, ha='left', color=AMBER, glowing=False)
-    save(fig, os.path.join(HERE, 'day65_2.png'))
+    save(fig, os.path.join(HERE, 'day65_3.png'))
 
 
-def fig3():
+def fig4():
     """Bits per number: int8 is free, one bit is not."""
     trunc = {'queries': EMB['queries'][:, :BEST['dims']],
              'docs': EMB['docs'][:, :BEST['dims']]}
@@ -143,10 +225,10 @@ def fig3():
     text(ax, 0.35, 0.50, 'one bit per dimension throws the magnitudes away - rescoring '
          'the shortlist buys most of it back', size=11.5, ha='left', color=AMBER,
          glowing=False)
-    save(fig, os.path.join(HERE, 'day65_3.png'))
+    save(fig, os.path.join(HERE, 'day65_4.png'))
 
 
-def fig4():
+def fig5():
     """One vector per document is a bet."""
     rows = E.chunking_table(E.make_long_world())
     fig, ax = canvas(11.4, 5.4, xlim=(0, 11.4), ylim=(0, 5.4))
@@ -172,9 +254,9 @@ def fig4():
          size=11.5, ha='left', color=AMBER, glowing=False)
     text(ax, 0.35, 0.50, 'this is why chunking exists, and what late-interaction models '
          'do one span at a time', size=11.5, ha='left', color=GREY_L, glowing=False)
-    save(fig, os.path.join(HERE, 'day65_4.png'))
+    save(fig, os.path.join(HERE, 'day65_5.png'))
 
 
 if __name__ == '__main__':
-    fig0(); fig1(); fig2(); fig3(); fig4()
-    print('wrote 5 figures')
+    fig0(); fig1(); fig2(); fig3(); fig4(); fig5()
+    print('wrote 6 figures')

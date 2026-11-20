@@ -30,6 +30,8 @@ li     { margin: .3em 0; }
 <p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2065%20-%20embeddings%20and%20vector%20search">day 65 on GitHub</a></p>
 <p><em>100 Days of Python - day 65</em></p>
 <p>Embedding 做的事情是把一份文件變成空間裡的一個<strong>方向</strong>，而檢索就是問「誰的方向跟這個問題最近」。剩下的全部都是四個決定——要不要正規化、留幾維、每個數字幾個 bit、一份文件幾個向量——今天我把每一個決定的價錢都量出來，而不是照抄預設值。</p>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_0.png?raw=true">
+<p>這張圖看懂，演算法就講完了。每份文件都是從原點出發的一支箭頭，查詢也是一支箭頭，而分數就是兩者夾角的 cosine——把兩支箭頭都縮放成長度 1 之後，那就只是一次內積。doc B 是同一個主題但寫得比較長：箭頭更長、方向幾乎一樣，所以 cosine 會把它擺在該在的位置，而 raw dot product 會把它推到第一名。青色的點是正規化之後箭頭落在哪裡——<strong>檢索就是在單位圓上找最近的點</strong>，而這篇剩下的篇幅都在講：存這些點、比較這些點，各要付多少錢。</p>
 <p>為了量得出來，這個語料的答案是<strong>自己種進去的</strong>：<strong>20,000 份文件、200 個查詢，每個查詢有 10 份已知正確的文件</strong>。於是 recall@10 是一個事實，不是感覺。</p>
 <pre><code>                                        recall@10
 --------------------------------------  ---------
@@ -37,9 +39,9 @@ li     { margin: .3em 0; }
 我的 embedding（256 維，二十行 numpy）  0.617
 答案本人                                0.825</code></pre>
 <p><strong>天花板是 0.825，不是 1.0。</strong> 連「照著語料被產生出來的方式去排序」都撈不回全部的正解，因為同主題的背景文件本來就會擠進前十。先找出這個上限，才會知道「我們只有 0.62」其實是可能上限的四分之三。</p>
-<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_0.png?raw=true">
-<h2>向量是一個方向，所以長度要除掉</h2>
 <img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_1.png?raw=true">
+<h2>向量是一個方向，所以長度要除掉</h2>
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_2.png?raw=true">
 <p>文件向量的長度跟「這份文件有幾個字」的相關係數是 <strong>0.92</strong>。所以 raw dot product 問的不是「是不是在講同一件事」，而是「是不是在講同一件事<strong>而且很長</strong>」：</p>
 <pre><code>計分方式          recall@10  前十名的平均長度
 ----------------  ---------  ----------------
@@ -63,7 +65,7 @@ query 的 idf 套了兩次   0.588</code></pre>
 <p>第一件事是精確的、而且值得記住：<strong>把 query 正規化不可能改變排名</strong>，因為只縮放一邊等於把所有分數乘上同一個數。真正重要的是文件那一邊。</p>
 <p>後面三列才是有趣的。兩邊用不同方式編碼，答案會<strong>上下都跑</strong>、最多差 0.041 recall，而且完全沒有錯誤、沒有任何訊號說有東西變了。在這個語料裡傷害很小；它在實務上危險的原因是：instruction-tuned 的 embedding 模型是用 query prefix 跟 document prefix 訓練的，兩邊真的是不同的函式，弄反了就是這種無聲的位移。</p>
 <h2>要留幾維</h2>
-<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_2.png?raw=true">
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_3.png?raw=true">
 <pre><code>維度  每份文件位元組  每百萬份 GB  recall@10
 ----  --------------  -----------  ---------
 256   1,024           0.95         0.617
@@ -76,7 +78,7 @@ query 的 idf 套了兩次   0.588</code></pre>
 <p>SVD 的欄位本來就是排好序的，<strong>前 d 欄就已經是同一個 embedding 的最佳 d 維版本</strong>，所以截斷不需要重新訓練——這正是 Matryoshka 訓練刻意放進神經 encoder 裡的性質。</p>
 <p>這裡的峰值在 16 維而不是 256 維：<strong>尾巴那些方向是雜訊，而雜訊也有投票權。</strong> 真正訓練過的 Matryoshka 模型曲線是「先平再掉」而不是像這裡先升，但實務結論一樣：維度是一個超參數，不是一種美德；看到向量帳單先試截斷。</p>
 <h2>每個數字要留幾個 bit</h2>
-<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_3.png?raw=true">
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_4.png?raw=true">
 <pre><code>表示法                      256 維   recall  16 維  recall
 --------------------------  -------  ------  -----  ------
 float32                     1,024 B  0.617   64 B   0.732
@@ -86,7 +88,7 @@ binary ＋ 前 40 名 rescore  34 B     0.086   2.1 B  0.522</code></pre>
 <p><strong>int8 是免費的</strong>：整個語料共用一個 scale，內積只多了捨入誤差，記憶體剩四分之一。真正的陷阱是「每個向量用自己的 scale」——那等於每份文件換一個單位，而單位一致正是索引存在的理由。</p>
 <p><strong>但每維 1 bit 在這裡不免費</strong>，因為這個 embedding 把資訊都塞在前幾維，而符號位元把每一維當成一樣重要。先截斷再量化就可用了；再把 binary 選出的候選名單用完整向量 rescore 一次又救回一截。這就是標準配方的一句話：<strong>用便宜的表示法搜尋，用貴的表示法決定。</strong></p>
 <h2>「一份文件一個向量」是一個賭注</h2>
-<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_4.png?raw=true">
+<img alt="img" src="https://github.com/KingRei/100DaysPython/blob/master/day%2065%20-%20embeddings%20and%20vector%20search/imgs/day65_5.png?raw=true">
 <p>4,000 份文件，每份由五個不同主題的段落組成，答案只在其中一段；而競爭的文件是整份都「有點像」。</p>
 <pre><code>表示法                          向量/文件  位元組/文件  recall@10
 ------------------------------  ---------  -----------  ---------
