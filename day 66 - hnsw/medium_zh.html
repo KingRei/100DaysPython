@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Day 66 — HNSW：不看大部分的資料，也能找到最近的向量</title>
+<style>
+body   { max-width: 46rem; margin: 3rem auto; padding: 0 1.5rem;
+         font-family: Georgia, 'Times New Roman', serif; font-size: 20px;
+         line-height: 1.7; color: #191919; background: #fff; }
+h1     { font-size: 2.1em; line-height: 1.2; margin: 0 0 .6em; }
+h2     { font-size: 1.5em; line-height: 1.3; margin: 1.8em 0 .4em; }
+h3     { font-size: 1.2em; margin: 1.5em 0 .3em; }
+p      { margin: 0 0 1.2em; }
+a      { color: #191919; }
+img    { max-width: 100%; display: block; margin: 1.6em auto; }
+pre    { background: #f2f2f2; border-radius: 4px; padding: 1em 1.2em;
+         overflow-x: auto; font-size: 15px; line-height: 1.5;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; }
+code   { background: #f2f2f2; padding: .1em .35em; border-radius: 3px;
+         font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: .85em; }
+pre code { background: none; padding: 0; font-size: inherit; }
+blockquote { border-left: 3px solid #191919; margin: 0 0 1.2em; padding-left: 1.2em;
+             font-style: italic; }
+hr     { border: none; border-top: 1px solid #ddd; margin: 2.5em 0; }
+li     { margin: .3em 0; }
+</style>
+</head>
+<body>
+<h1>Day 66 — HNSW：不看大部分的資料，也能找到最近的向量</h1>
+<p>程式碼：<a href="https://github.com/KingRei/100DaysPython/tree/master/day%2066%20-%20hnsw">day 66 on GitHub</a></p>
+<p><em>100 Days of Python - day 66</em></p>
+<p>三千個向量、一百二十個查詢、每次要十筆結果。暴力搜尋每個查詢算三千次距離，答案照定義 一定對。這一天蓋出來的索引每個查詢只算 <strong>908</strong> 次，拿到其中 <strong>94.7%</strong> 的答案。近似最近鄰 搜尋要賣的就是這個：你交出一點點可以量、而且可以調的正確性，換到不用再看七成的資料。</p>
+<p><a href="https://medium.com/100-days-of-python">Day 65</a> 最後停在一個難堪的地方——整份掃過去其實 就是一次矩陣乘法，一萬份文件很夠用，但它嚴格跟資料量成正比。這一天就是用來取代那個掃描的。</p>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2066%20-%20hnsw/imgs/day66_0.png">
+<p>把這張圖看懂，演算法就講完了。每個點是圖上的一個頂點，每個頂點連到附近幾個頂點，搜尋就是 <strong>在這張圖上走路</strong>：從某個地方開始，看目前這個點的鄰居，跳到離查詢更近的那一個，一直到沒有 鄰居比現在更近為止。圖上的邊是那個索引真的建出來的邊，紅色箭頭是它真的走過的路；橘色是 最底層同時活著的候選名單，青色是最後回傳的答案，整段走完只算了 140 個點裡的 36 次距離。 剩下那些藍色的點從頭到尾沒被碰過——而「沒碰過」正是索引唯一的用途。</p>
+<p>讓這段走路能成立的有三件事，三件都能量。</p>
+<h2>分層</h2>
+<p>圖上那三格是同一批點的三張圖。每個點在插入的時候丟一次骰子決定自己爬多高，用的是幾何分布： 再往上一層的機率是 <code>1/M</code>。所以第 0 層放全部的點，第 1 層大概只剩十二分之一，第 2 層再十二 分之一：</p>
+<pre><code>層     點數     佔語料    理論值
+ 0    3,000    1.000    3,000.0
+ 1      260    0.087      250.0
+ 2       21    0.007       20.8
+ 3        5    0.002        1.7</code></pre>
+<p>覺得眼熟是應該的：這就是 skip list（Day 31），只是把 linked list 換成圖。上面那幾層是快速 道路，先用幾步把空間跨過去，再下來看細節。搜尋從最上層那一個入口點進去，上面全程只留一個 候選，走不動了就掉一層。</p>
+<h2>ef：唯一一個上線之後還能轉的旋鈕</h2>
+<p>到了最底層，走路就不再只留一個候選，而是<strong>同時留 <code>ef</code> 個</strong>，把它們的鄰居全部算過再決定。 召回的故事全在這個數字上：</p>
+<pre><code>ef    距離計算    佔語料     recall@10
+10         319     10.6%       0.629
+25         567     18.9%       0.849
+50         908     30.2%       0.947
+100      1,432     47.7%       0.996
+200      2,071     69.0%       1.000</code></pre>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2066%20-%20hnsw/imgs/day66_1.png">
+<p>前面陡、後面平。但真正重要的不是曲線的形狀，而是 <strong><code>ef</code> 可以逐查詢改，不用重建任何東西</strong>。 HNSW 索引的其他設定在建好的那一刻就凍住了，只有這個數字是線上服務拿延遲換召回的手段。</p>
+<h2>我沒料到的一段：分層其實沒有貢獻</h2>
+<p>HNSW 的 H 是 hierarchical。所以我把階層拆掉——只留最底層那張圖，先用同一個入口點搜，再改成 隨便挑一個點當起點：</p>
+<pre><code>有快速道路                     908 次距離計算   recall 0.947
+只剩最底層、同一個入口點       886 次距離計算   recall 0.947
+只剩最底層、隨機入口點         886 次距離計算   recall 0.947</code></pre>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2066%20-%20hnsw/imgs/day66_2.png">
+<p>沒有任何東西變差。工作量還少了一點，召回一模一樣，連起點亂挑都一樣。</p>
+<p>這不是我寫壞了，這是在重現一個已發表的結果（Munyampirwa、Lakshman、Coleman，ECIR 2026）： 他們量不到階層在高維資料上帶來任何好處，而且把階層拿掉之後，在一億個向量的規模上<strong>建置 時的記憶體尖峰少了 38–39%</strong>。他們給的解釋是 <strong>hub highway</strong>：在高維空間裡，少數幾個點會 出現在幾乎所有人的鄰居名單裡，所以最底層那張圖<strong>本來就已經有</strong>階層想提供的長程邊了。更早 的研究則發現，分層只有在大約 32 維以下才有幫助——也就是在沒有人實際會用的維度以下。</p>
+<p>我還是把分層留在程式碼裡，因為 hnswlib、FAISS、Qdrant、pgvector 出貨的都是這個版本，而且 這個結果新到函式庫還沒跟上。但它是一個很好的提醒：<strong>一個有名的演算法裡最有名的那部分， 不一定就是真的在做事的那部分。</strong></p>
+<h2>M：價錢在這裡</h2>
+<p><code>M</code> 是每個點保留幾個鄰居（最底層放 <code>2M</code> 個，因為那一層的邊最重要）。</p>
+<pre><code>M     邊/點    連結位元組   相對於向量   recall@10
+ 6     13.1          52        0.27x       0.936
+12     24.9         100        0.52x       0.996
+20     40.9         164        0.85x       0.999</code></pre>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2066%20-%20hnsw/imgs/day66_3.png">
+<p>召回馬上就飽和了，記憶體沒有：<code>M = 20</code> 的時候，圖本身跟它索引的那些向量一樣貴；而建置 （每插入一個點都要跑一次 <code>ef_construction</code> 規模的搜尋）也隨著 <code>M</code> 一路變慢。所以要問的 從來不是「最好的 M 是多少」，而是<strong>「達到我要的召回所需的最小 M」</strong>——而答案取決於你得 自己量的資料，不是 README 上的預設值。</p>
+<p>插入的過程裡還藏著第二個決定，把它關掉之後我最意外。新的點收集到一堆候選之後，要留下哪 <code>M</code> 個？直覺的答案——留最近的那幾個——是錯的。在十二個群集的語料上這樣做，召回只有 0.754， 因為一個點最近的鄰居全都在自己的群集裡，於是<strong>所有離開群集的邊就這樣安靜地消失了</strong>，貪婪 走路被關在裡面出不來。真正的規則是：一個候選只有在「離新點比離任何已經選上的鄰居都近」時 才留下，這樣長程邊才活得下來——召回 0.799，代價是比較慢的插入（每個候選都要再跟已經選上的 那些比一次）。</p>
+<h2>刪除其實不是刪除</h2>
+<p>要正確地把一個點從圖索引裡拿掉，得去修<strong>每一個指向它的鄰居名單</strong>。沒有人在線上做這件事。 所以刪除是一個<strong>墓碑</strong>：點留在圖裡當踏腳石，只是從結果裡被濾掉。</p>
+<pre><code>狀態                   recall@10   距離計算/查詢   花在已刪除的點上
+刪掉 10%                   0.985             757            10.2%
+刪掉 30%                   0.974             757            29.8%
+刪掉 30% 後重建            0.993             666                -</code></pre>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2066%20-%20hnsw/imgs/day66_4.png">
+<p>看中間那一欄：<strong>每查詢的工作量一點都沒變，但能用的語料變小了</strong>——將近三分之一的距離計算是 花在永遠不能被回傳的點上。重建會把這些浪費掃掉。所以<strong>每一個宣稱「支援刪除」的向量資料庫， 其實是在提供一個重整排程</strong>，唯一的問題是誰來跑、什麼時候跑。</p>
+<h2>資料六倍，工作量兩倍</h2>
+<pre><code>向量數     距離計算/查詢     佔語料      recall@10
+   500               446      89.1%          0.998
+ 1,000               644      64.4%          0.993
+ 2,000               824      41.2%          0.972
+ 3,000               908      30.2%          0.947</code></pre>
+<img alt="img" src="https://raw.githubusercontent.com/KingRei/100DaysPython/master/day%2066%20-%20hnsw/imgs/day66_5.png">
+<p>暴力搜尋跟語料嚴格成正比，而走路的長度大致隨語料的<strong>對數</strong>成長——這就是索引存在的全部理由。 注意同一張表裡召回也在慢慢往下掉：圖變大，路就變長，所以<strong>語料長大之後 ef 要重調，不是只有 資料換掉才要調</strong>。上線時量過的那個索引，跟半年後在跑的那個不是同一個東西。</p>
+<h2>四種不會告訴你的壞法</h2>
+<p><strong>ef 比 k 小。</strong> <code>ef</code> 是走路時活著的候選數，所以它同時是<strong>答案數量的上限</strong>。<code>ef = 5</code>、 <code>k = 10</code> 的時候根本湊不出十筆；函式庫會偷偷把 <code>ef</code> 夾到 <code>k</code>，於是錯誤被藏起來，而召回也只 有 0.629。</p>
+<p><strong>向量沒正規化就用內積。</strong> 把四分之一的語料乘以 3，對照真正的 cosine 答案，召回剩 0.250， 而且前十名<strong>全部</strong>來自被放大的那一群。索引沒壞，它只是在回答另一個問題。</p>
+<p><strong>拿索引自己當答案來評分。</strong> 對照索引自己的輸出，召回永遠是 1.000；對照暴力搜尋是 0.947。 評估近似索引一定要有一個不近似的對照組，也就是手上要留一小份精確的 ground truth。</p>
+<p><strong>從來不重整。</strong> 見上一節。</p>
+<p>四個都不會丟例外，四個都會回給你一串看起來很合理的文件。唯一會發現的方法，是拿一個精確的 東西去量召回。</p>
+<h2>同樣三個數字，四種拼法</h2>
+<pre><code>import hnswlib
+ix = hnswlib.Index(space=&quot;cosine&quot;, dim=d)
+ix.init_index(max_elements=N, M=16, ef_construction=200)
+ix.set_ef(64)
+ix.mark_deleted(i)
+
+index = faiss.IndexHNSWFlat(d, 32)   # 32 就是 M
+index.hnsw.efConstruction = 200
+index.hnsw.efSearch = 64</code></pre>
+<p>Chroma 叫它們 <code>hnsw:M</code>、<code>hnsw:construction_ef</code>、<code>hnsw:search_ef</code>；Qdrant 叫 <code>m</code>、 <code>ef_construct</code>、<code>hnsw_ef</code>；Milvus 叫 <code>M</code>、<code>efConstruction</code>、<code>ef</code>；pgvector 把前兩個放在 <code>CREATE INDEX</code> 裡，第三個是 <code>SET hnsw.ef_search</code>。Pinecone 一個都不給你，因為索引型態本身 就是它的產品。但不管哪一套，決定都是這篇文章量過的同三件事：圖要花多少記憶體、鄰居名單 建得多仔細、每個查詢要買多少召回。</p>
+<p>託管服務真正幫你拿走的其實不是演算法，是那個重整排程。</p>
+<p>可以直接跑的模組、notebook，還有一頁把上面每一段都動畫化的互動頁面都在 repo 裡： <a href="https://github.com/KingRei/100DaysPython/tree/master/day%2066%20-%20hnsw">day 66 on GitHub</a></p>
+</body>
+</html>
